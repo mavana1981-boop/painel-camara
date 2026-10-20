@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b5d3b">
+<title>{% block titulo %}Painel da Câmara{% endblock %} · Painel da Câmara</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{% import "_selo.html" as selo %}
+<header class="topo">
+  <div class="topo-in">
+    <a class="marca" href="{{ url_for('index') }}">{{ selo.selo(34, fundo="rgba(255,255,255,.08)") }}
+      <span>Painel da Câmara<small>Liderança da Oposição · 57ª Legislatura</small></span></a>
+    <nav class="abas">
+      {% for slug, nome in abas %}
+        {% if slug in abas_deputado %}
+          <a href="{{ url_for(slug) }}" class="{{ 'ativa' if aba == slug }}">{{ nome }}</a>
+        {% else %}
+          <a href="{{ url_for(slug) }}{% if aba not in abas_deputado and aba and request.query_string %}?{{ request.query_string.decode() }}{% endif %}"
+             class="{{ 'ativa' if aba == slug }}">{{ nome }}</a>
+        {% endif %}
+      {% endfor %}
+    </nav>
+    {% if op and op.ultima_coleta %}<div class="coleta" title="Última atualização dos dados">Dados de {{ op.ultima_coleta|data }}</div>{% endif %}
+    {% if usuario %}
+    <div class="usr">
+      <span class="quem">{{ usuario.nome or usuario.login }}</span>
+      {% if usuario.admin %}<a href="{{ url_for('auth.gerenciar') }}">Usuários</a>{% endif %}
+      <a href="{{ url_for('auth.conta') }}">Conta</a>
+      <form method="post" action="{{ url_for('auth.sair') }}" style="margin:0">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button>Sair</button></form>
+    </div>
+    {% endif %}
+  </div>
+</header>
+<main>
+{% with msgs = get_flashed_messages(with_categories=true) %}
+  {% for cat, m in msgs %}<div class="aviso {{ cat }}">{{ m }}</div>{% endfor %}
+{% endwith %}
+{% block conteudo %}{% endblock %}
+</main>
+<div class="rodape"><span>Fonte: Dados Abertos da Câmara dos Deputados (legislativo e CEAP). Uso interno da Liderança da Oposição.</span>
+  <span class="credito">Desenvolvido por: <span class="nw">Luisa Marreco – Minoria CD</span> / <span class="nw">Marcelo Uvara – Oposição CD</span></span></div>
+</body>
+</html>

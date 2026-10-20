@@ -1,0 +1,23 @@
+{
+ "dados": [
+  {
+   "id": 54001,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/frentes/54001",
+   "titulo": "Frente Parlamentar da Segurança Pública",
+   "idLegislatura": 57
+  },
+  {
+   "id": 54002,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/frentes/54002",
+   "titulo": "Frente Parlamentar do Empreendedorismo",
+   "idLegislatura": 57
+  },
+  {
+   "id": 53001,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/frentes/53001",
+   "titulo": "Frente Parlamentar Antiga",
+   "idLegislatura": 56
+  }
+ ],
+ "links": []
+}

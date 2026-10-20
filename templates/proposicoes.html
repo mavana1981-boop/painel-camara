@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Proposições · {{ s.nome }}{% endblock %}
+{% block conteudo %}
+{{ m.seletor(lista, cod, s, 'proposicoes') }}
+
+<form class="filtros" method="get">
+  <input type="hidden" name="deputado" value="{{ cod }}">
+  <label style="flex:2 1 200px">Buscar na ementa<input type="search" name="busca" value="{{ fp.busca }}" placeholder="Ex.: segurança, PL 1234"></label>
+  <label>Autoria<select name="papel">
+    <option value="">Autor ou coautor</option>
+    <option value="autor" {{ 'selected' if fp.papel == 'autor' }}>1º autor</option>
+    <option value="coautor" {{ 'selected' if fp.papel == 'coautor' }}>Coautor</option></select></label>
+  <label>Tipo<select name="sigla"><option value="">Todos</option>
+    {% for x in todas_siglas %}<option {{ 'selected' if fp.sigla == x }}>{{ x }}</option>{% endfor %}</select></label>
+  <label>Situação<select name="situacao">
+    <option value="">Todas</option>
+    <option value="tramitando" {{ 'selected' if fp.situacao == 'tramitando' }}>Tramitando</option>
+    <option value="encerrada" {{ 'selected' if fp.situacao == 'encerrada' }}>Tramitação encerrada</option>
+    <option value="norma" {{ 'selected' if fp.situacao == 'norma' }}>Virou norma jurídica</option></select></label>
+  <label>Apresentada de<input type="date" name="inicio" value="{{ fp.inicio or '' }}"></label>
+  <label>até<input type="date" name="fim" value="{{ fp.fim or '' }}"></label>
+  <button class="btn">Filtrar</button>
+  <a class="btn sec" href="{{ url_for('proposicoes', deputado=cod) }}">Limpar</a>
+</form>
+
+<section class="kpis">
+  <div class="kpi dest"><b>{{ props.total|mil }}</b><span>Proposições no recorte</span></div>
+  <div class="kpi dest"><b>{{ props.principal|mil }}</b><span>Como 1º autor</span></div>
+  <div class="kpi dest"><b>{{ props.projetos|mil }}</b><span>Projetos (PL, PLP, PEC, PDL, PRC)</span></div>
+  <div class="kpi dest"><b>{{ props.tramitando|mil }}</b><span>Em tramitação</span></div>
+  <div class="kpi dest ouro"><b>{{ props.normas|mil }}</b><span>Transformadas em norma jurídica</span></div>
+</section>
+
+<section class="grade">
+  <div class="card neu"><h2>Por tipo</h2>{{ m.hbarras(props.por_tipo, 'sigla', 'n') }}</div>
+  <div class="card neu"><h2>Por situação atual</h2>{{ m.hbarras(props.por_situacao, 'situacao', 'n') }}</div>
+  <div class="card neu"><h2>Por ano</h2>{{ m.hbarras(props.por_ano, 'ano', 'n') }}
+    <h2 style="border-top:1px solid var(--linha)">Por forma de apreciação</h2>{{ m.hbarras(props.por_conteudo, 'conteudo', 'n', limite=6) }}</div>
+</section>
+
+<section class="card neu">
+  <h2>Proposições <small>{{ props.itens|length }}{% if props.itens|length >= 400 %} mais recentes{% endif %}</small></h2>
+  <div class="rolagem" style="max-height:640px">
+  <table>
+    <thead><tr><th style="white-space:nowrap">Apresentação</th><th>Proposição</th><th>Ementa</th><th class="m-esc">Situação atual</th></tr></thead>
+    <tbody>
+    {% for p in props.itens %}
+      <tr>
+        <td style="white-space:nowrap;color:var(--suave)">{{ p.data_apresentacao|data }}</td>
+        <td style="white-space:nowrap"><b>{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.identificacao }}</a>{% else %}{{ p.identificacao }}{% endif %}</b>
+          <div style="font-size:11px;color:var(--suave)">{{ '1º autor' if p.principal else 'coautor' }}{% if p.virou_norma %} · <b style="color:#8a6d22">norma</b>{% endif %}</div></td>
+        <td style="font-size:13px">{{ p.ementa or '' }}
+          {% if not p.principal and p.autoria %}<div style="font-size:11px;color:var(--suave);margin-top:2px">{{ p.autoria[:120] }}{{ '…' if p.autoria|length > 120 }}</div>{% endif %}</td>
+        <td class="m-esc" style="font-size:12px">{{ p.situacao or '—' }}{% if p.data_situacao %}<div style="color:var(--suave)">{{ p.data_situacao|data }}</div>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="4" class="vazio-msg">Nenhuma proposição neste recorte.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="nota">Fonte: arquivos de proposições e autores da Câmara (autoria e coautoria; apoiadores não contam). “1º autor” = o deputado é o primeiro signatário. Emendas, substitutivos, pareceres e redações ficam de fora.</p>
+</section>
+{% endblock %}

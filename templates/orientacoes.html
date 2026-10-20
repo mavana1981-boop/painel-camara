@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Orientações{% endblock %}
+{% block conteudo %}
+{{ m.filtros(f, op) }}
+
+<section class="kpis">
+  <div class="kpi"><b>{{ resumo.votacoes }}</b><span>Votações nominais no período</span></div>
+  <div class="kpi"><b>{{ resumo.com_ambas }}</b><span>Com orientação de Governo e Oposição</span></div>
+  <div class="kpi"><b>{{ resumo.opostas }}</b><span>Orientações opostas</span></div>
+  <div class="kpi"><b>{{ resumo.nao_opostas }}</b><span>Orientações iguais</span></div>
+  <div class="kpi"><b>{{ resumo.aprovadas }}</b><span>Aprovadas</span></div>
+</section>
+
+<section class="grade">
+  <div class="card gov">
+    <h2>Governismo <small>{{ governismo|length }} deputados</small></h2>
+    <div class="rolagem">
+    {% if governismo %}
+    <table>
+      <thead><tr><th>Deputado(a)</th><th class="n m-esc">Seguiu</th><th class="n m-esc">Contra</th><th>% Governismo</th></tr></thead>
+      <tbody>
+      {% for s in governismo %}
+        <tr><td>{{ m.parlamentar(s) }}</td><td class="n m-esc">{{ s.seguiu }}</td><td class="n m-esc">{{ s.contra }}</td>
+            <td>{{ m.barra(s.pct, 'gov') }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="vazio-msg">Sem votações com orientação do Governo neste recorte.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="card opo">
+    <h2>Oposicionismo <small>{{ oposicionismo|length }} deputados</small></h2>
+    <div class="rolagem">
+    {% if oposicionismo %}
+    <table>
+      <thead><tr><th>Deputado(a)</th><th class="n m-esc">Seguiu</th><th class="n m-esc">Contra</th><th>% Oposicionismo</th></tr></thead>
+      <tbody>
+      {% for s in oposicionismo %}
+        <tr><td>{{ m.parlamentar(s) }}</td><td class="n m-esc">{{ s.seguiu }}</td><td class="n m-esc">{{ s.contra }}</td>
+            <td>{{ m.barra(s.pct, 'opo') }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="vazio-msg">Sem votações com orientação da Oposição neste recorte.</div>{% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="grade">
+  <div class="card neu">
+    <h2>Por partido <small>partido na data do voto</small></h2>
+    <div class="rolagem" style="max-height:420px">
+    <table>
+      <thead><tr><th>Partido</th><th class="n">Gov.</th><th class="n">Opos.</th><th class="n">Votos</th></tr></thead>
+      <tbody>
+      {% for p in por_partido %}
+        <tr><td><b>{{ p.chave }}</b></td>{{ m.heat(p.gov, 'gov') }}{{ m.heat(p.opo, 'opo') }}
+            <td class="n" style="color:var(--suave)">{{ p.opo_n or p.gov_n or 0 }}</td></tr>
+      {% else %}<tr><td colspan="4" class="vazio-msg">Sem dados.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card neu">
+    <h2>Por estado</h2>
+    <div class="rolagem" style="max-height:420px">
+    <table>
+      <thead><tr><th>UF</th><th class="n">Gov.</th><th class="n">Opos.</th><th class="n">Votos</th></tr></thead>
+      <tbody>
+      {% for u in por_uf %}
+        <tr><td><b>{{ u.chave }}</b></td>{{ m.heat(u.gov, 'gov') }}{{ m.heat(u.opo, 'opo') }}
+            <td class="n" style="color:var(--suave)">{{ u.opo_n or u.gov_n or 0 }}</td></tr>
+      {% else %}<tr><td colspan="4" class="vazio-msg">Sem dados.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+<section class="card neu">
+  <h2>Votações com orientação <small>mais recentes primeiro · até 150</small></h2>
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Data</th><th>Matéria</th><th class="c">Governo</th><th class="c">Oposição</th><th class="n m-esc">Sim × Não</th></tr></thead>
+    <tbody>
+    {% for v in votacoes %}
+      <tr>
+        <td style="white-space:nowrap">{{ v.data|data }}</td>
+        <td><a href="{{ url_for('votacoes', id=v.id) }}" style="text-decoration:none"><b>{% if v.sigla_materia %}{{ v.sigla_materia }}{% if v.numero_materia %} {{ v.numero_materia }}/{{ v.ano_materia }}{% endif %}{% else %}Votação {{ v.id }}{% endif %}</b></a>
+            {% if v.descricao_votacao %}<div style="font-size:12px">{{ v.descricao_votacao[:160] }}</div>{% endif %}
+            <div style="font-size:12px;color:var(--suave)">{{ (v.descricao_materia or '')[:140] }}</div></td>
+        <td class="c"><span class="pill {{ v.gov or 'vazio' }}">{{ v.gov or '—' }}</span></td>
+        <td class="c"><span class="pill {{ v.opo or 'vazio' }}">{{ v.opo or '—' }}</span></td>
+        <td class="n m-esc">{{ v.qtd_sim if v.qtd_sim is not none else '—' }} × {{ v.qtd_nao if v.qtd_nao is not none else '—' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="5" class="vazio-msg">Nenhuma votação neste recorte.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="nota">Alinhamento = votos SIM/NÃO iguais à orientação ÷ votos SIM/NÃO do deputado quando a liderança orientou SIM ou NÃO. Orientação “liberado”, abstenção, obstrução e Art. 17 ficam fora. Só votações nominais do Plenário. Fonte: Dados Abertos da Câmara dos Deputados.</p>
+</section>
+{% endblock %}

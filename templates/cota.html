@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Cota · {{ c.deputado.nome }}{% endblock %}
+{% block conteudo %}
+{{ m.seletor(lista, cod, c.deputado, 'cota') }}
+
+<div class="anos" style="margin-bottom:14px">
+  <a href="{{ url_for('cota', deputado=cod) }}" class="{{ 'sel' if not ano }}">2023–hoje</a>
+  {% for a in todos_anos|sort %}<a href="{{ url_for('cota', deputado=cod, ano=a) }}" class="{{ 'sel' if ano == a }}">{{ a }}</a>{% endfor %}
+</div>
+
+<section class="kpis">
+  <div class="kpi dest"><b>{{ c.teto_atual|brl }}</b><span>Cota mensal hoje ({{ c.deputado.uf }})</span></div>
+  <div class="kpi dest"><b>{{ c.total.disponivel|brl(0) }}</b><span>Cota disponível no período</span></div>
+  <div class="kpi dest"><b>{{ c.total.gasto|brl(0) }}</b><span>Gasto reembolsado</span></div>
+  <div class="kpi dest ouro"><b>{{ c.total.economia|brl(0) }}</b><span>Economia</span><small>{{ c.total.pct_uso|pct }} da cota usada</small></div>
+</section>
+
+{% if not c.resumo %}
+  <div class="embreve">Nenhuma despesa de cota registrada para este deputado no período.</div>
+{% else %}
+<section class="grade">
+  <div class="card neu">
+    <h2>Por ano</h2>
+    <table>
+      <thead><tr><th>Ano</th><th class="n">Disponível</th><th class="n">Gasto</th><th class="n">Economia</th></tr></thead>
+      <tbody>
+      {% for r in c.resumo|reverse %}
+        <tr><td><b>{{ r.ano }}</b>{% if r.meses < 12 %}<div style="font-size:11px;color:var(--suave)">{{ r.meses }} meses</div>{% endif %}</td>
+            <td class="n">{{ r.disponivel|brl(0) }}</td><td class="n">{{ r.gasto|brl(0) }}</td>
+            <td class="n"><b>{{ r.economia|brl(0) }}</b><div style="font-size:11px;color:var(--suave)">{{ r.pct_uso|pct }} usado</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card neu">
+    <h2>Despesa mensal {% if c.anos %}<small>{{ (ano or c.anos[0]) }} · passe o mouse nas barras</small>{% endif %}</h2>
+    {% set a_graf = ano or c.anos[0] %}
+    {% set serie = c.mensal[a_graf] %}
+    {% set r_ano = (c.resumo|selectattr('ano', 'equalto', a_graf)|first) %}
+    {% set teto = r_ano.teto_mes if r_ano else None %}
+    {% set topo = [ (serie|max), (teto or 0) ]|max %}
+    <div class="vbar" role="img" aria-label="Despesa mensal de {{ a_graf }}">
+      {% if teto and topo %}<div class="teto" style="bottom:{{ 100 * teto / topo * 0.9 }}%"><span>cota mensal {{ teto|brl(0) }}</span></div>{% endif %}
+      {% for v in serie %}
+        <div class="col"><i style="height:{{ (90 * v / topo) if topo else 0 }}%"></i>
+          <span class="tip">{{ ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][loop.index0] }}: {{ v|brl }}</span></div>
+      {% endfor %}
+    </div>
+    <div class="vbar-eixo">{% for mm in ['J','F','M','A','M','J','J','A','S','O','N','D'] %}<span>{{ mm }}</span>{% endfor %}</div>
+    {% if not ano and c.anos|length > 1 %}<p class="nota">Mostrando {{ a_graf }}. Escolha um ano acima para ver os demais.</p>{% endif %}
+  </div>
+</section>
+
+<section class="grade">
+  <div class="card neu"><h2>Por categoria</h2>{{ m.hbarras(c.categorias, 'tipo', 'total', fmt='brl', limite=12) }}</div>
+  <div class="card neu">
+    <h2>Principais fornecedores <small>top 25</small></h2>
+    <div class="rolagem" style="max-height:420px">
+    <table><thead><tr><th>Fornecedor</th><th class="n m-esc">Notas</th><th class="n">Total</th></tr></thead><tbody>
+    {% for x in c.fornecedores %}
+      <tr><td>{{ x.fornecedor or '—' }}<div style="font-size:11px;color:var(--suave)">{{ x.cnpj or '' }}</div></td>
+          <td class="n m-esc">{{ x.n }}</td><td class="n"><b>{{ x.total|brl(0) }}</b></td></tr>
+    {% endfor %}
+    </tbody></table>
+    </div>
+  </div>
+</section>
+
+<section class="card neu">
+  <h2>Lançamentos mais recentes <small>últimos 60</small></h2>
+  <div class="rolagem">
+  <table><thead><tr><th>Data</th><th>Fornecedor</th><th class="m-esc">Categoria</th><th class="n">Valor</th></tr></thead><tbody>
+  {% for x in c.recentes %}
+    <tr><td style="white-space:nowrap;color:var(--suave)">{{ x.data|data }}</td>
+        <td>{{ x.fornecedor or '—' }}<div style="font-size:11px;color:var(--suave)">{{ x.cnpj_cpf or '' }}{% if x.documento %} · doc. {% if x.url %}<a href="{{ x.url }}" target="_blank" rel="noopener">{{ x.documento }}</a>{% else %}{{ x.documento }}{% endif %}{% endif %}</div></td>
+        <td class="m-esc" style="font-size:12px">{{ x.tipo }}</td><td class="n"><b>{{ x.valor|brl }}</b></td></tr>
+  {% endfor %}
+  </tbody></table>
+  </div>
+  <p class="nota">Cota disponível = teto mensal da CEAP da UF × meses em que o deputado esteve no cargo no ano (estimados pela atividade registrada).
+    Tetos: valores em vigor desde fev/2023, corrigidos em 13,75% (IPCA) a partir de mar/2026. Gasto = valor líquido reembolsado (já descontadas glosas e restituições). Fonte: arquivos anuais da CEAP da Câmara dos Deputados.</p>
+</section>
+{% endif %}
+{% endblock %}

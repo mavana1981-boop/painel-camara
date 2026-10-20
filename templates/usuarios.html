@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block titulo %}Usuários{% endblock %}
+{% block conteudo %}
+<div class="card neu" style="margin-bottom:14px">
+  <h2>Novo usuário</h2>
+  <form method="post" class="form-linha">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <input type="hidden" name="acao" value="criar">
+    <input name="login" placeholder="usuário (ex.: joao.silva)" required autocapitalize="none">
+    <input name="nome" placeholder="Nome">
+    <input name="senha" type="password" placeholder="Senha inicial (mín. 8)" minlength="8" required autocomplete="new-password">
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" name="admin" value="1"> Administrador</label>
+    <button class="btn">Criar</button>
+  </form>
+</div>
+
+<div class="card neu">
+  <h2>Usuários <small>{{ lista|length }}</small></h2>
+  <div class="rolagem" style="max-height:none">
+  <table>
+    <thead><tr><th>Usuário</th><th>Nome</th><th class="c">Perfil</th><th class="c">Situação</th><th class="m-esc">Último acesso</th><th>Ações</th></tr></thead>
+    <tbody>
+    {% for u in lista %}
+      <tr>
+        <td><b>{{ u.login }}</b>{% if u.id == usuario.id %} <span class="fora">você</span>{% endif %}</td>
+        <td>{{ u.nome or '' }}</td>
+        <td class="c">{{ 'Admin' if u.admin else 'Leitura' }}</td>
+        <td class="c">{% if u.ativo %}<span class="pill SIM">ativo</span>{% else %}<span class="pill LIVRE">inativo</span>{% endif %}</td>
+        <td class="m-esc" style="color:var(--suave)">{{ u.ultimo_acesso|data if u.ultimo_acesso else '—' }}</td>
+        <td>
+          {% if u.id != usuario.id %}
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            {% for acao, rot in [('alternar', 'Desativar' if u.ativo else 'Ativar'), ('admin', 'Tirar admin' if u.admin else 'Tornar admin')] %}
+            <form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <input type="hidden" name="acao" value="{{ acao }}"><input type="hidden" name="id" value="{{ u.id }}">
+              <button class="mini">{{ rot }}</button></form>
+            {% endfor %}
+            <form method="post" style="display:flex;gap:4px"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <input type="hidden" name="acao" value="senha"><input type="hidden" name="id" value="{{ u.id }}">
+              <input type="password" name="senha" placeholder="nova senha" minlength="8" required class="mini" style="width:110px" autocomplete="new-password">
+              <button class="mini">Redefinir</button></form>
+            <form method="post" onsubmit="return confirm('Excluir {{ u.login }}?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="{{ u.id }}">
+              <button class="mini perigo">Excluir</button></form>
+          </div>
+          {% else %}<a href="{{ url_for('auth.conta') }}" class="mini" style="text-decoration:none">Alterar minha senha</a>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

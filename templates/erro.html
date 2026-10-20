@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block titulo %}Erro {{ codigo }}{% endblock %}
+{% block conteudo %}
+<div class="embreve">
+  <h2 style="margin-top:0;color:var(--tinta)">{{ codigo }}</h2>
+  <p>{{ msg }}</p>
+  <a class="btn" href="{{ url_for('index') }}">Voltar ao painel</a>
+</div>
+{% endblock %}

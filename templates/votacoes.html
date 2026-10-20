@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Votações{% endblock %}
+
+{% macro rotulo(v) -%}
+{% if v.sigla_materia %}{{ v.sigla_materia }}{% if v.numero_materia %} {{ v.numero_materia }}/{{ v.ano_materia }}{% endif %}{% else %}Votação {{ v.id }}{% endif %}
+{%- endmacro %}
+
+{% block conteudo %}
+<form class="filtros" method="get">
+  <label style="flex:2 1 220px">Buscar matéria<input type="search" name="busca" value="{{ busca }}" placeholder="Ex.: PL 1087, PEC 45, destaque, reforma"></label>
+  <label>De<input type="date" name="inicio" value="{{ f.inicio or '' }}"></label>
+  <label>Até<input type="date" name="fim" value="{{ f.fim or '' }}"></label>
+  <label>Matéria<select name="sigla"><option value="">Todas</option>
+    {% for s in op.siglas %}<option {{ 'selected' if f.sigla == s }}>{{ s }}</option>{% endfor %}</select></label>
+  <button class="btn">Buscar</button>
+  <a class="btn sec" href="{{ request.path }}">Limpar</a>
+</form>
+
+<div class="vot-layout">
+  <aside class="card neu vot-lista">
+    <h2>Votações <small>{{ lista|length }}{% if lista|length >= 300 %}+{% endif %}</small></h2>
+    <div class="rolagem" style="max-height:none">
+    {% for v in lista %}
+      {% set q = request.args.to_dict() %}{% set _ = q.update({'id': v.id}) %}
+      <a class="vot-item {{ 'sel' if v.id == vid }}" href="{{ url_for('votacoes', **q) }}">
+        <span class="vot-data">{{ v.data|data }}</span>
+        <b>{{ rotulo(v) }}</b>
+        <span class="vot-desc">{{ (v.descricao_votacao or v.descricao_materia or '')[:120] }}</span>
+        {% if v.secreta %}<span class="tag">secreta</span>{% endif %}
+      </a>
+    {% else %}
+      <div class="vazio-msg">Nenhuma votação encontrada.</div>
+    {% endfor %}
+    </div>
+  </aside>
+
+  <section class="vot-detalhe">
+  {% if det %}
+    {% set v = det.votacao %}{% set c = det.contagem %}
+    <div class="card neu">
+      <h2>{{ rotulo(v) }} <small>{{ v.data|data }}{% if v.presidente %} · Pres.: {{ v.presidente }}{% endif %}{% if v.aprovacao is not none %}{% if v.aprovacao %} · <b style="color:#17703a">aprovada</b>{% else %} · <b style="color:#b03021">rejeitada</b>{% endif %}{% endif %}</small></h2>
+      <div style="padding:12px 14px">
+        <div>{{ v.descricao_materia or '' }}</div>
+        {% if v.descricao_votacao %}<div style="color:var(--suave);margin-top:6px;font-size:13px">{{ v.descricao_votacao }}</div>{% endif %}
+        {% if v.dispositivo %}<div style="color:var(--suave);margin-top:4px;font-size:12px">Também afeta: {{ v.dispositivo }}</div>{% endif %}
+        {% if v.proposicao_id %}<div style="margin-top:4px;font-size:12px"><a href="https://www.camara.leg.br/propostas-legislativas/{{ v.proposicao_id }}" target="_blank" rel="noopener">ficha da proposição ↗</a></div>{% endif %}
+        {% set tot = c['SIM'] + c['NÃO'] %}
+        <div class="placar">
+          <div class="placar-n sim"><b>{{ c['SIM'] }}</b><span>Sim</span></div>
+          <div class="placar-barra">
+            <i class="s" style="width:{{ (100 * c['SIM'] / tot) if tot else 0 }}%"></i><i class="n" style="width:{{ (100 * c['NÃO'] / tot) if tot else 0 }}%"></i>
+          </div>
+          <div class="placar-n nao"><b>{{ c['NÃO'] }}</b><span>Não</span></div>
+        </div>
+        <div style="font-size:12px;color:var(--suave)">
+          {% if c['ABSTENÇÃO'] %}{{ c['ABSTENÇÃO'] }} abstenção(ões) · {% endif %}
+          {% if c['OBSTRUÇÃO'] %}{{ c['OBSTRUÇÃO'] }} obstrução(ões) · {% endif %}
+          {% if c['OUTROS'] %}{{ c['OUTROS'] }} outros registros · {% endif %}
+          {{ v.sessao or '' }}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <span class="chip">Governo <span class="pill {{ det.gov or 'vazio' }}">{{ det.gov or '—' }}</span></span>
+          <span class="chip">Oposição <span class="pill {{ det.opo or 'vazio' }}">{{ det.opo or '—' }}</span></span>
+        </div>
+      </div>
+    </div>
+
+    {% if v.secreta %}
+      <div class="card neu" style="margin-top:14px"><div class="vazio-msg">Votação secreta: a Câmara divulga só o placar final, sem o voto de cada deputado.</div></div>
+    {% endif %}
+
+    <div class="grade" style="margin-top:14px">
+      <div class="card neu">
+        <h2>Orientações de bancada <small>{{ det.orientacoes|length }}</small></h2>
+        <div class="rolagem" style="max-height:360px">
+        <table><thead><tr><th>Liderança</th><th class="c">Orientação</th></tr></thead><tbody>
+        {% for o in det.orientacoes %}
+          <tr><td>{% if o.lideranca in ('Governo','Oposição','Maioria','Minoria') %}<b>{{ o.lideranca }}</b>{% else %}{{ o.lideranca }}{% endif %}</td>
+              <td class="c"><span class="pill {{ o.voto }}">{{ o.voto }}</span></td></tr>
+        {% else %}<tr><td colspan="2" class="vazio-msg">Sem orientações registradas.</td></tr>{% endfor %}
+        </tbody></table>
+        </div>
+      </div>
+
+      <div class="card neu">
+        <h2>Resultado por partido <small>partido na data do voto · orientação própria, da federação ou do bloco</small></h2>
+        <div class="rolagem" style="max-height:360px">
+        <table><thead><tr><th>Partido</th><th class="c">Orient.</th><th class="n">Sim</th><th class="n">Não</th><th class="n m-esc">Outros</th></tr></thead><tbody>
+        {% for p in det.placar %}
+          <tr><td><b>{{ p.partido }}</b></td>
+              <td class="c">{% if p.orientacao %}<span class="pill {{ p.orientacao }}">{{ p.orientacao }}</span>{% else %}<span style="color:#bbb">—</span>{% endif %}</td>
+              <td class="n">{{ p['SIM'] or '' }}</td><td class="n">{{ p['NÃO'] or '' }}</td><td class="n m-esc" style="color:var(--suave)">{{ p.outros or '' }}</td></tr>
+        {% endfor %}
+        </tbody></table>
+        </div>
+      </div>
+    </div>
+
+    {% if det.traidores %}
+    <div class="card gov" style="margin-bottom:14px">
+      <h2>Votaram contra a orientação do próprio partido <small>{{ det.traidores|length }}</small></h2>
+      <div class="rolagem" style="max-height:300px">
+      <table><thead><tr><th>Deputado(a)</th><th class="c">Partido orientou</th><th class="c">Votou</th></tr></thead><tbody>
+      {% for r in det.traidores %}
+        <tr><td>{{ m.parlamentar(r) }}</td><td class="c"><span class="pill {{ r.ori_partido }}">{{ r.ori_partido }}</span></td>
+            <td class="c"><span class="pill {{ r.voto }}">{{ r.voto }}</span></td></tr>
+      {% endfor %}
+      </tbody></table>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if not v.secreta %}
+    <div class="card neu">
+      <h2>Votos nominais <small><span id="cont">{{ det.votos|length }}</span> deputados</small></h2>
+      <div class="filtros" style="border:0;border-bottom:1px solid var(--linha);border-radius:0;margin:0">
+        <label style="flex:2 1 160px">Nome<input type="search" id="fNome" placeholder="Filtrar por nome"></label>
+        <label>Voto<select id="fVoto"><option value="">Todos</option><option>SIM</option><option>NÃO</option><option>ABSTENÇÃO</option><option>OBSTRUÇÃO</option><option>ART. 17</option></select></label>
+        <label>Partido<select id="fPart"><option value="">Todos</option>{% for p in det.placar %}<option>{{ p.partido }}</option>{% endfor %}</select></label>
+        <label>Com a Oposição<select id="fOpo"><option value="">Todos</option><option value="1">Sim</option><option value="0">Não</option></select></label>
+      </div>
+      <div class="rolagem">
+      <table id="tVotos"><thead><tr><th>Deputado(a)</th><th class="c">Voto</th><th class="c m-esc">Com Gov.</th><th class="c">Com Opos.</th></tr></thead><tbody>
+      {% for r in det.votos %}
+        <tr data-nome="{{ r.nome|lower }}" data-voto="{{ r.voto }}" data-part="{{ r.partido_voto }}"
+            data-opo="{{ '' if r.com_oposicao is none else (1 if r.com_oposicao else 0) }}">
+          <td>{{ m.parlamentar(r) }}</td>
+          <td class="c"><span class="pill {{ r.voto }}">{{ r.voto }}</span></td>
+          <td class="c m-esc">{{ '—' if r.com_governo is none else ('✓' if r.com_governo else '✗') }}</td>
+          <td class="c">{{ '—' if r.com_oposicao is none else ('✓' if r.com_oposicao else '✗') }}</td></tr>
+      {% endfor %}
+      </tbody></table>
+      </div>
+    </div>
+    {% endif %}
+  {% else %}
+    <div class="embreve">Nenhuma votação no banco para este recorte ainda. Se acabou de fazer o deploy, a carga inicial pode estar em andamento.</div>
+  {% endif %}
+  </section>
+</div>
+
+<script>
+(function(){
+  const t=document.getElementById('tVotos'); if(!t) return;
+  const nome=document.getElementById('fNome'), voto=document.getElementById('fVoto'),
+        part=document.getElementById('fPart'), opo=document.getElementById('fOpo'),
+        cont=document.getElementById('cont');
+  const sem=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+  function aplicar(){
+    const n=sem(nome.value.trim()); let k=0;
+    t.querySelectorAll('tbody tr').forEach(tr=>{
+      const ok=(!n||sem(tr.dataset.nome).includes(n))&&(!voto.value||tr.dataset.voto===voto.value)
+             &&(!part.value||tr.dataset.part===part.value)&&(!opo.value||tr.dataset.opo===opo.value);
+      tr.style.display=ok?'':'none'; if(ok)k++;
+    });
+    cont.textContent=k;
+  }
+  [nome,voto,part,opo].forEach(el=>el.addEventListener('input',aplicar));
+})();
+</script>
+{% endblock %}

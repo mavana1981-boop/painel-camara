@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#052817">
+<title>Entrar · Painel da Câmara</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-pg">
+{% import "_selo.html" as selo %}
+<img class="plenario" src="{{ url_for('static', filename='plenario.svg') }}" alt="" aria-hidden="true">
+<div class="brilho"></div>
+
+<form class="login-card" method="post" action="{{ url_for('auth.login') }}" autocomplete="on">
+  <div class="selo">{{ selo.selo(58) }}</div>
+  <h1>Painel da Câmara</h1>
+  <div class="fio"></div>
+  <p class="sub">Liderança da Oposição · acesso restrito</p>
+
+  {% if erro %}<div class="erro" role="alert">{{ erro }}</div>{% endif %}
+  {% if sem_usuarios %}
+    <div class="info">Nenhum usuário cadastrado ainda. Defina as variáveis <b>ADMIN_USER</b> e
+      <b>ADMIN_PASSWORD</b> no Railway e reinicie o serviço para criar o administrador.</div>
+  {% endif %}
+
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="proximo" value="{{ proximo }}">
+  <label for="login">Usuário</label>
+  <input type="text" id="login" name="login" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+  <label for="senha">Senha</label>
+  <input type="password" id="senha" name="senha" autocomplete="current-password" required>
+  <label class="lembrar"><input type="checkbox" name="lembrar" value="1"> Manter conectado neste dispositivo</label>
+  <button type="submit">Entrar</button>
+  <div class="rod">Dados públicos da Câmara dos Deputados, de uso interno.<br>Acesso concedido pelo administrador do painel.</div>
+</form>
+<div class="login-legenda">Plenário Ulysses Guimarães · Câmara dos Deputados<span class="credito">Desenvolvido por: <span class="nw">Luisa Marreco – Minoria CD</span> / <span class="nw">Marcelo Uvara – Oposição CD</span></span></div>
+</body>
+</html>

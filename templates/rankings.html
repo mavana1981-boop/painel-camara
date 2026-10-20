@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Rankings{% endblock %}
+
+{% macro tabela(lista, tipo, col_n, col_tot, rotulo) -%}
+<div class="rolagem">
+{% if lista %}
+<table>
+  <thead><tr><th class="rank">#</th><th>Deputado(a)</th><th class="n m-esc">{{ rotulo }}</th><th>%</th></tr></thead>
+  <tbody>
+  {% for s in lista %}
+    <tr><td class="rank">{{ loop.index }}</td><td>{{ m.parlamentar(s) }}</td>
+        <td class="n m-esc" style="color:var(--suave);white-space:nowrap">{{ s[col_n] }}/{{ s[col_tot] }}</td>
+        <td>{{ m.barra(s.pct, tipo) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<div class="vazio-msg">Sem dados neste recorte.</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% block conteudo %}
+{{ m.filtros(f, op) }}
+
+<section class="grade larga">
+  <div class="card opo">
+    <h2>Oposicionismo <small>mín. 10 votos</small></h2>
+    {{ tabela(oposicionismo, 'opo', 'seguiu', 'total', 'Votos') }}
+  </div>
+  <div class="card gov">
+    <h2>Governismo <small>mín. 10 votos</small></h2>
+    {{ tabela(governismo, 'gov', 'seguiu', 'total', 'Votos') }}
+  </div>
+  <div class="card neu">
+    <h2>Participação em votações nominais <small>todas as votações</small></h2>
+    {{ tabela(participacao, 'neu', 'votou', 'realizadas', 'Votou') }}
+    <p class="nota">Votações em que registrou voto (inclui obstrução e Art. 17) ÷ votações realizadas entre o primeiro e o último voto do deputado no período — assim suplentes e quem assumiu no meio do mandato não são penalizados pelo tempo fora.</p>
+  </div>
+  <div class="card neu">
+    <h2>Fidelidade ao próprio partido <small>mín. 10 votos</small></h2>
+    {{ tabela(fidelidade, 'neu', 'seguiu', 'total', 'Votos') }}
+    <p class="nota">Votos iguais à orientação que valeu para o partido do deputado na data da votação (própria; se não houver, da federação; senão, do bloco).</p>
+  </div>
+  <div class="card neu">
+    <h2>Apresentação de projetos <small>1º autor · PL, PLP, PEC, PDL, PRC</small></h2>
+    <div class="rolagem">
+    {% if projetos %}
+    <table><thead><tr><th class="rank">#</th><th>Deputado(a)</th><th class="n">Projetos</th><th class="n m-esc">Normas</th></tr></thead><tbody>
+    {% for s in projetos %}
+      <tr><td class="rank">{{ loop.index }}</td><td><a href="{{ url_for('proposicoes', deputado=s.codigo, papel='autor') }}" style="text-decoration:none">{{ m.parlamentar(s) }}</a></td>
+          <td class="n"><b>{{ s.n }}</b></td><td class="n m-esc" style="color:var(--suave)">{{ s.normas or '' }}</td></tr>
+    {% endfor %}
+    </tbody></table>
+    {% else %}<div class="vazio-msg">Sem dados neste recorte.</div>{% endif %}
+    </div>
+  </div>
+  <div class="card neu">
+    <h2>Economia na cota (CEAP) <small>% da cota não utilizada</small></h2>
+    <div class="rolagem">
+    {% if economia %}
+    <table><thead><tr><th class="rank">#</th><th>Deputado(a)</th><th class="n m-esc">Economia</th><th>%</th></tr></thead><tbody>
+    {% for s in economia %}
+      <tr><td class="rank">{{ loop.index }}</td><td><a href="{{ url_for('cota', deputado=s.codigo) }}" style="text-decoration:none">{{ m.parlamentar(s) }}</a></td>
+          <td class="n m-esc" style="white-space:nowrap">{{ s.economia|brl(0) }}</td><td>{{ m.barra(s.pct, 'neu') }}</td></tr>
+    {% endfor %}
+    </tbody></table>
+    {% else %}<div class="vazio-msg">Sem dados de cota.</div>{% endif %}
+    </div>
+    <p class="nota">Considera os anos do filtro de período (padrão: 2023 até hoje).</p>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block titulo %}Minha conta{% endblock %}
+{% block conteudo %}
+<div class="card neu" style="max-width:520px">
+  <h2>Minha conta <small>{{ usuario.login }}</small></h2>
+  <form method="post" style="padding:14px;display:grid;gap:10px">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <label class="filtros" style="border:0;padding:0;margin:0;display:block">Senha atual
+      <input type="password" name="atual" required autocomplete="current-password" style="width:100%"></label>
+    <label class="filtros" style="border:0;padding:0;margin:0;display:block">Nova senha (mín. 8 caracteres)
+      <input type="password" name="nova" required minlength="8" autocomplete="new-password" style="width:100%"></label>
+    <label class="filtros" style="border:0;padding:0;margin:0;display:block">Confirme a nova senha
+      <input type="password" name="confirma" required minlength="8" autocomplete="new-password" style="width:100%"></label>
+    <div><button class="btn">Alterar senha</button></div>
+  </form>
+</div>
+{% endblock %}

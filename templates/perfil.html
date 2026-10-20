@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Perfil · {{ s.nome }}{% endblock %}
+{% block conteudo %}
+{{ m.seletor(lista, cod, s, 'perfil') }}
+{% set b = perfil.basicos %}
+
+<section class="kpis">
+  <div class="kpi dest opo"><b>{{ ind.opo|pct }}</b><span>Oposicionismo</span><small>{{ ind.opo_n }} votos com orientações opostas</small></div>
+  <div class="kpi dest gov"><b>{{ ind.gov|pct }}</b><span>Governismo</span><small>mesmo recorte</small></div>
+  <div class="kpi dest"><b>{{ ind.participacao|pct }}</b><span>Participação em votações nominais</span><small>{{ ind.votou }} de {{ ind.realizadas }}</small></div>
+  <div class="kpi dest"><b>{{ ind.fidelidade|pct }}</b><span>Fidelidade ao partido</span></div>
+  <div class="kpi dest ouro"><b>{{ props.total|mil }}</b><span>Proposições (autor ou coautor)</span><small>{{ props.principal|mil }} como 1º autor · {{ props.normas }} {{ 'virou' if props.normas == 1 else 'viraram' }} norma</small></div>
+  <div class="kpi dest ouro"><b>{{ cota.total.pct_uso|pct if cota else '—' }}</b><span>Uso da cota (2023–hoje)</span><small>{{ cota.total.gasto|brl(0) if cota else '' }} gastos</small></div>
+</section>
+
+<section class="grade">
+  <div class="card neu">
+    <h2>Dados pessoais</h2>
+    <div class="ficha">
+      {% if b.nome_completo %}<div><b>Nome civil</b>{{ b.nome_completo }}</div>{% endif %}
+      {% if b.nascimento %}<div><b>Nascimento</b>{{ b.nascimento|data }}{% if b.idade %} ({{ b.idade }} anos){% endif %}</div>{% endif %}
+      {% if b.naturalidade %}<div><b>Naturalidade</b>{{ b.naturalidade }}{% if b.uf_naturalidade %}-{{ b.uf_naturalidade }}{% endif %}</div>{% endif %}
+      {% if b.email %}<div><b>E-mail</b><a href="mailto:{{ b.email }}">{{ b.email }}</a></div>{% endif %}
+      {% if perfil.telefones %}<div><b>Telefone</b>{{ perfil.telefones|join(', ') }}</div>{% endif %}
+      {% if b.escolaridade %}<div><b>Escolaridade</b>{{ b.escolaridade }}</div>{% endif %}
+      {% if b.situacao %}<div><b>Situação</b>{{ b.situacao }}{% if b.condicao %} · {{ b.condicao }}{% endif %}</div>{% endif %}
+      {% if b.endereco %}<div><b>Gabinete</b>{{ b.endereco }}</div>{% endif %}
+      {% if b.pagina %}<div><b>Página oficial</b><a href="{{ b.pagina }}" target="_blank" rel="noopener">camara.leg.br ↗</a></div>{% endif %}
+      {% if not b %}<div style="color:var(--suave)">Detalhes ainda não coletados.</div>{% endif %}
+    </div>
+    <p class="nota">Membro de {{ perfil.comissoes|length }} colegiados · {{ perfil.frentes }} frentes parlamentares · {{ perfil.grupos }} grupos parlamentares.</p>
+  </div>
+
+  <div class="card neu">
+    <h2>Cargos atuais <small>{{ perfil.cargos|length }}</small></h2>
+    <div class="rolagem" style="max-height:330px">
+    <table><tbody>
+    {% for x in perfil.cargos %}
+      <tr><td><b>{{ x.cargo }}</b><div style="font-size:12px;color:var(--suave)">{{ x.nome }}{% if x.sigla %} ({{ x.sigla }}){% endif %}</div></td>
+          <td class="n" style="color:var(--suave);white-space:nowrap">desde {{ x.desde|data }}</td></tr>
+    {% else %}<tr><td class="vazio-msg">Nenhum cargo atual registrado.</td></tr>{% endfor %}
+    </tbody></table>
+    </div>
+  </div>
+</section>
+
+<section class="grade">
+  <div class="card neu">
+    <h2>Comissões e colegiados <small>participações atuais</small></h2>
+    <div class="rolagem" style="max-height:420px">
+    <table><thead><tr><th>Colegiado</th><th class="c">Participação</th><th class="n m-esc">Desde</th></tr></thead><tbody>
+    {% for x in perfil.comissoes %}
+      <tr><td><b>{{ x.sigla }}</b> <span style="color:var(--suave);font-size:12px">{{ x.nome }}</span></td>
+          <td class="c">{{ x.participacao }}</td><td class="n m-esc" style="color:var(--suave)">{{ x.desde|data }}</td></tr>
+    {% else %}<tr><td colspan="3" class="vazio-msg">Sem participações registradas.</td></tr>{% endfor %}
+    </tbody></table>
+    </div>
+  </div>
+
+  <div class="card neu">
+    <h2>Proposições por tipo <small><a href="{{ url_for('proposicoes', deputado=cod) }}">ver todas →</a></small></h2>
+    {{ m.hbarras(props.por_tipo, 'sigla', 'n', limite=10) }}
+    <h2 style="border-top:1px solid var(--linha)">Por ano de apresentação</h2>
+    {{ m.hbarras(props.por_ano, 'ano', 'n', limite=8) }}
+  </div>
+</section>
+
+{% if cota and cota.resumo %}
+<section class="card neu">
+  <h2>Cota parlamentar (CEAP) <small><a href="{{ url_for('cota', deputado=cod) }}">detalhar →</a></small></h2>
+  <table>
+    <thead><tr><th>Ano</th><th class="n">Cota disponível</th><th class="n">Gasto</th><th class="n">Economia</th><th class="n m-esc">% usado</th></tr></thead>
+    <tbody>
+    {% for r in cota.resumo|reverse %}
+      <tr><td><b>{{ r.ano }}</b>{% if r.meses < 12 %} <span style="font-size:11px;color:var(--suave)">({{ r.meses }} meses)</span>{% endif %}</td>
+          <td class="n">{{ r.disponivel|brl(0) }}</td><td class="n">{{ r.gasto|brl(0) }}</td>
+          <td class="n"><b>{{ r.economia|brl(0) }}</b></td><td class="n m-esc">{{ r.pct_uso|pct }}</td></tr>
+    {% endfor %}
+    <tr style="background:var(--pri-cl)"><td><b>Total</b></td><td class="n"><b>{{ cota.total.disponivel|brl(0) }}</b></td>
+        <td class="n"><b>{{ cota.total.gasto|brl(0) }}</b></td><td class="n"><b>{{ cota.total.economia|brl(0) }}</b></td>
+        <td class="n m-esc"><b>{{ cota.total.pct_uso|pct }}</b></td></tr>
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

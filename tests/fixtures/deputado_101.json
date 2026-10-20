@@ -1,0 +1,41 @@
+{
+ "dados": {
+  "id": 101,
+  "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/101",
+  "nomeCivil": "ANA MARIA DE TESTE OPOSIÇÃO",
+  "cpf": "",
+  "ultimoStatus": {
+   "id": 101,
+   "nome": "Ana Oposição",
+   "siglaPartido": "PL",
+   "siglaUf": "SP",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/101.jpg",
+   "email": "dep.anaoposicao@camara.leg.br",
+   "data": "2023-02-01",
+   "nomeEleitoral": "Ana Oposição",
+   "gabinete": {
+    "nome": "512",
+    "predio": "4",
+    "sala": "512",
+    "andar": "5",
+    "telefone": "3215-5512",
+    "email": "dep.anaoposicao@camara.leg.br"
+   },
+   "situacao": "Exercício",
+   "condicaoEleitoral": "Titular",
+   "descricaoStatus": null
+  },
+  "sexo": "F",
+  "urlWebsite": null,
+  "redeSocial": [
+   "https://www.instagram.com/anateste"
+  ],
+  "dataNascimento": "1980-05-17",
+  "dataFalecimento": null,
+  "ufNascimento": "SP",
+  "municipioNascimento": "Campinas",
+  "escolaridade": "Superior"
+ },
+ "links": []
+}

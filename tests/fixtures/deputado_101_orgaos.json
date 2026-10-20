@@ -1,0 +1,42 @@
+[
+ {
+  "idOrgao": 2003,
+  "siglaOrgao": "CCJC",
+  "nomeOrgao": "Comissão de Constituição e Justiça e de Cidadania",
+  "nomePublicacao": "Comissão de Constituição e Justiça e de Cidadania",
+  "titulo": "Titular",
+  "codTitulo": "101",
+  "dataInicio": "2025-03-12T00:00",
+  "dataFim": null
+ },
+ {
+  "idOrgao": 2004,
+  "siglaOrgao": "CSPCCO",
+  "nomeOrgao": "Comissão de Segurança Pública e Combate ao Crime Organizado",
+  "nomePublicacao": "Comissão de Segurança Pública e Combate ao Crime Organizado",
+  "titulo": "Presidente",
+  "codTitulo": "1",
+  "dataInicio": "2025-03-20T00:00",
+  "dataFim": null
+ },
+ {
+  "idOrgao": 2005,
+  "siglaOrgao": "CFT",
+  "nomeOrgao": "Comissão de Finanças e Tributação",
+  "nomePublicacao": "Comissão de Finanças e Tributação",
+  "titulo": "Suplente",
+  "codTitulo": "102",
+  "dataInicio": "2023-03-08T00:00",
+  "dataFim": "2024-01-31T00:00"
+ },
+ {
+  "idOrgao": 5001,
+  "siglaOrgao": "CESP4545",
+  "nomeOrgao": "Comissão Especial sobre a PEC 45/2025",
+  "nomePublicacao": "PEC 045/25 - Reforma Tributária",
+  "titulo": "1º Vice-Presidente",
+  "codTitulo": "2",
+  "dataInicio": "2025-04-10T00:00",
+  "dataFim": null
+ }
+]

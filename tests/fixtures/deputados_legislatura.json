@@ -1,0 +1,104 @@
+{
+ "dados": [
+  {
+   "id": 101,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/101",
+   "nome": "Ana Oposição",
+   "siglaPartido": "PL",
+   "uriPartido": "",
+   "siglaUf": "SP",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/101.jpg",
+   "email": "dep.101@camara.leg.br"
+  },
+  {
+   "id": 102,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/102",
+   "nome": "Bruno Governo",
+   "siglaPartido": "PT",
+   "uriPartido": "",
+   "siglaUf": "BA",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/102.jpg",
+   "email": "dep.102@camara.leg.br"
+  },
+  {
+   "id": 103,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/103",
+   "nome": "Carla Federada",
+   "siglaPartido": "PCdoB",
+   "uriPartido": "",
+   "siglaUf": "PE",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/103.jpg",
+   "email": "dep.103@camara.leg.br"
+  },
+  {
+   "id": 104,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/104",
+   "nome": "Diego Bloco",
+   "siglaPartido": "MDB",
+   "uriPartido": "",
+   "siglaUf": "RS",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/104.jpg",
+   "email": "dep.104@camara.leg.br"
+  },
+  {
+   "id": 105,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/105",
+   "nome": "Elisa Presidente",
+   "siglaPartido": "REPUBLICANOS",
+   "uriPartido": "",
+   "siglaUf": "PB",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/105.jpg",
+   "email": "dep.105@camara.leg.br"
+  },
+  {
+   "id": 106,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/106",
+   "nome": "Fábio Psol",
+   "siglaPartido": "PSOL",
+   "uriPartido": "",
+   "siglaUf": "RJ",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/106.jpg",
+   "email": "dep.106@camara.leg.br"
+  },
+  {
+   "id": 107,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/107",
+   "nome": "Gil Avante",
+   "siglaPartido": "AVANTE",
+   "uriPartido": "",
+   "siglaUf": "MG",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/107.jpg",
+   "email": "dep.107@camara.leg.br"
+  },
+  {
+   "id": 108,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/108",
+   "nome": "Hugo Suplente",
+   "siglaPartido": "PL",
+   "uriPartido": "",
+   "siglaUf": "DF",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/108.jpg",
+   "email": "dep.108@camara.leg.br"
+  },
+  {
+   "id": 109,
+   "uri": "https://dadosabertos.camara.leg.br/api/v2/deputados/109",
+   "nome": "Iara Nunca",
+   "siglaPartido": "PSD",
+   "uriPartido": "",
+   "siglaUf": "AM",
+   "idLegislatura": 57,
+   "urlFoto": "https://www.camara.leg.br/internet/deputado/bandep/109.jpg",
+   "email": "dep.109@camara.leg.br"
+  }
+ ],
+ "links": []
+}
