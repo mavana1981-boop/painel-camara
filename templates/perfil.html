@@ -10,7 +10,7 @@
   <div class="kpi dest gov"><b>{{ ind.gov|pct }}</b><span>Governismo</span><small>mesmo recorte</small></div>
   <div class="kpi dest"><b>{{ ind.participacao|pct }}</b><span>Participação em votações nominais</span><small>{{ ind.votou }} de {{ ind.realizadas }}</small></div>
   <div class="kpi dest"><b>{{ ind.fidelidade|pct }}</b><span>Fidelidade ao partido</span></div>
-  <div class="kpi dest ouro"><b>{{ props.total|mil }}</b><span>Proposições (autor ou coautor)</span><small>{{ props.principal|mil }} como 1º autor · {{ props.normas }} {{ 'virou' if props.normas == 1 else 'viraram' }} norma</small></div>
+  <div class="kpi dest ouro"><b>{{ props.projetos_autor|mil }}</b><span>Projetos como 1º autor</span><small>{{ props.normas_autor }} {{ 'virou' if props.normas_autor == 1 else 'viraram' }} norma · {{ props.total|mil }} proposições no total (inclui requerimentos e coautorias), {{ props.normas }} com norma</small></div>
   <div class="kpi dest ouro"><b>{{ cota.total.pct_uso|pct if cota else '—' }}</b><span>Uso da cota (2023–hoje)</span><small>{{ cota.total.gasto|brl(0) if cota else '' }} gastos</small></div>
 </section>
 

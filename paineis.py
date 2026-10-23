@@ -215,7 +215,10 @@ def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, 
                  SUM(CASE WHEN pr.virou_norma THEN 1 ELSE 0 END) normas,
                  SUM(CASE WHEN pr.tramitando THEN 1 ELSE 0 END) tram,
                  SUM(CASE WHEN a.principal THEN 1 ELSE 0 END) principal,
-                 SUM(CASE WHEN pr.sigla IN {SIGLAS_PROJETO} THEN 1 ELSE 0 END) projetos
+                 SUM(CASE WHEN pr.sigla IN {SIGLAS_PROJETO} THEN 1 ELSE 0 END) projetos,
+                 SUM(CASE WHEN a.principal AND pr.sigla IN {SIGLAS_PROJETO} THEN 1 ELSE 0 END) projetos_autor,
+                 SUM(CASE WHEN a.principal AND pr.virou_norma AND pr.sigla IN {SIGLAS_PROJETO}
+                     THEN 1 ELSE 0 END) normas_autor
                  {base}"""), p).mappings().first()
         por_tipo = [dict(r) for r in c.execute(text(
             f"SELECT pr.sigla, MAX(pr.tipo_documento) tipo, COUNT(*) n {base} "
@@ -236,6 +239,8 @@ def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, 
     siglas = sorted({x["sigla"] for x in por_tipo if x["sigla"]})
     return {"total": tot["n"] or 0, "normas": tot["normas"] or 0, "tramitando": tot["tram"] or 0,
             "principal": tot["principal"] or 0, "projetos": tot["projetos"] or 0,
+            # mesmo critério do ranking: projetos (PL, PLP, PEC, PDL, PRC) como 1º autor
+            "projetos_autor": tot["projetos_autor"] or 0, "normas_autor": tot["normas_autor"] or 0,
             "por_tipo": por_tipo, "por_situacao": por_situacao, "por_ano": por_ano,
             "por_conteudo": por_conteudo, "itens": itens, "siglas": siglas}
 

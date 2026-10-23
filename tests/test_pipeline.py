@@ -239,6 +239,11 @@ def test_proposicoes():
     assert not _q("SELECT id FROM processos WHERE id IN (2440099, 2440200)")   # emenda e PL do Senado
     rk = paineis.ranking_proposicoes()
     assert rk[0]["codigo"] == 101 and rk[0]["n"] == 2    # PL + PDL como 1º autor
+    # o cartão do perfil usa o mesmo critério do ranking
+    pr = paineis.proposicoes(101)
+    assert pr["projetos_autor"] == rk[0]["n"] and pr["normas_autor"] == (rk[0]["normas"] or 0)
+    todas = {r["codigo"]: r["n"] for r in paineis.ranking_proposicoes(so_projetos=False)}
+    assert todas[101] == pr["principal"]                 # inclui o REQ
 
 
 def test_perfil():
@@ -260,7 +265,7 @@ def test_perfil():
 def test_paginas_renderizam():
     cli = _cliente()
     for url in ["/orientacoes", "/orientacoes?opostas=0", "/orientacoes?partido=PL&opostas=0&opostas=1",
-                "/rankings", "/rankings?uf=SP", "/perfil", "/perfil?deputado=101", "/perfil?deputado=108",
+                "/rankings", "/rankings?uf=SP", "/rankings?tipo_prop=todas&uf=SP", "/perfil", "/perfil?deputado=101", "/perfil?deputado=108",
                 "/perfil?deputado=999999", "/proposicoes?deputado=101",
                 "/proposicoes?deputado=101&papel=autor&situacao=norma", "/cota?deputado=101",
                 "/cota?deputado=101&ano=2025", "/cota?deputado=108", "/conta", "/usuarios", "/saude"]:
@@ -275,7 +280,11 @@ def test_paginas_renderizam():
     html = cli.get("/perfil?deputado=101").get_data(as_text=True)
     assert "Campinas" in html and "camara.leg.br" in html and "Presidente" in html
     html = cli.get("/rankings").get_data(as_text=True)
-    assert "Deputado(a)" in html and "Senador" not in html
+    assert "Deputado(a)" in html and "Senador" not in html and "Apresentação de projetos" in html
+    html = cli.get("/rankings?tipo_prop=todas").get_data(as_text=True)
+    assert "Proposições apresentadas" in html and 'name="tipo_prop" value="todas"' in html
+    html = cli.get("/perfil?deputado=101").get_data(as_text=True)
+    assert "Projetos como 1º autor" in html and "proposições no total" in html
     assert cli.get("/inexistente").status_code == 404
     assert _anonimo().post("/api/coletar").status_code == 403
 

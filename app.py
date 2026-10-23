@@ -122,6 +122,8 @@ def rankings():
     ano_ini = f.inicio.year if f.inicio else None
     ano_fim = f.fim.year if f.fim else None
 
+    tipo_prop = "todas" if request.args.get("tipo_prop") == "todas" else "projetos"
+
     def _filtra(lista):
         return [r for r in lista if (not f.partido or r.get("partido") == f.partido)
                 and (not f.uf or r.get("uf") == f.uf)]
@@ -132,7 +134,8 @@ def rankings():
         oposicionismo=metrics.alinhamento("Oposição", f, minimo=10),
         governismo=metrics.alinhamento("Governo", f, minimo=10),
         fidelidade=[r for r in metrics.fidelidade(f) if r["total"] >= 10],
-        projetos=_filtra(paineis.ranking_proposicoes(f.inicio, f.fim)),
+        projetos=_filtra(paineis.ranking_proposicoes(f.inicio, f.fim, so_projetos=tipo_prop == "projetos")),
+        tipo_prop=tipo_prop,
         economia=_filtra(paineis.ranking_economia(ano_ini, ano_fim)))
 
 

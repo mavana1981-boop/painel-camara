@@ -42,10 +42,16 @@
     <p class="nota">Votos iguais à orientação que valeu para o partido do deputado na data da votação (própria; se não houver, da federação; senão, do bloco).</p>
   </div>
   <div class="card neu">
-    <h2>Apresentação de projetos <small>1º autor · PL, PLP, PEC, PDL, PRC</small></h2>
+    {% set args_sem_tipo = request.args.to_dict() %}{% set _ = args_sem_tipo.pop('tipo_prop', None) %}
+    <h2>{{ 'Apresentação de projetos' if tipo_prop == 'projetos' else 'Proposições apresentadas' }}
+      <small>1º autor · {{ 'PL, PLP, PEC, PDL, PRC' if tipo_prop == 'projetos' else 'todos os tipos (inclui requerimentos e indicações)' }}</small></h2>
+    <div class="alterna" style="display:flex;gap:6px;margin:-4px 0 10px;font-size:12px">
+      <a class="btn {{ '' if tipo_prop == 'projetos' else 'sec' }}" href="{{ url_for('rankings', **args_sem_tipo) }}">Só projetos</a>
+      <a class="btn {{ '' if tipo_prop == 'todas' else 'sec' }}" href="{{ url_for('rankings', tipo_prop='todas', **args_sem_tipo) }}">Todas as proposições</a>
+    </div>
     <div class="rolagem">
     {% if projetos %}
-    <table><thead><tr><th class="rank">#</th><th>Deputado(a)</th><th class="n">Projetos</th><th class="n m-esc">Normas</th></tr></thead><tbody>
+    <table><thead><tr><th class="rank">#</th><th>Deputado(a)</th><th class="n">{{ 'Projetos' if tipo_prop == 'projetos' else 'Proposições' }}</th><th class="n m-esc">Normas</th></tr></thead><tbody>
     {% for s in projetos %}
       <tr><td class="rank">{{ loop.index }}</td><td><a href="{{ url_for('proposicoes', deputado=s.codigo, papel='autor') }}" style="text-decoration:none">{{ m.parlamentar(s) }}</a></td>
           <td class="n"><b>{{ s.n }}</b></td><td class="n m-esc" style="color:var(--suave)">{{ s.normas or '' }}</td></tr>

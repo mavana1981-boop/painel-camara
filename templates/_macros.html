@@ -34,6 +34,7 @@
   <input type="hidden" name="opostas" value="0">
   <label class="chk"><input type="checkbox" name="opostas" value="1" {{ 'checked' if f.opostas }}> Só orientações opostas (Gov × Oposição)</label>
   {% endif %}
+  {% if request.args.get('tipo_prop') %}<input type="hidden" name="tipo_prop" value="{{ request.args.get('tipo_prop') }}">{% endif %}
   <button class="btn">Filtrar</button>
   <a class="btn sec" href="{{ request.path }}">Limpar</a>
 </form>
