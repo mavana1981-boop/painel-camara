@@ -385,6 +385,404 @@ def test_agendador_diario():
     assert not painel.precisa_atualizar(datetime(2026, 10, 21, 4, 0, tzinfo=brt), "2026-10-19T09:00:00")
 
 
+
+# ======================= monitor de situação =======================
+
+def _reler_proposicoes(notificar, hoje=None, trocar=None, extra=None):
+    """Relê o arquivo de 2025 das fixtures, com situações trocadas e/ou proposição extra."""
+    def props():
+        for r in collector.ler_csv(str(FIX / "proposicoes-2025.csv")):
+            if trocar and r["id"] in trocar:
+                r = {**r, "ultimoStatus_descricaoSituacao": trocar[r["id"]][0],
+                     "ultimoStatus_dataHora": trocar[r["id"]][1]}
+            yield r
+        if extra:
+            yield extra[0]
+
+    def autores():
+        yield from collector.ler_csv(str(FIX / "proposicoesAutores-2025.csv"))
+        if extra:
+            yield from extra[1]
+    with engine.begin() as c:
+        cad = {r[0] for r in c.execute(text("SELECT codigo FROM deputados"))}
+        collector.gravar_processos_ano(c, 2025, props(), autores(), cad, notificar, hoje)
+
+
+def test_monitor_de_situacao_gera_notificacoes():
+    from datetime import date, timedelta
+    import paineis
+    hoje = date.today()
+    _reler_proposicoes(True)                                     # nada mudou: nada a notificar
+    assert _q("SELECT COUNT(*) FROM notificacoes")[0][0] == 0
+    base = dict(next(collector.ler_csv(str(FIX / "proposicoes-2025.csv"))))
+    nova = {**base, "id": "2499999", "siglaTipo": "PL", "numero": "4321", "ementa": "Proposição recém-apresentada.",
+            "dataApresentacao": f"{hoje - timedelta(days=2)}T10:00", "ultimoStatus_descricaoSituacao": "Aguardando Despacho do Presidente da Câmara dos Deputados",
+            "ultimoStatus_dataHora": f"{hoje - timedelta(days=2)}T10:00"}
+    autor = {"idProposicao": "2499999", "idDeputadoAutor": "101", "nomeAutor": "Ana Oposição",
+             "ordemAssinatura": "1", "proponente": "1", "codTipoAutor": "10000", "tipoAutor": "Deputado(a)"}
+    _reler_proposicoes(True, trocar={"2440030": ("Aguardando Parecer do Relator na Comissão de Constituição e Justiça e de Cidadania (CCJC)", f"{hoje}T09:00"),
+                                     "2470045": ("Pronta para Pauta no Plenário", f"{hoje}T09:00")},
+                       extra=(nova, [autor]))
+    n101 = paineis.notificacoes(101)
+    tipos = {(i["identificacao"], i["tipo"]) for i in n101["itens"]}
+    assert tipos == {("PDL 30/2025", "situacao"), ("PEC 45/2025", "situacao"), ("PL 4321/2025", "nova")}
+    pdl = next(i for i in n101["itens"] if i["identificacao"] == "PDL 30/2025")
+    assert pdl["situacao_anterior"] == "Aguardando Designação de Relator" and "CCJC" in pdl["situacao_nova"]
+    assert pdl["url"].endswith("/2440030") and n101["recentes"] == 3
+    # a PEC 45 é do Bruno (1º autor) com a Ana como coautora: os dois são avisados
+    assert {i["identificacao"] for i in paineis.notificacoes(102)["itens"]} == {"PEC 45/2025"}
+    # proposição antiga que só agora apareceu no arquivo não vira "nova"
+    velha = {**nova, "id": "2499998", "numero": "4320", "dataApresentacao": "2025-03-01T10:00"}
+    _reler_proposicoes(True, trocar={"2440030": ("Aguardando Parecer do Relator na Comissão de Constituição e Justiça e de Cidadania (CCJC)", f"{hoje}T09:00"),
+                                     "2470045": ("Pronta para Pauta no Plenário", f"{hoje}T09:00")},
+                       extra=(velha, [{**autor, "idProposicao": "2499998"}]))
+    assert len(paineis.notificacoes(101)["itens"]) == 3
+    with engine.begin() as c:
+        collector.limpar_notificacoes(c, hoje=hoje + timedelta(days=collector.DIAS_NOTIFICACOES + 1))
+    assert paineis.notificacoes(101)["itens"] == []
+    _reler_proposicoes(False)                                    # volta às fixtures originais
+    assert paineis.proposicoes(101)["total"] == 4
+    assert collector.anos_legislatura(date(2026, 10, 27)) == [2023, 2024, 2025, 2026]
+
+
+def test_dias_parado_e_votos_oposicao():
+    from datetime import date
+    import paineis
+    assert paineis.dias_parado({"tramitando": True, "data_situacao": "2025-09-01"}, date(2025, 9, 11)) == 10
+    assert paineis.dias_parado({"tramitando": False, "data_situacao": "2025-09-01"}) is None
+    itens = paineis.proposicoes(101, situacao="tramitando")["itens"]
+    assert itens and all(i["dias_parado"] is not None for i in itens)
+    vo = paineis.votos_oposicao(101, metrics.Filtros(opostas=False))
+    assert vo["total"] == len(vo["seguiu"]) + len(vo["contra"]) and vo["total"] >= 1
+    assert all(v["voto"] in ("SIM", "NÃO") for v in vo["seguiu"])
+
+
+# ======================= Meu Parlamentar =======================
+
+def _cliente_usuario(login, senha):
+    cli = _anonimo()
+    tok = re.search(r'name="_csrf" value="([^"]+)"', cli.get("/login").get_data(as_text=True)).group(1)
+    r = cli.post("/login", data={"_csrf": tok, "login": login, "senha": senha})
+    assert r.status_code == 302, "login falhou"
+    return cli
+
+
+def _tok(cli, url):
+    return re.search(r'name="_csrf" value="([^"]+)"', cli.get(url).get_data(as_text=True)).group(1)
+
+
+def test_meu_parlamentar_acesso_por_vinculo():
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": "assessora",
+                                "nome": "Assessora", "senha": "senha-segura-1"})
+    uid = _q("SELECT id FROM usuarios WHERE login='assessora'")[0][0]
+    u = _cliente_usuario("assessora", "senha-segura-1")
+    assert "Meu parlamentar" not in u.get("/orientacoes").get_data(as_text=True)
+    assert u.get("/meu/").status_code == 403 and u.get("/meu/101").status_code == 403
+    r = adm.post("/usuarios", data={"_csrf": tok, "acao": "vincular", "id": uid, "deputados": ["101"]})
+    assert r.status_code == 302
+    assert "1 deputado(s)" in adm.get("/usuarios").get_data(as_text=True)
+    assert "Meu parlamentar" in u.get("/orientacoes").get_data(as_text=True)
+    r = u.get("/meu/")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/meu/101")
+    html = u.get("/meu/101").get_data(as_text=True)
+    assert "Ana Oposição" in html and "Trocar deputado" not in html
+    assert u.get("/meu/102").status_code == 403           # não vinculado
+    assert adm.get("/meu/102").status_code == 200          # admin vê todos
+    assert adm.get("/meu/999999").status_code == 404
+    html = adm.get("/meu/").get_data(as_text=True)
+    assert "escolha o deputado" in html and "Bruno Governo" in html
+    # excluir o usuário apaga os vínculos
+    adm.post("/usuarios", data={"_csrf": tok, "acao": "excluir", "id": uid})
+    assert not _q("SELECT * FROM usuario_deputados WHERE usuario_id = :u", u=uid)
+
+
+def _evento(eid, dia, hora, sigla, tipo, apelido=None, situacao="Convocada"):
+    return {"id": eid, "uri": f"https://dadosabertos.camara.leg.br/api/v2/eventos/{eid}",
+            "dataHoraInicio": f"{dia}T{hora}", "dataHoraFim": None, "situacao": situacao,
+            "descricaoTipo": tipo, "descricao": f"{tipo} da {sigla}", "localExterno": None,
+            "orgaos": [{"id": 1, "sigla": sigla, "nome": apelido or sigla, "apelido": apelido or sigla,
+                        "codTipoOrgao": 2, "tipoOrgao": "Comissão Permanente", "nomePublicacao": apelido or sigla}],
+            "localCamara": {"nome": "Anexo II, Plenário 01", "predio": None, "sala": None, "andar": None},
+            "urlRegistro": None}
+
+
+def _item_pauta(ordem, pid, sigla, num, ano, relator=None, situacao=None, ementa="Dispõe sobre X."):
+    return {"ordem": ordem, "topico": "Proposições Sujeitas à Apreciação Conclusiva", "regime": "Ordinário",
+            "titulo": f"{sigla} {num}/{ano}",
+            "proposicao_": {"id": pid, "siglaTipo": sigla, "codTipo": 139, "numero": num, "ano": ano, "ementa": ementa},
+            "relator": ({"id": relator[0], "nome": relator[1], "siglaPartido": relator[2], "siglaUf": relator[3]}
+                        if relator else None),
+            "textoParecer": None, "proposicaoRelacionada_": None, "uriVotacao": None, "situacaoItem": situacao}
+
+
+def test_agenda_pautas_e_relatorias():
+    from datetime import date, timedelta
+    import coleta_meu
+    import meu
+    hoje = date.today()
+    ontem, d1, d2 = (hoje - timedelta(days=1)).isoformat(), (hoje + timedelta(days=1)).isoformat(), (hoje + timedelta(days=2)).isoformat()
+    evs = [_evento(9001, ontem, "10:00", "CCJC", "Reunião Deliberativa Ordinária", "Constituição e Justiça", "Encerrada"),
+           _evento(9002, d1, "14:30", "CFT", "Reunião Deliberativa Ordinária", "Finanças e Tributação"),
+           _evento(9003, d2, "13:55", "PLEN", "Sessão Deliberativa Extraordinária", "Plenário"),
+           _evento(9004, d1, "09:00", "CSPCCO", "Audiência Pública", "Segurança Pública")]
+    pautas = {9001: [_item_pauta(1, 3001, "PL", 500, 2025, (101, "Ana Oposição", "PL", "SP"), "Aprovado o Parecer"),
+                     _item_pauta(2, 3002, "PL", 501, 2025, (102, "Bruno Governo", "PT", "BA"), "Retirado de pauta"),
+                     _item_pauta(3, 3003, "REQ", 10, 2025, None, "Aprovado")],
+              9003: [_item_pauta(1, 3004, "PEC", 45, 2025, None)]}
+    chamadas = []
+    orig_pag, orig_get = collector.paginado, collector.get_json
+
+    def fake_paginado(caminho, limite_paginas=200):
+        chamadas.append(caminho)
+        m = re.search(r"dataInicio=([\d-]+)&dataFim=([\d-]+)", caminho)
+        return [e for e in evs if m[1] <= e["dataHoraInicio"][:10] <= m[2]]
+
+    def fake_get(caminho):
+        chamadas.append(caminho)
+        eid = int(re.search(r"/eventos/(\d+)/pauta", caminho).group(1))
+        return {"dados": pautas.get(eid, [])}
+    collector.paginado, collector.get_json = fake_paginado, fake_get
+    try:
+        assert coleta_meu.coletar_agenda(hoje) == 4
+        assert coleta_meu.coletar_agenda(hoje) == 4                      # sem duplicar
+        assert not any("/eventos/9004/pauta" in c for c in chamadas)       # audiência pública: sem pauta
+        assert any("/eventos/9001/pauta" in c for c in chamadas)
+        n = len(chamadas)
+        coleta_meu.coletar_historico_pautas(hoje, dias=30)
+        assert coleta_meu._meta(coleta_meu.CHAVE_HISTORICO)
+        n2 = len(chamadas)
+        assert n2 > n
+        coleta_meu.coletar_historico_pautas(hoje, dias=30)                 # só uma vez
+        assert len(chamadas) == n2
+    finally:
+        collector.paginado, collector.get_json = orig_pag, orig_get
+
+    # Ana (101) é da CCJC e da CSPCCO; a CFT dela já terminou; Plenário vale para todos
+    ag = meu.agenda_deputado(101, hoje - timedelta(days=7), hoje + timedelta(days=10))
+    itens = [e for d in ag for e in d["itens"]]
+    assert {e["colegiado"] for e in itens} == {"CCJC", "PLEN", "CSPCCO"}
+    ccjc = next(e for e in itens if e["colegiado"] == "CCJC")
+    assert ccjc["citado"] and "PL 500/2025 (relator: Ana Oposição, PL-SP) — Aprovado o Parecer" in ccjc["descricao"]
+    assert ccjc["hora"] == "10:00" and ccjc["url"].endswith("/evento-legislativo/9001")
+    assert next(e for e in itens if e["colegiado"] == "PLEN")["titulo"] == "Plenário · Sessão Deliberativa Extraordinária"
+    todos = [e for d in meu.agenda_deputado(101, hoje - timedelta(days=7), hoje + timedelta(days=10), so_dele=False)
+             for e in d["itens"]]
+    assert len(todos) == 4
+    # relatorias montadas pela pauta: a da Ana aprovada entra no clipping
+    rels = {r["identificacao"]: r for r in meu.lista_relatorias(101)}
+    assert set(rels) == {"PL 500/2025"} and rels["PL 500/2025"]["colegiado"] == "CCJC"
+    assert rels["PL 500/2025"]["situacao"] == "Aprovado o Parecer" and rels["PL 500/2025"]["data_situacao"] == ontem
+    assert {r["identificacao"] for r in meu.lista_relatorias(102)} == {"PL 501/2025"}
+    clip = meu.clipping(101, hoje - timedelta(days=30), hoje)
+    assert ("relatoria", "PL 500/2025") in {(e["tipo"], e["identificacao"]) for d in clip["dias"] for e in d["itens"]}
+    assert meu.clipping(102, hoje - timedelta(days=30), hoje)["relatoria"] == 0      # retirado de pauta
+    # resultado mais antigo não sobrescreve o mais recente
+    with engine.begin() as c:
+        ev_velho = _evento(8001, (hoje - timedelta(days=60)).isoformat(), "10:00", "CCJC", "Reunião Deliberativa")
+        coleta_meu.gravar_relatorias_pauta(c, ev_velho, [_item_pauta(1, 3001, "PL", 500, 2025,
+                                                                   (101, "Ana Oposição", "PL", "SP"), "Adiado")])
+    r = meu.lista_relatorias(101)[0]
+    assert r["situacao"] == "Aprovado o Parecer" and r["data_designacao"] == (hoje - timedelta(days=60)).isoformat()
+
+    # compromisso da equipe pela tela
+    adm = _cliente()
+    tok = _tok(adm, "/meu/101?secao=agenda")
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "novo", "data": d1, "hora": "18:30",
+                                           "titulo": "Reunião com prefeitos de SP", "local": "Gabinete"})
+    html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+    assert "Reunião com prefeitos de SP" in html and "deputado na pauta" in html and "Finanças e Tributação" not in html
+    assert "Reunião com prefeitos de SP" not in adm.get("/meu/102?secao=agenda").get_data(as_text=True)
+    aid = _q("SELECT id FROM agenda WHERE origem='equipe'")[0][0]
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "remover", "id": aid})
+    assert not _q("SELECT id FROM agenda WHERE origem='equipe'")
+
+
+def test_solicitacoes_com_anexos():
+    import io
+    adm = _cliente()
+    tok = _tok(adm, "/meu/101?secao=solicitacoes")
+    r = adm.post("/meu/101?secao=solicitacoes", content_type="multipart/form-data", data={
+        "_csrf": tok, "acao": "nova", "titulo": "Nota técnica sobre a PEC 45/2025",
+        "descricao": "Pedido da deputada na reunião de segunda.", "solicitante": "a deputada", "prazo": "2020-01-01",
+        "arquivos": [(io.BytesIO(b"%PDF-1.4 conteudo"), "minuta.pdf"), (io.BytesIO(b"a;b\n1;2"), "dados.csv")]})
+    assert r.status_code == 302
+    html = adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    assert "Nota técnica sobre a PEC 45/2025" in html and "minuta.pdf" in html and "atrasada" in html
+    aid = int(re.search(r"/meu/101/anexo/(\d+)", html).group(1))
+    sid = int(re.search(r'name="id" value="(\d+)"', html.split("Nota técnica")[1]).group(1))
+    baixado = adm.get(f"/meu/101/anexo/{aid}")
+    assert baixado.status_code == 200 and baixado.data.startswith(b"%PDF")
+    assert "attachment" in baixado.headers["Content-Disposition"]
+    assert adm.get(f"/meu/102/anexo/{aid}").status_code == 404          # anexo de outro deputado
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "status", "id": sid, "status": "concluida"})
+    assert "Concluída (1)" in adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    adm.post("/meu/101?secao=solicitacoes", content_type="multipart/form-data", data={
+        "_csrf": tok, "acao": "nova", "titulo": "Arquivo perigoso", "arquivos": [(io.BytesIO(b"MZ"), "virus.exe")]})
+    html = adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    assert "Tipo de arquivo não aceito" in html and "Arquivo perigoso" not in html
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "excluir", "id": sid})
+    assert not _q("SELECT id FROM anexos WHERE solicitacao_id = :s", s=sid)
+
+
+def _regimento_falso():
+    linhas = []
+    for n in range(1, 283):
+        if n == 95:
+            corpo = "Considera-se questão de ordem toda dúvida sobre a interpretação deste Regimento."
+        elif n == 96:
+            corpo = "Em qualquer fase da sessão, poderá ser usada a palavra para reclamação."
+        elif n == 120:
+            corpo = "As emendas de Plenário serão apresentadas durante a discussão em turno único, e o prazo de emendas na comissão é de cinco sessões."
+        else:
+            corpo = f"Disposição genérica número {n} sobre funcionamento das sessões."
+        linhas.append(f"Art. {n}{'º' if n < 10 else '.'} {corpo}")
+    return "\n".join(linhas)
+
+
+def test_questao_de_ordem_por_ia():
+    import io
+    import questoes
+    texto = _regimento_falso()
+    arts = questoes.artigos(texto)
+    assert len(arts) == 282 and arts[94][0] == 95
+    sel = [n for n, _ in questoes.selecionar_trechos(texto, "prazo de emendas na comissão foi encerrado antes das cinco sessões")]
+    assert {95, 96} <= set(sel) and 120 in sel and len(sel) < 60
+    adm = _cliente()
+    tok = _tok(adm, "/meu/101?secao=questoes")
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+    assert "ANTHROPIC_API_KEY" in adm.get("/meu/101?secao=questoes").get_data(as_text=True)
+    adm.post("/meu/101?secao=questoes", content_type="multipart/form-data", data={
+        "_csrf": tok, "acao": "regimento", "arquivo": (io.BytesIO(texto.encode()), "RICD.txt")})
+    assert "282 artigos" in adm.get("/meu/101?secao=questoes").get_data(as_text=True)
+
+    enviado = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"content": [{"type": "text", "text": "## Cabimento\nCabe, no Plenário.\n## Questão de ordem (texto para leitura)\n"
+                                 "Senhor Presidente, com fundamento no art. 95 do Regimento Interno, formulo a seguinte questão de ordem: **<script>x</script>**\n"
+                                 "## Pedido\n- Que seja reaberto o prazo de emendas."}]}
+
+    class _Sessao:
+        def post(self, url, json=None, timeout=None, headers=None):
+            enviado.update(url=url, corpo=json, headers=headers)
+            return _Resp()
+
+    orig = questoes.processar_em_segundo_plano
+    os.environ["ANTHROPIC_API_KEY"] = "sk-teste"
+    questoes.processar_em_segundo_plano = lambda qid, nome=None: questoes.processar(qid, nome, sessao=_Sessao())
+    try:
+        adm.post("/meu/101?secao=questoes", data={"_csrf": tok, "acao": "gerar",
+                 "situacao": "A comissão encerrou o prazo de emendas antes das cinco sessões e já vai votar o parecer hoje."})
+    finally:
+        questoes.processar_em_segundo_plano = orig
+    assert enviado["url"] == questoes.API_URL and enviado["headers"]["x-api-key"] == "sk-teste"
+    assert enviado["corpo"]["model"] == questoes.modelo() and "RICD" in enviado["corpo"]["system"]
+    msg = enviado["corpo"]["messages"][0]["content"]
+    assert "<regimento>" in msg and "Art. 95" in msg and "Art. 120" in msg and "Deputado(a): Ana Oposição" in msg
+    assert "Câmara dos Deputados" in msg
+    html = adm.get("/meu/101?secao=questoes").get_data(as_text=True)
+    assert "<h3>Cabimento</h3>" in html and "Que seja reaberto o prazo de emendas" in html
+    assert "<script>x</script>" not in html and "&lt;script&gt;" in html   # HTML da IA é escapado
+    assert "Artigos do Regimento enviados à IA" in html
+
+    class _Erro(_Resp):
+        status_code = 401
+        text = "invalid x-api-key"
+
+        def json(self):
+            return {"error": {"message": "invalid x-api-key"}}
+    qid = questoes.criar_pedido(101, "admin", "Outra situação qualquer com detalhes suficientes para o teste.")
+    questoes.processar(qid, sessao=type("S", (), {"post": lambda self, *a, **k: _Erro()})())
+    assert questoes.historico(101)[0]["resposta"].startswith("[ERRO] A API da Anthropic respondeu 401")
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+
+
+def test_radar_clipping_rankings_e_paginas():
+    from datetime import date
+    import coleta_meu
+    import meu
+    rss = """<?xml version="1.0"?><rss><channel>
+      <item><title>Deputada apresenta PEC sobre segurança - Agência Câmara</title><link>https://exemplo/a</link>
+        <pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate><source url="https://www.camara.leg.br">Agência Câmara</source></item>
+      <item><title>Outra notícia</title><link>https://exemplo/b</link><pubDate>xx</pubDate></item>
+    </channel></rss>"""
+    itens = coleta_meu.parse_rss(rss)
+    assert itens[0]["titulo"] == "Deputada apresenta PEC sobre segurança" and itens[0]["fonte"] == "Agência Câmara"
+    assert itens[1]["publicado"] is None
+    with engine.begin() as c:
+        assert coleta_meu.gravar_noticias(c, 101, "Ana Oposição", itens) == 2
+        assert coleta_meu.gravar_noticias(c, 101, "Ana Oposição", itens) == 0      # sem duplicar
+    adm = _cliente()
+    tok = _tok(adm, "/meu/101?secao=radar")
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "add", "termo": "segurança pública"})
+    assert ("segurança pública", "segurança pública") in coleta_meu.consultas_radar(101)
+    assert coleta_meu.consultas_radar(101)[0] == ("Ana Oposição", '"Ana Oposição" deputado')
+    assert "news.google.com/rss/search" in coleta_meu.url_noticias("x")
+    html = adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    assert "Deputada apresenta PEC sobre segurança" in html and "segurança pública" in html
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "del", "termo": "segurança pública"})
+    assert len(coleta_meu.consultas_radar(101)) == 1
+
+    clip = meu.clipping(101, date(2023, 1, 1), date.today())
+    tipos = {(e["tipo"], e["identificacao"]) for d in clip["dias"] for e in d["itens"]}
+    assert ("autoria", "PL 1087/2025") in tipos                            # virou norma
+    assert ("autoria", "PDL 30/2025") not in tipos                         # só tramitando
+    assert meu.eh_aprovacao("Aprovado o Parecer") and meu.eh_aprovacao("Transformado em Norma Jurídica")
+    assert meu.eh_aprovacao("Remetida ao Senado Federal") and meu.eh_aprovacao("Aguardando Sanção")
+    assert not meu.eh_aprovacao("Rejeitado o Parecer") and not meu.eh_aprovacao("Aguardando Designação de Relator")
+    assert not meu.eh_aprovacao("Parecer não aprovado")
+
+    rk = {r["slug"]: r for r in meu.rankings(101)}
+    assert rk["projetos"]["posicao"]["pos"] == 1 and rk["projetos"]["sugestoes"]
+    assert "Lidera" in rk["projetos"]["sugestoes"][0] and "deputados" in rk["projetos"]["sugestoes"][0]
+    assert "1 aguardando designação de relator" in rk["projetos"]["sugestoes"][1]       # PDL 30 parado
+    eco = rk["economia"]
+    assert eco["posicao"]["pos"] == 2 and eco["sugestoes"][0].startswith("Gastando R$ ")
+    assert "no período, passa Bruno Governo e sobe para 1º." in eco["sugestoes"][0]
+    assert meu._passos_para(5, 10, 60) == 3 and meu._passos_para(9, 10, 60) == 0
+    for secao in ("visao", "agenda", "notificacoes", "solicitacoes", "questoes", "radar", "rankings", "clipping"):
+        r = adm.get(f"/meu/101?secao={secao}")
+        assert r.status_code == 200, secao
+        assert "Senado" not in r.get_data(as_text=True).replace("ao Senado", ""), secao
+    html = adm.get("/meu/101?secao=visao").get_data(as_text=True)
+    assert "Meu parlamentar" in html and "Ana Oposição" in html and "Aprovações em 30 dias" in html
+    assert "PL 1087/2025" in adm.get(f"/meu/101?secao=clipping&inicio=2025-01-01").get_data(as_text=True)
+    assert adm.get("/meu/101?secao=inexistente").status_code == 200
+    html = adm.get("/orientacoes").get_data(as_text=True)
+    assert "meu-link" in html and "style.css?v=" in html
+
+
+def test_atualizar_agora_e_etapa_diaria():
+    import coleta_meu
+    import meu
+    feitos = []
+    orig = coleta_meu.executar
+    coleta_meu.executar = lambda codigos=None, agenda_tambem=True: feitos.append(codigos)
+    try:
+        adm = _cliente()
+        tok = _tok(adm, "/meu/101?secao=radar")
+        adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "atualizar"})
+        import time
+        for _ in range(50):
+            if feitos:
+                break
+            time.sleep(0.05)
+        assert feitos == [[101]]
+        assert "Atualização iniciada" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    finally:
+        coleta_meu.executar = orig
+    for _ in range(50):
+        if meu._lock.acquire(blocking=False):
+            meu._lock.release()
+            break
+        time.sleep(0.05)
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_"):

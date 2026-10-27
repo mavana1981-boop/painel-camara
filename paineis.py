@@ -2,7 +2,7 @@
 import json
 import os
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import text
 
@@ -177,9 +177,89 @@ def indicadores_deputado(codigo):
     return res
 
 
+def votos_oposicao(codigo, f=None):
+    """Votações em que o deputado seguiu ou contrariou a orientação da Oposição.
+
+    Mesma regra do % de oposicionismo: entram só votos SIM/NÃO do deputado em votações
+    em que a Oposição orientou SIM ou NÃO. Respeita os filtros (período, tipo de matéria e
+    "só orientações opostas Governo × Oposição")."""
+    f = f or metrics.Filtros()
+    where, p = f.where_votacoes()
+    p["c"] = codigo
+    sql = text(f"""
+        SELECT vt.id, vt.data, vt.sigla_materia, vt.numero_materia, vt.ano_materia,
+               vt.dispositivo, vt.descricao_materia, vt.descricao_votacao,
+               v.voto AS voto, o.voto AS opo, g.voto AS gov
+        FROM votos v
+        JOIN votacoes vt ON vt.id = v.votacao_id
+        JOIN orientacoes o ON o.votacao_id = v.votacao_id AND o.lideranca = 'Oposição'
+        LEFT JOIN orientacoes g ON g.votacao_id = v.votacao_id AND g.lideranca = 'Governo'
+        WHERE v.codigo_deputado = :c AND o.voto IN ('SIM','NÃO') AND v.voto IN ('SIM','NÃO')
+          AND {where}
+        ORDER BY vt.data DESC, vt.id DESC""")
+    with engine.connect() as c:
+        linhas = [dict(r) for r in c.execute(sql, p).mappings()]
+    seguiu = [r for r in linhas if r["voto"] == r["opo"]]
+    contra = [r for r in linhas if r["voto"] != r["opo"]]
+    return {"seguiu": seguiu, "contra": contra, "total": len(linhas), "opostas": f.opostas}
+
+
+# ---------------- notificações ----------------
+
+def notificacoes(codigo, limite=40):
+    """Mudanças de situação e proposições novas do deputado, mais recentes primeiro."""
+    with engine.connect() as c:
+        rows = c.execute(text("""
+            SELECT n.*, pr.url, pr.ementa FROM notificacoes n
+            LEFT JOIN processos pr ON pr.id = n.processo_id
+            WHERE n.codigo_deputado = :c
+            ORDER BY n.detectado_em DESC, n.id DESC LIMIT :lim"""), {"c": codigo, "lim": limite}).mappings()
+        itens = [dict(r) for r in rows]
+    corte = datetime.now() - timedelta(days=7)
+    for it in itens:
+        d = it["detectado_em"]
+        if isinstance(d, str):
+            try:
+                d = datetime.fromisoformat(d)
+            except ValueError:
+                d = None
+        it["detectado_em"] = d
+        it["recente"] = bool(d and d >= corte)
+    return {"itens": itens, "recentes": sum(1 for i in itens if i["recente"])}
+
+
 # ---------------- proposições ----------------
 
-def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, busca="", limite=400):
+ORDENS_PROPOSICOES = {
+    # mais recentes primeiro (padrão)
+    "": "pr.data_apresentacao DESC, pr.id DESC",
+    # mais dias parado primeiro: situação atual mais antiga; encerradas e sem data vão para o fim
+    "parado": "CASE WHEN pr.tramitando THEN 0 ELSE 1 END, "
+              "CASE WHEN COALESCE(pr.data_situacao, pr.data_apresentacao) IS NULL THEN 1 ELSE 0 END, "
+              "COALESCE(pr.data_situacao, pr.data_apresentacao) ASC, pr.id",
+    "parado_asc": "CASE WHEN pr.tramitando THEN 0 ELSE 1 END, "
+                  "CASE WHEN COALESCE(pr.data_situacao, pr.data_apresentacao) IS NULL THEN 1 ELSE 0 END, "
+                  "COALESCE(pr.data_situacao, pr.data_apresentacao) DESC, pr.id DESC",
+}
+
+
+def dias_parado(prop, hoje=None):
+    """Dias desde a última mudança de situação (data da situação atual; se faltar, a da
+    apresentação). Só para proposições em tramitação; encerradas devolvem None."""
+    if prop.get("tramitando") is not None and not prop.get("tramitando"):
+        return None
+    ref = prop.get("data_situacao") or prop.get("data_apresentacao")
+    if not ref:
+        return None
+    try:
+        d = date.fromisoformat(str(ref)[:10])
+    except ValueError:
+        return None
+    return max(((hoje or date.today()) - d).days, 0)
+
+
+def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, busca="", limite=400,
+                ordem=""):
     cond, p = ["a.codigo_deputado = :c"], {"c": codigo}
     if papel == "autor":
         cond.append("a.principal = :t")
@@ -234,8 +314,11 @@ def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, 
             f"GROUP BY COALESCE(pr.tipo_conteudo,'—') ORDER BY n DESC"), p).mappings()]
         p["lim"] = limite
         itens = [dict(r) for r in c.execute(text(
-            f"SELECT pr.*, a.principal {base} ORDER BY pr.data_apresentacao DESC, pr.id DESC LIMIT :lim"),
-            p).mappings()]
+            f"SELECT pr.*, a.principal {base} ORDER BY {ORDENS_PROPOSICOES.get(ordem, ORDENS_PROPOSICOES[''])} "
+            f"LIMIT :lim"), p).mappings()]
+    hoje = date.today()
+    for it in itens:
+        it["dias_parado"] = dias_parado(it, hoje)
     siglas = sorted({x["sigla"] for x in por_tipo if x["sigla"]})
     return {"total": tot["n"] or 0, "normas": tot["normas"] or 0, "tramitando": tot["tram"] or 0,
             "principal": tot["principal"] or 0, "projetos": tot["projetos"] or 0,

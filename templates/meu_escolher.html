@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block titulo %}Meu parlamentar{% endblock %}
+{% block conteudo %}
+<section class="card neu">
+  <h2>Meu parlamentar <small>escolha o deputado</small></h2>
+  {% if lista|length > 12 %}
+  <div class="meu-busca"><input type="search" placeholder="Filtrar por nome, partido ou UF…" aria-label="Filtrar deputados"
+    oninput="var t=this.value.toLowerCase();document.querySelectorAll('.meu-cartao').forEach(function(a){a.style.display=a.textContent.toLowerCase().indexOf(t)>-1?'':'none'})"></div>
+  {% endif %}
+  <div class="meu-escolha">
+  {% for x in lista %}
+    <a class="meu-cartao {{ 'vinc' if x.codigo in vinc }}" href="{{ url_for('meu.painel', cod=x.codigo) }}">
+      <span class="ph"{% if x.foto %} style="background-image:url('{{ x.foto }}')"{% endif %}></span>
+      <b>{{ x.nome }}</b><span>{{ x.partido or 's/p' }}-{{ x.uf }}</span>
+      {% if x.codigo in vinc %}<i>vinculado a você</i>{% endif %}
+    </a>
+  {% endfor %}
+  </div>
+  {% if usuario.admin %}<p class="nota">Como administrador, você vê todos os deputados em exercício. Para dar acesso a outra pessoa, vincule o deputado a ela em <a href="{{ url_for('auth.gerenciar') }}">Usuários</a>.</p>{% endif %}
+</section>
+{% endblock %}

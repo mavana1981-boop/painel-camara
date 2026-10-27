@@ -1,4 +1,5 @@
 """Painel da Câmara — Liderança da Oposição.  Flask + PostgreSQL (Railway)."""
+import hashlib
 import logging
 import os
 import threading
@@ -23,7 +24,7 @@ app.jinja_loader = ChoiceLoader([FileSystemLoader(os.path.join(RAIZ, "templates"
 
 TEMPLATES = ("base.html", "_macros.html", "_selo.html", "login.html", "conta.html", "usuarios.html",
              "erro.html", "vazio.html", "perfil.html", "proposicoes.html", "cota.html", "votacoes.html",
-             "orientacoes.html", "rankings.html")
+             "orientacoes.html", "rankings.html", "meu.html", "meu_escolher.html")
 ESTATICOS = ("style.css", "plenario.svg", "favicon.svg")
 
 
@@ -51,7 +52,10 @@ def static(filename):
     return send_from_directory(base, nome, max_age=3600)
 
 init_db()
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024   # anexos (10 MB cada) e Regimento em PDF
 auth.configurar(app)
+import meu  # noqa: E402
+app.register_blueprint(meu.bp)
 
 ABAS = [("perfil", "Perfil"), ("proposicoes", "Proposições"), ("cota", "Cota"),
         ("votacoes", "Votações"), ("orientacoes", "Orientações"), ("rankings", "Rankings")]
@@ -60,7 +64,23 @@ ABAS_DEPUTADO = {"perfil", "proposicoes", "cota"}   # abas com seletor de deputa
 
 @app.context_processor
 def _ctx():
-    return {"abas": ABAS, "abas_deputado": ABAS_DEPUTADO}
+    return {"abas": ABAS, "abas_deputado": ABAS_DEPUTADO, "versao_css": _versao_css()}
+
+
+def _versao_css():
+    """Muda quando o style.css muda: força o navegador a baixar o arquivo novo em vez do guardado em cache."""
+    global _VERSAO_CSS
+    if _VERSAO_CSS is None:
+        base = _achar("style.css", "static")
+        try:
+            with open(os.path.join(base, "style.css"), "rb") as f:
+                _VERSAO_CSS = hashlib.md5(f.read()).hexdigest()[:10]
+        except (OSError, TypeError):
+            _VERSAO_CSS = "0"
+    return _VERSAO_CSS
+
+
+_VERSAO_CSS = None
 
 
 def _contexto_filtros():

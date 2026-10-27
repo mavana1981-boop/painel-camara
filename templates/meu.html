@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Meu parlamentar · {{ s.nome }}{% endblock %}
+{% block conteudo %}
+{% set dias_semana = ['segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado', 'domingo'] %}
+
+{% macro dia_rotulo(d) -%}
+{% set dt = d|isodata %}{% if dt == hoje %}Hoje{% elif (dt - hoje).days == 1 %}Amanhã{% elif (hoje - dt).days == 1 %}Ontem{% else %}{{ dias_semana[dt.weekday()]|capitalize }}{% endif %}, {{ d|data }}
+{%- endmacro %}
+
+{% macro evento(e, compacto=False) -%}
+<div class="ag-item {{ 'equipe' if e.origem == 'equipe' }} {{ 'citado' if e.citado }}">
+  <span class="ag-hora">{{ e.hora or '—' }}</span>
+  <div class="ag-txt">
+    <b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.titulo }}</a>{% else %}{{ e.titulo }}{% endif %}</b>
+    <div class="ag-meta">
+      {% if e.origem == 'equipe' %}<span class="ag-tag eq">equipe</span>{% elif e.colegiado == 'PLEN' %}<span class="ag-tag pl">Plenário</span>{% elif e.colegiado %}<span class="ag-tag">{{ e.colegiado }}</span>{% endif %}
+      {% if e.citado %}<span class="ag-tag cit">deputado na pauta</span>{% endif %}
+      {% if e.local %}{{ e.local }}{% endif %}{% if e.situacao %} · {{ e.situacao }}{% endif %}
+    </div>
+    {% if e.descricao and not compacto %}<div class="ag-desc">{{ e.descricao }}</div>{% endif %}
+  </div>
+  {% if e.origem == 'equipe' and not compacto %}
+  <form method="post" onsubmit="return confirm('Remover este compromisso?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <input type="hidden" name="acao" value="remover"><input type="hidden" name="id" value="{{ e.id }}"><button class="mini perigo" title="Remover">×</button></form>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% macro notif_item(n) -%}
+<div class="notif {{ 'recente' if n.recente }}">
+  <span class="notif-tipo {{ n.tipo }}">{{ 'Nova' if n.tipo == 'nova' else 'Mudou' }}</span>
+  <div class="notif-txt">
+    <b>{% if n.url %}<a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.identificacao }}</a>{% else %}{{ n.identificacao }}{% endif %}</b>
+    {% if n.tipo == 'nova' %}<span>proposição nova{% if n.situacao_nova %} · {{ n.situacao_nova }}{% endif %}</span>
+    {% else %}<span class="notif-de">{{ n.situacao_anterior or '—' }}</span> <span class="notif-seta">→</span> <span class="notif-para">{{ n.situacao_nova }}</span>{% endif %}
+    {% if n.ementa %}<div class="notif-ementa">{{ n.ementa }}</div>{% endif %}
+  </div>
+  <div class="notif-quando">{{ n.detectado_em|data }}{% if n.data_situacao and n.tipo != 'nova' %}<small>situação de {{ n.data_situacao|data }}</small>{% endif %}</div>
+</div>
+{%- endmacro %}
+
+{% macro clip_item(e) -%}
+<div class="clip-item {{ e.tipo }}">
+  <span class="clip-tipo">{{ e.rotulo }}</span>
+  <div class="clip-txt"><b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.identificacao }}</a>{% else %}{{ e.identificacao }}{% endif %}</b>
+    {% if e.colegiado %}<span class="ag-tag">{{ e.colegiado }}</span>{% endif %}
+    <span class="clip-sit">{{ e.situacao }}</span>
+    {% if e.ementa %}<div class="notif-ementa">{{ e.ementa }}</div>{% endif %}</div>
+</div>
+{%- endmacro %}
+
+{% macro ic(n) -%}
+<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{% if n == 'visao' %}<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>{% elif n == 'agenda' %}<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>{% elif n == 'notificacoes' %}<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/>{% elif n == 'solicitacoes' %}<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>{% elif n == 'questoes' %}<path d="M12 3v18M5 7h14M5 7l-3 7a4 4 0 0 0 6 0zM19 7l-3 7a4 4 0 0 0 6 0zM8 21h8"/>{% elif n == 'radar' %}<path d="M4 4h13v15a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2zM17 8h3v11a2 2 0 0 1-2 2"/><path d="M8 8h5M8 12h5M8 16h3"/>{% elif n == 'rankings' %}<path d="M8 21V11M12 21V4M16 21v-7M4 21h16"/>{% elif n == 'clipping' %}<path d="M20 6 9 17l-5-5"/>{% elif n == 'refresh' %}<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/>{% elif n == 'mais' %}<path d="M12 5v14M5 12h14"/>{% elif n == 'seta' %}<path d="M5 12h14M13 6l6 6-6 6"/>{% endif %}</svg>
+{%- endmacro %}
+
+{% set pn = (s.nome or '?').split() %}
+<div class="meu">
+<header class="mh">
+  <div class="mh-in">
+    <span class="mh-foto"><span class="mh-ini">{{ pn[0][0] }}{{ pn[-1][0] if pn|length > 1 }}</span>{% if s.foto %}<img src="{{ s.foto }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}</span>
+    <div class="mh-id">
+      <span class="mh-rot">Meu parlamentar</span>
+      <h1>{{ s.nome }}</h1>
+      <div class="mh-chips">
+        <span>{{ s.partido or 'Sem partido' }}</span>{% if s.uf %}<span>{{ s.uf }}</span>{% endif %}
+        <span class="mh-hoje">{{ dias_semana[hoje.weekday()]|capitalize }}, {{ (hoje|string)|data }}</span>
+      </div>
+    </div>
+    {% if meus|length > 1 %}
+    <label class="mh-troca">Trocar deputado
+      <select onchange="location.href='{{ url_for('meu.inicio') }}' + this.value + '?secao={{ secao }}'">
+        {% for x in meus %}<option value="{{ x.codigo }}" {{ 'selected' if x.codigo == cod }}>{{ x.nome }} ({{ x.partido or 's/p' }}-{{ x.uf }})</option>{% endfor %}
+      </select></label>
+    {% endif %}
+  </div>
+  <nav class="mh-nav">
+    {% for slug, nome in secoes %}<a href="{{ url_for('meu.painel', cod=cod, secao=slug) }}" class="{{ 'ativa' if secao == slug }}">{{ ic(slug) }}<span>{{ nome }}</span></a>{% endfor %}
+  </nav>
+</header>
+
+{# =================== VISÃO GERAL =================== #}
+{% if secao == 'visao' %}
+<section class="mk-grade">
+  <a class="mk" href="{{ url_for('meu.painel', cod=cod, secao='agenda') }}"><span class="mk-ic">{{ ic('agenda') }}</span>
+    <b>{{ v.agenda|sum(attribute='itens', start=[])|length }}</b><span>Compromissos nos próximos 7 dias</span></a>
+  <a class="mk az" href="{{ url_for('meu.painel', cod=cod, secao='notificacoes') }}"><span class="mk-ic">{{ ic('notificacoes') }}</span>
+    <b>{{ v.notif.recentes }}</b><span>Mudanças de status em 7 dias</span></a>
+  <a class="mk ou" href="{{ url_for('meu.painel', cod=cod, secao='clipping') }}"><span class="mk-ic">{{ ic('clipping') }}</span>
+    <b>{{ v.clip.total }}</b><span>Aprovações em 30 dias</span><small>{{ v.clip.autoria }} de autoria · {{ v.clip.relatoria }} de relatoria</small></a>
+  <a class="mk vd" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes') }}"><span class="mk-ic">{{ ic('solicitacoes') }}</span>
+    <b>{{ v.solic.aberta + v.solic.andamento }}</b><span>Solicitações em aberto</span></a>
+</section>
+<section class="grade">
+  <div class="card neu"><h2>Próximos compromissos <a class="mc-link" href="{{ url_for('meu.painel', cod=cod, secao='agenda') }}">agenda {{ ic("seta") }}</a></h2>
+    {% for d in v.agenda %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ evento(e, True) }}{% endfor %}
+    {% else %}<div class="vazio-msg">Nada na agenda dos próximos 7 dias.</div>{% endfor %}</div>
+  <div class="card neu"><h2>Mudanças de status <a class="mc-link" href="{{ url_for('meu.painel', cod=cod, secao='notificacoes') }}">todas {{ ic("seta") }}</a></h2>
+    {% for n in v.notif.itens %}{{ notif_item(n) }}{% else %}<div class="vazio-msg">Nenhuma mudança registrada ainda.</div>{% endfor %}</div>
+</section>
+<section class="grade">
+  <div class="card neu"><h2>Clipping de aprovações <a class="mc-link" href="{{ url_for('meu.painel', cod=cod, secao='clipping') }}">ver {{ ic("seta") }}</a></h2>
+    {% for d in v.clip.dias[:4] %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
+    {% else %}<div class="vazio-msg">Nenhuma aprovação nos últimos 30 dias.</div>{% endfor %}</div>
+  <div class="card neu"><h2>Radar de notícias <a class="mc-link" href="{{ url_for('meu.painel', cod=cod, secao='radar') }}">ver {{ ic("seta") }}</a></h2>
+    {% for n in v.radar %}<a class="news" href="{{ n.link }}" target="_blank" rel="noopener noreferrer"><b>{{ n.titulo }}</b><span>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</span></a>
+    {% else %}<div class="vazio-msg">Sem notícias coletadas ainda.</div>{% endfor %}</div>
+</section>
+{% endif %}
+
+{# =================== AGENDA =================== #}
+{% if secao == 'agenda' %}
+<section class="grade larga">
+  <div class="card neu">
+    <h2>Agenda <small>{{ 'órgãos do deputado, Plenário e equipe' if so_dele else 'toda a Câmara' }}</small></h2>
+    <div class="pilulas">
+      <a class="{{ 'sel' if so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda') }}">Do deputado</a>
+      <a class="{{ 'sel' if not so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=1) }}">Toda a Câmara</a>
+    </div>
+    <div class="rolagem" style="max-height:none">
+    {% for d in agenda %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ evento(e) }}{% endfor %}
+    {% else %}<div class="vazio-msg">Nenhum compromisso entre {{ (hoje|string)|data }} e os próximos 45 dias. A agenda da Câmara é atualizada uma vez por dia.</div>{% endfor %}
+    </div>
+    <p class="nota">Reuniões dos órgãos de que o deputado participa (comissões, CPIs, comissões especiais) e sessões do Plenário vêm da API de Dados Abertos da Câmara (7 dias para trás e 45 para a frente). “Deputado na pauta” = ele é relator de um item da pauta ou o nome dele aparece na descrição do evento. A Câmara costuma publicar a pauta completa perto da reunião.</p>
+  </div>
+  <div class="card neu lado">
+    <h2>Novo compromisso <small>lançado pela equipe</small></h2>
+    <form method="post" class="meu-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="novo">
+      <div class="lin"><label>Data<input type="date" name="data" required value="{{ hoje }}"></label><label>Hora<input type="time" name="hora"></label></div>
+      <label>Título<input name="titulo" required maxlength="300" placeholder="Ex.: Audiência com prefeitos do estado"></label>
+      <label>Local<input name="local" maxlength="200" placeholder="Ex.: Gabinete, Anexo IV"></label>
+      <label>Observações<textarea name="descricao" rows="3"></textarea></label>
+      <button class="btn com-ic">{{ ic("mais") }} Incluir na agenda</button>
+    </form>
+    <form method="post" class="meu-form" style="border-top:1px solid var(--linha)"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="atualizar">
+      <button class="btn sec com-ic">{{ ic("refresh") }} Atualizar agenda e radar agora</button></form>
+  </div>
+</section>
+{% endif %}
+
+{# =================== NOTIFICAÇÕES =================== #}
+{% if secao == 'notificacoes' %}
+<section class="card neu notif-quadro">
+  <h2>Notificações <small>{% if notif.recentes %}<span class="notif-badge">{{ notif.recentes }} nos últimos 7 dias</span>{% else %}mudanças de status das proposições{% endif %}</small></h2>
+  <div class="rolagem" style="max-height:none">
+  {% for n in notif.itens %}{{ notif_item(n) }}{% else %}<div class="vazio-msg">Nenhuma mudança registrada ainda. O monitor confere as proposições uma vez por dia.</div>{% endfor %}
+  </div>
+  <p class="nota">Verificação diária, junto com a atualização automática (a partir das 6h). Ficam guardados os últimos 180 dias.</p>
+</section>
+{% endif %}
+
+{# =================== SOLICITAÇÕES =================== #}
+{% if secao == 'solicitacoes' %}
+<section class="grade larga">
+  <div class="card neu">
+    <h2>Solicitações do parlamentar <small>{{ sol.itens|length }}</small></h2>
+    <div class="pilulas">
+      <a class="{{ 'sel' if not filtro_status }}" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes') }}">Todas</a>
+      {% for k, nome in status %}<a class="{{ 'sel' if filtro_status == k }}" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', status=k) }}">{{ nome }} ({{ sol.contagem[k] }})</a>{% endfor %}
+    </div>
+    <div class="rolagem" style="max-height:none">
+    {% for x in sol.itens %}
+      <details class="sol {{ x.status }}">
+        <summary>
+          <span class="sol-st {{ x.status }}">{{ status|selectattr(0, 'equalto', x.status)|map(attribute=1)|first }}</span>
+          <b>{{ x.titulo }}</b>
+          <span class="sol-meta">{{ x.criado_em|data }}{% if x.solicitante %} · {{ x.solicitante }}{% endif %}{% if x.prazo %} · prazo {{ x.prazo|data }}{% endif %}{% if x.atrasada %} <span class="sol-atraso">atrasada</span>{% endif %}{% if x.anexos %} · 📎 {{ x.anexos|length }}{% endif %}</span>
+        </summary>
+        <div class="sol-corpo">
+          {% if x.descricao %}<div class="sol-desc">{{ x.descricao }}</div>{% endif %}
+          {% if x.anexos %}<div class="sol-anexos">{% for a in x.anexos %}
+            <span class="anexo"><a href="{{ url_for('meu.baixar_anexo', cod=cod, aid=a.id) }}">{{ a.nome }}</a> <small>{{ a.tamanho|tamanho }}</small>
+              <form method="post" onsubmit="return confirm('Excluir o anexo {{ a.nome }}?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                <input type="hidden" name="acao" value="excluir_anexo"><input type="hidden" name="id" value="{{ x.id }}"><input type="hidden" name="anexo" value="{{ a.id }}"><button class="mini perigo">×</button></form></span>
+          {% endfor %}</div>{% endif %}
+          <div class="sol-acoes">
+            <form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="status"><input type="hidden" name="id" value="{{ x.id }}">
+              <select name="status" class="mini" onchange="this.form.submit()">{% for k, nome in status %}<option value="{{ k }}" {{ 'selected' if x.status == k }}>{{ nome }}</option>{% endfor %}</select></form>
+            <form method="post" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="anexar"><input type="hidden" name="id" value="{{ x.id }}">
+              <input type="file" name="arquivos" multiple class="mini" required><button class="mini">Anexar</button></form>
+            <form method="post" onsubmit="return confirm('Excluir esta solicitação e os anexos?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="{{ x.id }}">
+              <button class="mini perigo">Excluir</button></form>
+          </div>
+          <div class="sol-meta" style="margin-top:6px">Registrada por {{ x.criado_por }} em {{ x.criado_em|data }}</div>
+        </div>
+      </details>
+    {% else %}<div class="vazio-msg">Nenhuma solicitação {{ 'com este status' if filtro_status else 'registrada' }}.</div>{% endfor %}
+    </div>
+  </div>
+  <div class="card neu lado">
+    <h2>Nova solicitação</h2>
+    <form method="post" enctype="multipart/form-data" class="meu-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="nova">
+      <label>Título<input name="titulo" required maxlength="200" placeholder="Ex.: Nota técnica sobre o PL 1234/2025"></label>
+      <label>Descrição<textarea name="descricao" rows="5" placeholder="O que foi pedido, contexto, contatos…"></textarea></label>
+      <div class="lin"><label>Solicitante<input name="solicitante" maxlength="120" placeholder="Ex.: o deputado"></label><label>Prazo<input type="date" name="prazo"></label></div>
+      <label>Anexos<input type="file" name="arquivos" multiple></label>
+      <small style="color:var(--suave)">PDF, Word, Excel, PowerPoint, imagens, TXT, CSV, ZIP ou e-mail · até 10 MB cada.</small>
+      <button class="btn com-ic">{{ ic("mais") }} Registrar solicitação</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
+{# =================== QUESTÕES DE ORDEM =================== #}
+{% if secao == 'questoes' %}
+{% if gerando %}<meta http-equiv="refresh" content="6">{% endif %}
+<section class="grade larga">
+  <div class="card neu">
+    <h2>Elaborar questão de ordem <small>IA com base no Regimento Interno</small></h2>
+    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 14px 0">A IA ainda não está ligada. Configure a variável <b>ANTHROPIC_API_KEY</b> no Railway (crie a chave em console.anthropic.com).</div>{% endif %}
+    {% if not regimento %}<div class="aviso" style="margin:12px 14px 0;background:#fff7e6;color:#7a5a12">O texto do Regimento ainda não foi cadastrado. A IA vai responder com o próprio conhecimento e avisar para conferir os artigos.{% if usuario.admin %} Envie o arquivo no quadro ao lado.{% endif %}</div>{% endif %}
+    <form method="post" class="meu-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="gerar">
+      <label>Situação<textarea name="situacao" rows="7" required minlength="30" placeholder="Descreva o que está acontecendo: onde (Plenário ou qual comissão), qual matéria, o que a Presidência fez ou vai fazer, e o que o deputado quer obter. Ex.: a CCJC incluiu na pauta de hoje o PL X sem o parecer ter sido disponibilizado com a antecedência…"></textarea></label>
+      <button class="btn" {{ 'disabled' if not ia_ok }}>Elaborar questão de ordem</button>
+    </form>
+    <p class="nota">A minuta é um ponto de partida: confira os dispositivos e eventuais precedentes antes de apresentar.</p>
+  </div>
+  <div class="card neu lado">
+    <h2>Regimento Interno <small>base usada pela IA</small></h2>
+    <div style="padding:12px 14px;font-size:13px">
+      {% if regimento %}<b>{{ regimento.nome }}</b><br><span style="color:var(--suave)">{{ regimento.artigos }} artigos · enviado em {{ regimento.atualizado|data }}</span>
+      {% else %}<span style="color:var(--suave)">Nenhum texto cadastrado.</span>{% endif %}
+    </div>
+    {% if usuario.admin %}
+    <form method="post" enctype="multipart/form-data" class="meu-form" style="border-top:1px solid var(--linha)">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="regimento">
+      <label>{{ 'Substituir' if regimento else 'Enviar' }} texto integral (PDF ou TXT)<input type="file" name="arquivo" accept=".pdf,.txt" required></label>
+      <button class="btn sec">Enviar Regimento</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+<section class="card neu">
+  <h2>Questões elaboradas <small>{{ hist|length }}</small></h2>
+  {% for q in hist %}
+  <details class="qo" {{ 'open' if loop.first }}>
+    <summary><b>{{ q.criado_em|data }}</b> · {{ q.situacao[:140] }}{{ '…' if q.situacao|length > 140 }} <span class="sol-meta">por {{ q.autor }}</span></summary>
+    <div class="qo-corpo">
+      <div class="qo-sit"><b>Situação:</b> {{ q.situacao }}</div>
+      {% if q.resposta is none %}<div class="qo-gerando">Elaborando… esta página se atualiza sozinha.</div>
+      {% elif q.resposta.startswith('[ERRO]') %}<div class="aviso erro">{{ q.resposta }}</div>
+      {% else %}
+        <div class="qo-resp" id="qo{{ q.id }}">{{ q.resposta|md_simples }}</div>
+        <button class="mini" onclick="navigator.clipboard.writeText(document.getElementById('qo{{ q.id }}').innerText);this.textContent='Copiado'">Copiar texto</button>
+      {% endif %}
+    </div>
+  </details>
+  {% else %}<div class="vazio-msg">Nenhuma questão de ordem elaborada ainda.</div>{% endfor %}
+</section>
+{% endif %}
+
+{# =================== RADAR =================== #}
+{% if secao == 'radar' %}
+<section class="grade larga">
+  <div class="card neu">
+    <h2>Radar de notícias <small>últimos 60 dias</small></h2>
+    {% if radar.termos|length > 1 %}<div class="pilulas">
+      <a class="{{ 'sel' if not termo }}" href="{{ url_for('meu.painel', cod=cod, secao='radar') }}">Tudo</a>
+      {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t) }}">{{ t }}</a>{% endfor %}
+    </div>{% endif %}
+    <div class="rolagem" style="max-height:none">
+    {% for n in radar.itens %}<a class="news" href="{{ n.link }}" target="_blank" rel="noopener noreferrer"><b>{{ n.titulo }}</b>
+      <span>{{ [n.fonte, n.publicado|data if n.publicado else None]|select|join(' · ') }}{% if n.fonte or n.publicado %} · {% endif %}<i>{{ n.termo }}</i></span></a>
+    {% else %}<div class="vazio-msg">Nenhuma notícia coletada ainda. O radar roda uma vez por dia; use “Atualizar agora” para buscar já.</div>{% endfor %}
+    </div>
+  </div>
+  <div class="card neu lado">
+    <h2>Temas acompanhados</h2>
+    <div style="padding:12px 14px 4px;font-size:13px;color:var(--suave)">Além do nome do deputado, o radar busca notícias destes temas:</div>
+    <div class="temas">
+      {% for t in radar.temas %}<form method="post" class="tema"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="del"><input type="hidden" name="termo" value="{{ t }}">{{ t }} <button title="Remover">×</button></form>
+      {% else %}<span style="color:var(--suave);font-size:13px">Nenhum tema cadastrado.</span>{% endfor %}
+    </div>
+    <form method="post" class="meu-form"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="add">
+      <div class="lin"><input name="termo" maxlength="120" required placeholder="Ex.: Fundo Constitucional do DF"><button class="btn">Adicionar</button></div></form>
+    <form method="post" class="meu-form" style="border-top:1px solid var(--linha)"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="atualizar">
+      <button class="btn sec com-ic">{{ ic("refresh") }} Atualizar agora</button></form>
+  </div>
+</section>
+{% endif %}
+
+{# =================== RANKINGS =================== #}
+{% if secao == 'rankings' %}
+<section class="ranks">
+{% for r in ranks %}{% set p = r.posicao %}
+  <div class="card rk {{ r.sentido }} {{ 'podio' if p and p.pos <= 3 and r.sentido != 'neutro' }}">
+    <div class="rk-top">
+      <h2>{{ r.nome }}</h2>{% if r.sentido == 'neutro' %}<span class="rk-info">informativo</span>{% elif p and p.pos <= 3 %}<span class="rk-podio">pódio</span>{% endif %}
+    </div>
+    {% if p %}
+    <div class="rk-pos">
+      <div class="rk-num"><b>{{ p.pos }}<sup>º</sup></b><span>de {{ p.de }}</span></div>
+      <div class="rk-val">{{ p.valor|pct if r.fmt == 'pct' else p.valor|mil }}
+        <small>{% if p.acima %}{{ p.acima.nome }} ({{ p.pos - 1 }}º): {{ p.acima[r.chave]|pct if r.fmt == 'pct' else p.acima[r.chave]|mil }}{% else %}líder do ranking{% endif %}</small></div>
+    </div>
+    <div class="rk-barra" title="Posição {{ p.pos }} de {{ p.de }}"><i style="width:{{ ((p.de - p.pos + 1) / p.de * 100)|round(1) if p.de else 0 }}%"></i></div>
+    {% else %}
+    <div class="rk-pos"><div class="rk-sem">Sem posição neste ranking</div></div>
+    {% endif %}
+    <ul class="rk-sug">{% for x in r.sugestoes %}<li>{{ x }}</li>{% endfor %}</ul>
+  </div>
+{% endfor %}
+</section>
+<p class="nota" style="border:0">Posições entre os deputados em exercício, com os dados da legislatura toda (mesmas regras da aba Rankings). As sugestões são calculadas a partir dos números atuais: quanto falta para ultrapassar o colocado logo acima.</p>
+{% endif %}
+
+{# =================== CLIPPING =================== #}
+{% if secao == 'clipping' %}
+<form class="filtros" method="get">
+  <input type="hidden" name="secao" value="clipping">
+  <label>De<input type="date" name="inicio" value="{{ ini }}"></label>
+  <label>Até<input type="date" name="fim" value="{{ fim }}"></label>
+  <button class="btn">Filtrar</button>
+  <span style="font-size:13px;color:var(--suave);padding-bottom:7px">{{ clip.total }} aprovação(ões): {{ clip.autoria }} de autoria · {{ clip.relatoria }} de relatoria</span>
+</form>
+<section class="card neu">
+  <h2>Clipping diário <small>projetos aprovados e relatorias aprovadas, por data</small></h2>
+  {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
+  {% else %}<div class="vazio-msg">Nenhuma aprovação no período.</div>{% endfor %}
+  <p class="nota">Autoria: a situação atual da proposição indica aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião.</p>
+</section>
+<section class="card neu" style="margin-top:14px">
+  <h2>Relatorias do deputado <small>{{ rels|length }}</small></h2>
+  <div class="rolagem" style="max-height:420px">
+  <table><thead><tr><th>Matéria</th><th class="m-esc">Colegiado</th><th>1ª pauta</th><th class="m-esc">Último resultado</th></tr></thead><tbody>
+  {% for r in rels %}<tr {% if r.data_destituicao %}style="opacity:.6"{% endif %}><td><b>{% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.identificacao }}</a>{% else %}{{ r.identificacao }}{% endif %}</b>{% if r.ementa %}<div class="vopo-desc">{{ r.ementa }}</div>{% endif %}</td>
+    <td class="m-esc">{{ r.colegiado or '—' }}</td><td style="white-space:nowrap">{{ r.data_designacao|data }}{% if r.data_destituicao %}<div style="font-size:11px;color:var(--suave)">até {{ r.data_destituicao|data }}</div>{% endif %}</td>
+    <td class="m-esc" style="font-size:12px">{{ r.situacao or '—' }}{% if r.data_situacao %}<div style="color:var(--suave)">{{ r.data_situacao|data }}</div>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="vazio-msg">Nenhuma relatoria encontrada nas pautas lidas até agora (as pautas das reuniões são lidas uma vez por dia; na primeira vez, as dos últimos 180 dias).</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endif %}
+</div>
+{% endblock %}

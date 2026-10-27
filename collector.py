@@ -27,14 +27,14 @@ import tempfile
 import time
 import zipfile
 from collections import Counter, defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import requests
 from sqlalchemy import delete, insert, select, update
 
 from db import (INSTITUCIONAIS, autorias, deputados, despesas, engine, init_db, meta, norm_lideranca,
-                norm_nome, norm_partido, norm_voto, orientacoes, orientacoes_partido, perfis, processos,
-                sem_acento, votacoes, votos)
+                norm_nome, norm_partido, norm_voto, notificacoes, orientacoes, orientacoes_partido, perfis,
+                processos, sem_acento, votacoes, votos)
 
 API = os.environ.get("CAMARA_API", "https://dadosabertos.camara.leg.br/api/v2")
 ARQUIVOS = os.environ.get("CAMARA_ARQUIVOS", "https://dadosabertos.camara.leg.br/arquivos")
@@ -629,8 +629,16 @@ def parse_proposicao(r: dict, ano_carga: int) -> dict:
     }
 
 
-def gravar_processos_ano(conn, ano: int, linhas_props, linhas_autores, cadastro: set):
-    """Substitui as proposições apresentadas num ano por deputados do cadastro."""
+DIAS_NOTIFICACOES = 180   # notificações mais antigas são apagadas
+DIAS_NOVA = 30            # "proposição nova" só para as apresentadas nos últimos 30 dias
+
+
+def gravar_processos_ano(conn, ano: int, linhas_props, linhas_autores, cadastro: set, notificar=False,
+                         hoje=None):
+    """Substitui as proposições apresentadas num ano por deputados do cadastro.
+
+    Com notificar=True (coletas depois da carga inicial), compara com o que estava no banco e
+    registra em `notificacoes` cada proposição que mudou de situação e cada proposição nova."""
     autores = defaultdict(list)   # proposição -> [(ordem, nome, codigo)]
     for r in linhas_autores:
         pid = _int(r.get("idProposicao"))
@@ -661,17 +669,58 @@ def gravar_processos_ano(conn, ano: int, linhas_props, linhas_autores, cadastro:
                 vistos.add(cod)
                 auts.append({"processo_id": pid, "codigo_deputado": cod, "principal": ordem == primeiro})
 
+    ids = [p["id"] for p in linhas]
+    antes = {}
+    if notificar:
+        q = select(processos.c.id, processos.c.situacao, processos.c.data_situacao)
+        for r in conn.execute(q.where(processos.c.ano_carga == ano)):
+            antes[r[0]] = (r[1], r[2])
+        for i in range(0, len(ids), 900):
+            for r in conn.execute(q.where(processos.c.id.in_(ids[i:i + 900]))):
+                antes[r[0]] = (r[1], r[2])
+
     antigos = select(processos.c.id).where(processos.c.ano_carga == ano)
     conn.execute(delete(autorias).where(autorias.c.processo_id.in_(antigos)))
     conn.execute(delete(processos).where(processos.c.ano_carga == ano))
-    ids = [p["id"] for p in linhas]
     for i in range(0, len(ids), 900):
         conn.execute(delete(autorias).where(autorias.c.processo_id.in_(ids[i:i + 900])))
         conn.execute(delete(processos).where(processos.c.id.in_(ids[i:i + 900])))
     _lote(conn, processos, linhas)
     _lote(conn, autorias, auts)
+    if notificar:
+        n = registrar_notificacoes(conn, linhas, auts, antes, hoje)
+        log.info("proposições %s: %d notificações", ano, n)
     log.info("proposições %s: %d (%d autorias)", ano, len(linhas), len(auts))
     return len(linhas)
+
+
+def registrar_notificacoes(conn, linhas, auts, antes, hoje=None):
+    """Mudou a situação (ou a data dela) → avisa cada autor do cadastro; proposição que não
+    estava no banco e foi apresentada há pouco → "nova"."""
+    hoje = hoje or date.today()
+    corte_nova = (hoje - timedelta(days=DIAS_NOVA)).isoformat()
+    autores = defaultdict(list)
+    for a in auts:
+        autores[a["processo_id"]].append(a["codigo_deputado"])
+    agora, novas = datetime.now(), []
+    for p in linhas:
+        if p["id"] in antes:
+            sit, dsit = antes[p["id"]]
+            if p["situacao"] and ((sit or "") != (p["situacao"] or "") or (dsit or "") != (p["data_situacao"] or "")):
+                novas += [{"codigo_deputado": cod, "processo_id": p["id"], "identificacao": p["identificacao"],
+                           "tipo": "situacao", "situacao_anterior": sit, "situacao_nova": p["situacao"],
+                           "data_situacao": p["data_situacao"], "detectado_em": agora} for cod in autores[p["id"]]]
+        elif (p["data_apresentacao"] or "") >= corte_nova:
+            novas += [{"codigo_deputado": cod, "processo_id": p["id"], "identificacao": p["identificacao"],
+                       "tipo": "nova", "situacao_anterior": None, "situacao_nova": p["situacao"],
+                       "data_situacao": p["data_apresentacao"], "detectado_em": agora} for cod in autores[p["id"]]]
+    _lote(conn, notificacoes, novas)
+    return len(novas)
+
+
+def limpar_notificacoes(conn, hoje=None):
+    limite = datetime.combine((hoje or date.today()) - timedelta(days=DIAS_NOTIFICACOES), datetime.min.time())
+    conn.execute(delete(notificacoes).where(notificacoes.c.detectado_em < limite))
 
 
 def coletar_processos(anos):
@@ -680,6 +729,8 @@ def coletar_processos(anos):
     alvo = sorted(set(anos) | pendentes)
     with engine.connect() as c:
         cad = {r[0] for r in c.execute(select(deputados.c.codigo))}
+    # na carga inicial tudo é "novo": só notifica depois que as proposições já foram coletadas uma vez
+    notificar = _etapa_concluida("proposições")
     falhas = set()
     for ano in alvo:
         a_props = a_aut = None
@@ -690,13 +741,15 @@ def coletar_processos(anos):
                 log.info("proposições %s: arquivo ainda não publicado", ano)
                 continue
             with engine.begin() as c:
-                gravar_processos_ano(c, ano, ler_csv(a_props), ler_csv(a_aut), cad)
+                gravar_processos_ano(c, ano, ler_csv(a_props), ler_csv(a_aut), cad, notificar)
         except Exception as e:
             log.error("proposições de %s não carregadas (%s) — ficam para a próxima coleta", ano, e)
             falhas.add(ano)
         finally:
             _apagar(a_props, a_aut)
     _salvar_pendentes(chave, (pendentes - set(alvo)) | falhas)
+    with engine.begin() as c:
+        limpar_notificacoes(c)
 
 
 # ---------------- Perfil (detalhe, órgãos, frentes) ----------------
@@ -786,6 +839,13 @@ def anos_ceap_rotina(hoje=None):
     return list(range(hoje.year - 1 if hoje.month <= 3 else hoje.year, hoje.year + 1))
 
 
+def anos_legislatura(hoje=None):
+    """Proposições: os arquivos anuais trazem a situação atual de cada proposição, então todos os
+    anos da legislatura são relidos na rotina — é assim que o monitor percebe as mudanças de situação."""
+    hoje = hoje or date.today()
+    return list(range(int(INICIO_LEGISLATURA[:4]), hoje.year + 1))
+
+
 def executar(desde: date | None = None, so_deputados=False):
     init_db()
     coletar_deputados()
@@ -799,8 +859,10 @@ def executar(desde: date | None = None, so_deputados=False):
         _passo("CEAP", coletar_ceaps, anos_ceap)
         with engine.begin() as c:
             limpar_deputados_sem_atividade(c)
-        _passo("proposições", coletar_processos, anos)
+        _passo("proposições", coletar_processos, anos if desde is not None else anos_legislatura(hoje))
         _passo("perfis", coletar_perfis)
+        import coleta_meu
+        _passo("meu parlamentar", coleta_meu.executar)
     with engine.begin() as c:
         if not so_deputados:
             limpar_deputados_sem_atividade(c)

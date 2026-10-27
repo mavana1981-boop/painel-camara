@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0b5d3b">
 <title>{% block titulo %}Painel da Câmara{% endblock %} · Painel da Câmara</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=versao_css) }}">
 </head>
 <body>
 {% import "_selo.html" as selo %}
@@ -15,6 +15,7 @@
     <a class="marca" href="{{ url_for('index') }}">{{ selo.selo(34, fundo="rgba(255,255,255,.08)") }}
       <span>Painel da Câmara<small>Liderança da Oposição · 57ª Legislatura</small></span></a>
     <nav class="abas">
+      {% if menu_meu %}<a href="{{ url_for('meu.inicio') }}" class="meu-link {{ 'ativa' if aba == 'meu' }}">Meu parlamentar</a>{% endif %}
       {% for slug, nome in abas %}
         {% if slug in abas_deputado %}
           <a href="{{ url_for(slug) }}" class="{{ 'ativa' if aba == slug }}">{{ nome }}</a>

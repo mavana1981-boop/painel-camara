@@ -18,7 +18,7 @@
   <h2>Usuários <small>{{ lista|length }}</small></h2>
   <div class="rolagem" style="max-height:none">
   <table>
-    <thead><tr><th>Usuário</th><th>Nome</th><th class="c">Perfil</th><th class="c">Situação</th><th class="m-esc">Último acesso</th><th>Ações</th></tr></thead>
+    <thead><tr><th>Usuário</th><th>Nome</th><th class="c">Perfil</th><th class="c">Situação</th><th class="m-esc">Último acesso</th><th>Meu parlamentar</th><th>Ações</th></tr></thead>
     <tbody>
     {% for u in lista %}
       <tr>
@@ -27,6 +27,25 @@
         <td class="c">{{ 'Admin' if u.admin else 'Leitura' }}</td>
         <td class="c">{% if u.ativo %}<span class="pill SIM">ativo</span>{% else %}<span class="pill LIVRE">inativo</span>{% endif %}</td>
         <td class="m-esc" style="color:var(--suave)">{{ u.ultimo_acesso|data if u.ultimo_acesso else '—' }}</td>
+        <td class="vinc">{% set vs = vinculos.get(u.id, []) %}
+          <details>
+            <summary>{% if vs %}{{ vs|length }} deputado(s){% elif u.admin %}<span style="color:var(--suave)">todos (admin)</span>{% else %}<span style="color:var(--suave)">nenhum</span>{% endif %}</summary>
+            <form method="post" class="vinc-form">
+              <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <input type="hidden" name="acao" value="vincular"><input type="hidden" name="id" value="{{ u.id }}">
+              <input type="search" placeholder="Filtrar…" class="mini vinc-filtro" oninput="var t=this.value.toLowerCase();this.parentNode.querySelectorAll('label').forEach(function(l){l.style.display=l.textContent.toLowerCase().indexOf(t)>-1?'':'none'})">
+              <div class="vinc-lista">
+              {% for x in deputados if x.codigo in vs %}
+                <label><input type="checkbox" name="deputados" value="{{ x.codigo }}" checked> {{ x.nome }} <span style="color:var(--suave)">({{ x.partido or 's/p' }}-{{ x.uf }})</span></label>
+              {% endfor %}
+              {% for x in deputados if x.em_exercicio and x.codigo not in vs %}
+                <label><input type="checkbox" name="deputados" value="{{ x.codigo }}"> {{ x.nome }} <span style="color:var(--suave)">({{ x.partido or 's/p' }}-{{ x.uf }})</span></label>
+              {% endfor %}
+              </div>
+              <button class="mini">Salvar vínculos</button>
+            </form>
+          </details>
+        </td>
         <td>
           {% if u.id != usuario.id %}
           <div style="display:flex;gap:4px;flex-wrap:wrap">
