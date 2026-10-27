@@ -1012,6 +1012,8 @@ def test_plenario_com_pauta_e_notas_do_minha_pauta():
         html = adm.get("/orientacoes?opostas=0").get_data(as_text=True)
         assert 'href="/plenario"' in html                                               # aba sem os filtros de votação
         assert plenario.html_seguro("linha 1\nlinha <2>") == "linha 1<br>linha &lt;2&gt;"
+        erro = Exception('connection to server at "10.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "postgres"')
+        assert "DATABASE_PUBLIC_URL" in plenario.explicar_erro(erro)
     finally:
         collector.get_json = orig
         os.environ.pop("MINHA_PAUTA_DATABASE_URL", None)

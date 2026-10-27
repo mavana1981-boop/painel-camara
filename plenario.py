@@ -47,6 +47,21 @@ def _url():
     return url
 
 
+def explicar_erro(e):
+    """Mensagem de erro de conexão com o banco do Minha Pauta, com a causa mais provável."""
+    msg = str(e)
+    base = "Não consegui ler o Minha Pauta: "
+    if "password authentication failed" in msg or "railway.internal" in _url():
+        return (base + "o banco recusou a senha. Quase sempre é o endereço interno de outro projeto do Railway "
+                "(postgres.railway.internal), que aponta para o banco do próprio painel. Use em "
+                "MINHA_PAUTA_DATABASE_URL a DATABASE_PUBLIC_URL do Postgres do Minha Pauta.")
+    if "could not translate host name" in msg or "Name or service not known" in msg:
+        return base + "o endereço do banco não foi encontrado. Confira MINHA_PAUTA_DATABASE_URL (use a DATABASE_PUBLIC_URL)."
+    if "does not exist" in msg and "pauta_cache_db" in msg:
+        return base + "o banco informado não tem as tabelas do Minha Pauta. Confira se é o Postgres do Minha Pauta."
+    return base + msg.splitlines()[0][:300]
+
+
 def configurado():
     return bool(_url())
 

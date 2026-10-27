@@ -264,7 +264,7 @@ def plenario_atualizar():
             flash(f"Pauta atualizada a partir do Minha Pauta ({n} sessão(ões) lidas).", "ok")
         except Exception as e:
             logging.exception("Plenário")
-            flash(f"Não consegui ler o Minha Pauta agora: {str(e).splitlines()[0][:160]}", "erro")
+            flash(plenario.explicar_erro(e), "erro")
         finally:
             _plenario_lock.release()
     else:
