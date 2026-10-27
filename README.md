@@ -105,6 +105,7 @@ paineis.py    Perfil, Proposições, Cota, notificações e rankings correlatos
 meu.py        Meu Parlamentar (rotas e regras)
 coleta_meu.py agenda, pautas/relatorias e radar de notícias
 questoes.py   questões de ordem por IA com base no RICD
+plenario.py   aba Plenário (pauta e notas do app Minha Pauta)
 radar.py      radar de notícias (portais do Monitor Legislativo + Google Notícias, análise por IA)
 cota.py       tetos da CEAP por UF
 db.py         tabelas e normalização
@@ -132,3 +133,16 @@ lê as pautas dos últimos 180 dias (`MEU_DIAS_HISTORICO`) e depois acompanha di
 O radar roda a cada 2 horas (`RADAR_HORAS`; `AUTO_RADAR=0` desliga) só para deputados com usuário vinculado; o botão
 **Atualizar agora** busca na hora. A IA do radar e das questões de ordem usa `ANTHROPIC_API_KEY`; o modelo do radar
 fica em `RADAR_MODEL` (padrão `claude-haiku-5-5`) e o limite de análises por deputado e ciclo em `RADAR_MAX_ANALISES` (30).
+
+## Plenário (pauta do Minha Pauta)
+
+A aba **Plenário** mostra a pauta mais recente preparada no app Minha Pauta (repositório `plenario-assessoria`),
+com as notas da equipe: resumo da matéria (nota técnica), parecer, orientação, quem salvou e quando, as
+orientações por grupo (PL, NOVO, Oposição, Minoria), o resumo da ementa feito pela IA e os itens de extrapauta.
+Dá para trocar entre as últimas sessões e filtrar itens com e sem nota.
+
+O painel lê o banco do Minha Pauta em modo somente leitura e guarda uma cópia das últimas pautas, renovada a cada
+30 minutos (`PLENARIO_MINUTOS`) e pelo botão **Atualizar agora**. Para ligar, crie no serviço do painel a variável
+`MINHA_PAUTA_DATABASE_URL` com o endereço do PostgreSQL do Minha Pauta (no mesmo projeto do Railway:
+`${{ NomeDoPostgresDoMinhaPauta.DATABASE_URL }}`; em outro projeto: a `DATABASE_PUBLIC_URL` dele).
+Notas, orientações e ordem continuam sendo editadas no Minha Pauta.

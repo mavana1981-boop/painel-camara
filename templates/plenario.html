@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block titulo %}Plenário{% endblock %}
+
+{% macro ori(v) -%}
+{% set k = (v or '')|upper %}
+<span class="pl-ori {{ {'SIM': 'sim', 'NÃO': 'nao', 'OBSTRUÇÃO': 'obs', 'LIBERADO': 'lib', 'ABSTENÇÃO': 'abs', 'NEGOCIAÇÃO': 'neg'}.get(k, 'out') }}">{{ v }}</span>
+{%- endmacro %}
+
+{% block conteudo %}
+{% if not configurado and not p %}
+<section class="card neu">
+  <h2>Plenário <small>pauta do app Minha Pauta</small></h2>
+  <div class="vazio-msg" style="padding:28px 16px">A aba Plenário mostra a pauta mais recente preparada no <b>Minha Pauta</b>, com as notas da equipe.<br>
+    Para ligar, crie no Railway (serviço do painel) a variável <b>MINHA_PAUTA_DATABASE_URL</b> com o endereço do banco PostgreSQL do Minha Pauta.</div>
+</section>
+{% elif not p %}
+<section class="card neu">
+  <h2>Plenário <small>pauta do app Minha Pauta</small></h2>
+  <div class="vazio-msg" style="padding:28px 16px">Nenhuma pauta copiada ainda. A cópia roda a cada 30 minutos; use o botão para buscar agora.</div>
+  <form method="post" action="{{ url_for('plenario_atualizar') }}" style="padding:0 16px 16px"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <button class="btn">Atualizar agora</button></form>
+</section>
+{% else %}
+<header class="pl-cab">
+  <div class="pl-cab-in">
+    <div class="pl-id">
+      <span class="pl-rot">Plenário · Minha Pauta</span>
+      <h1>{{ p.titulo or 'Sessão Deliberativa' }}</h1>
+      <div class="pl-meta">
+        {% if p.data %}<span>{{ p.data|data }}{% if p.hora %} · {{ p.hora }}{% endif %}</span>{% endif %}
+        {% if p.situacao %}<span>{{ p.situacao }}</span>{% endif %}
+        {% if p.local %}<span>{{ p.local }}</span>{% endif %}
+        <a href="https://www.camara.leg.br/evento-legislativo/{{ p.evento_id }}" target="_blank" rel="noopener">evento {{ p.evento_id }} ↗</a>
+      </div>
+    </div>
+    <div class="pl-acoes">
+      {% if recentes|length > 1 %}
+      <label>Sessão
+        <select onchange="location.href='{{ url_for('plenario') }}?evento=' + this.value">
+          {% for r in recentes %}<option value="{{ r.evento_id }}" {{ 'selected' if r.evento_id == p.evento_id }}>{{ r.data|data if r.data else 'evento ' ~ r.evento_id }}{% if r.hora %} {{ r.hora }}{% endif %} · {{ r.titulo or 'Sessão' }}</option>{% endfor %}
+        </select></label>
+      {% endif %}
+      {% if configurado %}
+      <form method="post" action="{{ url_for('plenario_atualizar', evento=request.args.get('evento')) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <button class="btn sec">Atualizar agora</button></form>
+      {% endif %}
+    </div>
+  </div>
+</header>
+
+<section class="kpis">
+  <div class="kpi"><b>{{ p.total }}</b><span>Itens na pauta</span></div>
+  <div class="kpi"><b>{{ p.com_nota }}</b><span>Com nota da equipe</span></div>
+  <div class="kpi"><b>{{ p.com_orientacao }}</b><span>Com orientação</span></div>
+  <div class="kpi"><b style="font-size:15px;padding-top:6px">{{ p.atualizado_fonte|data if p.atualizado_fonte else '—' }}{% if p.atualizado_fonte and p.atualizado_fonte|length > 10 %} {{ p.atualizado_fonte[11:16] }}{% endif %}</b>
+    <span>Salva no Minha Pauta{% if p.atualizado_por %} por {{ p.atualizado_por }}{% endif %}</span></div>
+</section>
+
+<section class="card neu">
+  <h2>Pauta <small>{{ p.itens|length }} {{ 'item' if p.itens|length == 1 else 'itens' }}</small></h2>
+  <div class="pl-pilulas">
+    {% for k, nome in [('', 'Todos'), ('com_nota', 'Com nota'), ('sem_nota', 'Sem nota')] %}
+    <a class="{{ 'sel' if filtro == k }}" href="{{ url_for('plenario', evento=request.args.get('evento'), filtro=k or None) }}">{{ nome }}</a>
+    {% endfor %}
+    <button type="button" class="pl-abrir" onclick="var d=document.querySelectorAll('details.pl-nota'),a=[].some.call(d,function(x){return !x.open});d.forEach(function(x){x.open=a});this.textContent=a?'Recolher notas':'Abrir todas as notas'">Abrir todas as notas</button>
+  </div>
+  {% for i in p.itens %}
+  <article class="pl-item {{ 'com-nota' if i.tem_nota }}" id="i{{ i.id_principal }}">
+    <div class="pl-ordem {{ 'extra' if i.eh_extra_pauta }}" {% if i.eh_extra_pauta %}title="Extrapauta"{% endif %}>{{ '+' if i.eh_extra_pauta else i.ordem }}</div>
+    <div class="pl-corpo">
+      <div class="pl-topo">
+        <b class="pl-proj">{% if i.url %}<a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.projeto }}</a>{% else %}{{ i.projeto }}{% endif %}</b>
+        {% if i.secao and i.secao != 'N/D' %}<span class="pl-secao">{{ i.secao }}</span>{% endif %}
+        {% if i.eh_extra_pauta %}<span class="pl-secao extra">extrapauta{% if i.incluido_por %} · {{ i.incluido_por }}{% endif %}</span>{% endif %}
+        {% if i.nota.orientacao %}{{ ori(i.nota.orientacao) }}{% endif %}
+      </div>
+      {% if i.resumo_ia %}<p class="pl-resumo">{{ i.resumo_ia }}</p>{% endif %}
+      <p class="pl-ementa">{{ i.ementa }}</p>
+      <div class="pl-dados">
+        {% if i.autor and i.autor != 'N/D' %}<span><b>Autor:</b> {{ i.autor }}</span>{% endif %}
+        {% if i.relator and i.relator not in ('N/D', 'Não atribuído') %}<span><b>Relator:</b> {{ i.relator }}</span>{% endif %}
+        {% if i.situacao and i.situacao != 'N/D' %}<span><b>Situação:</b> {{ i.situacao }}</span>{% endif %}
+      </div>
+      {% if i.orientacoes_grupo %}
+      <div class="pl-grupos">
+        {% for g, nome in grupos if g in i.orientacoes_grupo and i.orientacoes_grupo[g].orientacao %}
+        <span class="pl-grupo" title="{{ i.orientacoes_grupo[g].comentario or '' }}">{{ nome }}: {{ ori(i.orientacoes_grupo[g].orientacao) }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if i.tem_nota %}
+      <details class="pl-nota">
+        <summary>Nota da equipe{% if i.nota.saved_by %} <span>· {{ i.nota.saved_by }}{% if i.nota.saved_at %}, {{ i.nota.saved_at|data }}{% endif %}</span>{% endif %}</summary>
+        <div class="pl-nota-corpo" id="nota{{ loop.index }}">
+          {% if i.nota.resumo_materia %}<div class="pl-bloco"><h3>Resumo da matéria</h3>{{ i.nota.resumo_materia|html_seguro }}</div>{% endif %}
+          {% if i.nota.resumo_parecer %}<div class="pl-bloco"><h3>Parecer</h3>{{ i.nota.resumo_parecer|html_seguro }}</div>{% endif %}
+          {% if i.nota.orientacao %}<div class="pl-bloco"><h3>Orientação</h3>{{ ori(i.nota.orientacao) }}</div>{% endif %}
+        </div>
+        <button type="button" class="mini" onclick="navigator.clipboard.writeText(document.getElementById('nota{{ loop.index }}').innerText);this.textContent='Copiado'">Copiar nota</button>
+      </details>
+      {% else %}<div class="pl-sem">Sem nota da equipe no Minha Pauta.</div>{% endif %}
+    </div>
+  </article>
+  {% else %}<div class="vazio-msg" style="padding:28px 16px">Nenhum item neste filtro.</div>{% endfor %}
+  <p class="nota">Pauta e notas copiadas do app Minha Pauta (somente leitura){% if ultima_sync %}; última cópia em {{ ultima_sync|data }} às {{ ultima_sync[11:16] }}{% endif %}. A cópia é renovada a cada 30 minutos. Para editar notas, orientações ou a ordem, use o Minha Pauta.</p>
+</section>
+{% endif %}
+{% endblock %}

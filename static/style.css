@@ -615,3 +615,63 @@ td.vinc details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(
 .fontes-lista li.off span{color:var(--suave);text-decoration:line-through}
 .fontes-lista form{display:flex;gap:4px;margin:0}
 @media (max-width:640px){ .rn-termo{margin-left:0} .rn-form input.mini{width:100%} }
+
+/* ---------------- Plenário (pauta do Minha Pauta) ---------------- */
+.pl-cab{border-radius:14px;overflow:hidden;margin-bottom:14px;box-shadow:0 1px 2px rgba(10,40,25,.05),0 4px 14px rgba(10,40,25,.06)}
+.pl-cab-in{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:20px 22px;color:#fff;
+  background:linear-gradient(135deg,#117146 0%,var(--pri) 45%,var(--pri-esc) 100%);border-bottom:3px solid var(--ouro)}
+.pl-id{flex:1 1 320px;min-width:0}
+.pl-rot{display:inline-block;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:1.1px;color:#3d2c00;background:#f2c230;border-radius:4px;padding:2px 8px;margin-bottom:6px}
+.pl-cab h1{margin:0;font-size:23px;line-height:1.2}
+.pl-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:12px}
+.pl-meta span,.pl-meta a{padding:3px 10px;border-radius:20px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:#fff;text-decoration:none}
+.pl-acoes{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.pl-acoes form{margin:0}
+.pl-acoes label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#c4ddcd}
+.pl-acoes select{font:inherit;font-size:13px;text-transform:none;letter-spacing:0;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;max-width:320px}
+.pl-acoes select option{color:var(--tinta)}
+.pl-acoes .btn.sec{background:#fff;color:var(--pri-esc)}
+.pl-pilulas{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:12px 14px;border-bottom:1px solid var(--linha)}
+.pl-pilulas a{padding:5px 11px;border:1px solid var(--linha);border-radius:16px;text-decoration:none;font-size:12px;background:#fff;color:var(--suave)}
+.pl-pilulas a.sel{background:var(--pri);border-color:var(--pri);color:#fff}
+.pl-abrir{margin-left:auto;font:inherit;font-size:12px;border:0;background:none;color:var(--pri);cursor:pointer;font-weight:600}
+.pl-item{display:flex;gap:14px;padding:14px 16px;border-bottom:1px solid #ebf1ed}
+.pl-item.com-nota{box-shadow:inset 3px 0 0 var(--ouro)}
+.pl-ordem{flex:none;width:34px;height:34px;border-radius:50%;background:var(--pri-cl);color:var(--pri-esc);display:grid;place-items:center;font-weight:800;font-size:13px}
+.pl-corpo{flex:1;min-width:0}
+.pl-topo{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pl-proj{font-size:15px}
+.pl-proj a{color:var(--pri-esc);text-decoration:none}
+.pl-proj a:hover{text-decoration:underline}
+.pl-secao{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:#edf3ef;color:var(--pri-esc);border-radius:4px;padding:2px 7px}
+.pl-secao.extra{background:#fbf1d9;color:#8a6d22}
+.pl-ori{display:inline-block;font-size:10.5px;font-weight:800;border-radius:20px;padding:2px 9px;background:#eee;color:#555}
+.pl-ori.sim{background:#e3f4e8;color:#17703a}.pl-ori.nao{background:#fde8e6;color:#b03021}
+.pl-ori.obs{background:#3a3a3a;color:#fff}.pl-ori.lib{background:#eee;color:#666}
+.pl-ori.abs{background:#fff3d6;color:#8a6512}.pl-ori.neg{background:#e7effc;color:#2563c9}
+.pl-resumo{margin:6px 0 0;font-size:13.5px;font-weight:600;line-height:1.45}
+.pl-ementa{margin:4px 0 0;font-size:12.5px;color:var(--suave);line-height:1.45}
+.pl-dados{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:12px;color:var(--suave)}
+.pl-dados b{color:var(--tinta);font-weight:600}
+.pl-grupos{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;font-size:12px;color:var(--suave)}
+.pl-grupo{display:inline-flex;gap:4px;align-items:center}
+.pl-nota{margin-top:9px;border:1px solid var(--linha);border-radius:10px;background:#fff}
+.pl-nota summary{cursor:pointer;padding:8px 12px;font-size:13px;font-weight:700;color:var(--pri-esc)}
+.pl-nota summary span{font-weight:400;color:var(--suave)}
+.pl-nota[open] summary{border-bottom:1px solid var(--linha)}
+.pl-nota>.mini{margin:0 12px 10px}
+.pl-nota-corpo{padding:10px 14px;font-size:13.5px;line-height:1.55}
+.pl-bloco+.pl-bloco{margin-top:10px;padding-top:10px;border-top:1px dashed var(--linha)}
+.pl-bloco h3{margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--suave)}
+.pl-bloco p{margin:0 0 6px}
+.pl-bloco ul,.pl-bloco ol{margin:0 0 6px;padding-left:20px}
+.pl-sem{margin-top:7px;font-size:12px;color:var(--suave)}
+@media (max-width:640px){ .pl-item{gap:10px;padding:12px} .pl-ordem{width:28px;height:28px;font-size:12px} .pl-acoes,.pl-acoes label,.pl-acoes select{width:100%;max-width:none} .pl-abrir{margin-left:0} }
+
+/* barra superior: com Meu parlamentar e Plenário as abas não cabem ao lado da marca em telas médias */
+@media (max-width:1500px){
+  .topo-in{flex-wrap:wrap;row-gap:6px}
+  .abas{order:3;flex:1 1 100%;padding-bottom:2px}
+  .coleta{margin-left:auto}
+}
+.pl-ordem.extra{font-size:16px}

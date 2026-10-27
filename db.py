@@ -287,6 +287,20 @@ relatorias = Table(  # montadas a partir das pautas das reuniões (o relator de 
     Column("atualizado", DateTime),
 )
 
+plenario_pautas = Table(  # cópia das últimas pautas do app Minha Pauta, com as notas da equipe
+    "plenario_pautas", metadata,
+    Column("evento_id", Integer, primary_key=True),   # id da sessão na API da Câmara
+    Column("data", String(10), index=True),
+    Column("hora", String(5)),
+    Column("titulo", String(300)),
+    Column("situacao", String(120)),
+    Column("local", String(200)),
+    Column("itens", Text),                            # JSON: itens da pauta já com nota e orientações
+    Column("atualizado_fonte", String(40)),           # quando a pauta foi salva no Minha Pauta
+    Column("atualizado_por", String(120)),
+    Column("sincronizado_em", DateTime),
+)
+
 meta = Table(
     "meta", metadata,
     Column("chave", String(60), primary_key=True),

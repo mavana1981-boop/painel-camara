@@ -17,10 +17,10 @@
     <nav class="abas">
       {% if menu_meu %}<a href="{{ url_for('meu.inicio') }}" class="meu-link {{ 'ativa' if aba == 'meu' }}">Meu parlamentar</a>{% endif %}
       {% for slug, nome in abas %}
-        {% if slug in abas_deputado %}
+        {% if slug in abas_deputado or slug in abas_livres %}
           <a href="{{ url_for(slug) }}" class="{{ 'ativa' if aba == slug }}">{{ nome }}</a>
         {% else %}
-          <a href="{{ url_for(slug) }}{% if aba not in abas_deputado and aba and request.query_string %}?{{ request.query_string.decode() }}{% endif %}"
+          <a href="{{ url_for(slug) }}{% if aba not in abas_deputado and aba not in abas_livres and aba and request.query_string %}?{{ request.query_string.decode() }}{% endif %}"
              class="{{ 'ativa' if aba == slug }}">{{ nome }}</a>
         {% endif %}
       {% endfor %}
@@ -45,5 +45,6 @@
 </main>
 <div class="rodape"><span>Fonte: Dados Abertos da Câmara dos Deputados (legislativo e CEAP). Uso interno da Liderança da Oposição.</span>
   <span class="credito">Desenvolvido por: <span class="nw">Luisa Marreco – Minoria CD</span> / <span class="nw">Marcelo Uvara – Oposição CD</span></span></div>
+<script>(function(){var a=document.querySelector('.abas a.ativa');if(a&&a.parentNode.scrollWidth>a.parentNode.clientWidth){a.parentNode.scrollLeft=a.offsetLeft-a.parentNode.offsetLeft-16;}})();</script>
 </body>
 </html>

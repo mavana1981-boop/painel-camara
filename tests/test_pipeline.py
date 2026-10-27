@@ -917,6 +917,106 @@ def test_banco_antigo_ganha_colunas_novas():
     assert {"relevante", "acao_efetuada", "origem", "resumo"} <= cols
 
 
+
+def _minha_pauta_falsa(caminho):
+    """Banco no formato do Minha Pauta (plenario-assessoria), com duas sessões."""
+    import sqlite3
+    db = sqlite3.connect(caminho)
+    db.executescript("""
+    CREATE TABLE notas (item_key TEXT PRIMARY KEY, evento_id INTEGER, ordem TEXT, resumo_materia TEXT, orientacao TEXT,
+                        resumo_parecer TEXT, saved_by TEXT, saved_at TEXT, responsavel_username TEXT);
+    CREATE TABLE pauta_cache_db (evento_id INTEGER PRIMARY KEY, json_pauta TEXT, last_updated TEXT, last_saved_by TEXT,
+                                 fetched_at TEXT, reordered_at TEXT, reordered_by TEXT);
+    CREATE TABLE extra_pauta (id INTEGER PRIMARY KEY AUTOINCREMENT, evento_id INTEGER NOT NULL, id_proposicao TEXT NOT NULL,
+                              projeto TEXT, ementa TEXT, autor TEXT, relator TEXT, created_by TEXT, created_at TEXT);
+    CREATE TABLE orientacoes_grupo (id INTEGER PRIMARY KEY AUTOINCREMENT, evento_id INTEGER, id_principal TEXT, grupo TEXT,
+                                    orientacao TEXT, comentario TEXT, saved_by TEXT, saved_at TEXT);
+    """)
+    itens_novos = [
+        {"ordem": "1", "id_principal": "2480001", "projeto": "PL 1087/2025", "projeto_original": "PL 1087/2025",
+         "ementa": "Altera a Lei X.", "autor": "Ana Oposição", "relator": "Dep. Fulano", "situacao": "Aguardando",
+         "secao": "Matéria sobre a mesa", "resumo_materia": "", "orientacao": "", "resumo_parecer": ""},
+        {"ordem": "2", "id_principal": "2470045", "projeto": "REQ 10/2025 ao PEC 45/2025", "projeto_original": "REQ 10/2025 ao PEC 45/2025",
+         "ementa": "Requer urgência.", "autor": "Bruno Governo", "relator": "Não atribuído", "situacao": "N/D", "secao": "N/D",
+         "resumo_materia": "<p>cópia antiga no cache</p>", "orientacao": "SIM"},
+        {"ordem": "3", "id_principal": "2440030", "projeto": "PDL 30/2025", "ementa": "Susta decreto.",
+         "autor": "Ana Oposição", "relator": "Não atribuído", "situacao": "N/D", "secao": "N/D"},
+    ]
+    db.execute("INSERT INTO pauta_cache_db VALUES (?,?,?,?,?,?,?)", (9100, json.dumps(itens_novos), "2026-10-27 09:10:00",
+                                                                    "Marcelo", "2026-10-27 08:00:00", None, None))
+    db.execute("INSERT INTO pauta_cache_db VALUES (?,?,?,?,?,?,?)", (9050, json.dumps(itens_novos[:1]), "2026-10-20 10:00:00",
+                                                                    "Luisa", None, None, None))
+    db.execute("INSERT INTO notas VALUES (?,?,?,?,?,?,?,?,?)", ("PROP_2480001", 9050, "1",
+        '<p><strong>Nota técnica.</strong> Vota SIM.</p><script>alert(1)</script><ul><li>ponto 1</li></ul>'
+        '<a href="javascript:x()">ruim</a><a href="https://www.camara.leg.br/x">texto</a><img src=x onerror=alert(2)>',
+        "NÃO", "Parecer favorável com substitutivo.", "Luisa", "2026-10-20 18:00:00", "luisa"))
+    db.execute("INSERT INTO notas VALUES (?,?,?,?,?,?,?,?,?)", ("PROP_2470045", 9100, "2", "<p>nota nova</p>", "OBSTRUÇÃO",
+                                                                "", "Marcelo", "2026-10-27 09:00:00", None))
+    db.execute("INSERT INTO extra_pauta (evento_id, id_proposicao, projeto, ementa, autor, relator, created_by, created_at) "
+               "VALUES (9100, '2490456', 'REQ 456/2025', 'Requer retirada.', 'Ana Oposição', '', 'Marcelo', '2026-10-27 09:05')")
+    for g, o in (("PL", "NÃO"), ("NOVO", "NÃO"), ("oposicao", "OBSTRUÇÃO"), ("minoria", "")):
+        db.execute("INSERT INTO orientacoes_grupo (evento_id, id_principal, grupo, orientacao, comentario) VALUES (9100,'2480001',?,?,?)",
+                   (g, o, "acordo" if g == "PL" else ""))
+    db.commit()
+    db.close()
+
+
+def test_plenario_com_pauta_e_notas_do_minha_pauta():
+    from datetime import datetime, timedelta
+    import app as painel
+    import plenario
+    adm = _cliente()
+    os.environ.pop("MINHA_PAUTA_DATABASE_URL", None)
+    html = adm.get("/plenario").get_data(as_text=True)
+    assert "MINHA_PAUTA_DATABASE_URL" in html and 'class="ativa">Plenário' in html.replace("\n", "")
+    assert plenario.sincronizar() is None and not plenario.precisa_sincronizar()
+    caminho = os.path.join(_tmp, "minha_pauta.db")
+    _minha_pauta_falsa(caminho)
+    os.environ["MINHA_PAUTA_DATABASE_URL"] = f"sqlite:///{caminho}"
+    orig = collector.get_json
+    collector.get_json = lambda c: {"dados": {"dataHoraInicio": "2026-10-28T13:55", "descricaoTipo": "Sessão Deliberativa",
+                                              "situacao": "Convocada", "localCamara": {"nome": "Plenário Principal - CD"}}}
+    try:
+        assert plenario.precisa_sincronizar()
+        assert plenario.sincronizar() == 2
+        assert not plenario.precisa_sincronizar()
+        assert plenario.precisa_sincronizar(datetime.now() + timedelta(minutes=plenario.MINUTOS + 1))
+        p = plenario.pauta()
+        assert p["evento_id"] == 9100 and p["data"] == "2026-10-28" and p["hora"] == "13:55"
+        assert p["total"] == 4 and p["com_nota"] == 2 and p["atualizado_por"] == "Marcelo"
+        itens = {i["id_principal"]: i for i in p["itens"]}
+        pl = itens["2480001"]
+        assert pl["nota"]["orientacao"] == "NÃO" and pl["nota"]["saved_by"] == "Luisa"      # nota de sessão anterior vale
+        assert pl["orientacoes_grupo"]["oposicao"]["orientacao"] == "OBSTRUÇÃO" and pl["url"].endswith("/2480001")
+        assert itens["2470045"]["nota"]["resumo_materia"] == "<p>nota nova</p>"          # nota prevalece sobre o cache
+        assert itens["2470045"]["projeto_original"] == "REQ 10/2025"
+        assert not itens["2440030"]["tem_nota"]
+        assert itens["2490456"]["eh_extra_pauta"] and itens["2490456"]["incluido_por"] == "Marcelo"
+        assert [x["evento_id"] for x in plenario.pautas_recentes()] == [9100, 9050]
+        assert [i["id_principal"] for i in plenario.pauta(filtro="com_nota")["itens"]] == ["2480001", "2470045"]
+
+        html = adm.get("/plenario").get_data(as_text=True)
+        assert "PL 1087/2025" in html and "Nota técnica." in html and "Parecer favorável com substitutivo." in html
+        assert "<li>ponto 1</li>" in html and "<script>alert" not in html and "alert(" not in html and "javascript:" not in html
+        assert 'href="https://www.camara.leg.br/x"' in html and "onerror" not in html
+        assert "Oposição:" in html and "OBSTRUÇÃO" in html and "extrapauta" in html and "Sem nota da equipe" in html
+        assert "28/10/2026" in html and "Salva no Minha Pauta por Marcelo" in html
+        html = adm.get("/plenario?evento=9050").get_data(as_text=True)
+        assert "Altera a Lei X." in html and "Susta decreto." not in html
+        assert "Susta decreto." in adm.get("/plenario?filtro=sem_nota").get_data(as_text=True)
+        tok = _tok(adm, "/plenario")
+        r = adm.post("/plenario/atualizar", data={"_csrf": tok})
+        assert r.status_code == 302 and "Pauta atualizada" in adm.get("/plenario").get_data(as_text=True)
+        assert painel.plenario_se_preciso() is False                                   # acabou de copiar
+        assert _anonimo().get("/plenario").status_code == 302                           # exige login
+        html = adm.get("/orientacoes?opostas=0").get_data(as_text=True)
+        assert 'href="/plenario"' in html                                               # aba sem os filtros de votação
+        assert plenario.html_seguro("linha 1\nlinha <2>") == "linha 1<br>linha &lt;2&gt;"
+    finally:
+        collector.get_json = orig
+        os.environ.pop("MINHA_PAUTA_DATABASE_URL", None)
+
+
 def test_atualizar_agora_e_etapa_diaria():
     import coleta_meu
     import meu

@@ -24,7 +24,7 @@ app.jinja_loader = ChoiceLoader([FileSystemLoader(os.path.join(RAIZ, "templates"
 
 TEMPLATES = ("base.html", "_macros.html", "_selo.html", "login.html", "conta.html", "usuarios.html",
              "erro.html", "vazio.html", "perfil.html", "proposicoes.html", "cota.html", "votacoes.html",
-             "orientacoes.html", "rankings.html", "meu.html", "meu_escolher.html")
+             "orientacoes.html", "rankings.html", "meu.html", "meu_escolher.html", "plenario.html")
 ESTATICOS = ("style.css", "plenario.svg", "favicon.svg")
 
 
@@ -58,13 +58,15 @@ import meu  # noqa: E402
 app.register_blueprint(meu.bp)
 
 ABAS = [("perfil", "Perfil"), ("proposicoes", "Proposições"), ("cota", "Cota"),
-        ("votacoes", "Votações"), ("orientacoes", "Orientações"), ("rankings", "Rankings")]
+        ("votacoes", "Votações"), ("orientacoes", "Orientações"), ("rankings", "Rankings"),
+        ("plenario", "Plenário")]
 ABAS_DEPUTADO = {"perfil", "proposicoes", "cota"}   # abas com seletor de deputado
+ABAS_LIVRES = {"plenario"}                          # abas que não usam os filtros de votação
 
 
 @app.context_processor
 def _ctx():
-    return {"abas": ABAS, "abas_deputado": ABAS_DEPUTADO, "versao_css": _versao_css()}
+    return {"abas": ABAS, "abas_deputado": ABAS_DEPUTADO, "abas_livres": ABAS_LIVRES, "versao_css": _versao_css()}
 
 
 def _versao_css():
@@ -232,6 +234,51 @@ def cota():
                            c=dados, ano=ano, todos_anos=todos_anos)
 
 
+# ---------------- Plenário (pauta do app Minha Pauta) ----------------
+
+@app.route("/plenario", endpoint="plenario")
+def plenario_pagina():
+    import plenario
+    _, op = _contexto_filtros()
+    filtro = request.args.get("filtro", "")
+    filtro = filtro if filtro in ("com_nota", "sem_nota") else ""
+    evento = request.args.get("evento", type=int)
+    return render_template("plenario.html", aba="plenario", op=op, filtro=filtro,
+                           p=plenario.pauta(evento, filtro), recentes=plenario.pautas_recentes(),
+                           configurado=plenario.configurado(), ultima_sync=plenario.ultima_sincronizacao(),
+                           grupos=plenario.GRUPOS)
+
+
+_plenario_lock = threading.Lock()
+
+
+@app.post("/plenario/atualizar")
+def plenario_atualizar():
+    import plenario
+    from flask import flash
+    if not plenario.configurado():
+        flash("Falta a variável MINHA_PAUTA_DATABASE_URL no Railway para ler o Minha Pauta.", "erro")
+    elif _plenario_lock.acquire(blocking=False):
+        try:
+            n = plenario.sincronizar()
+            flash(f"Pauta atualizada a partir do Minha Pauta ({n} sessão(ões) lidas).", "ok")
+        except Exception as e:
+            logging.exception("Plenário")
+            flash(f"Não consegui ler o Minha Pauta agora: {str(e).splitlines()[0][:160]}", "erro")
+        finally:
+            _plenario_lock.release()
+    else:
+        flash("Já há uma atualização em andamento.", "erro")
+    return redirect(url_for("plenario", evento=request.args.get("evento") or None))
+
+
+
+@app.template_filter("html_seguro")
+def _html_seguro(v):
+    import plenario
+    return plenario.html_seguro(v)
+
+
 # ---------------- coleta ----------------
 _coleta_lock = threading.Lock()
 
@@ -298,6 +345,18 @@ def radar_se_preciso():
     return True
 
 
+def plenario_se_preciso():
+    """Cópia da pauta do Minha Pauta a cada 30 minutos (PLENARIO_MINUTOS)."""
+    import plenario
+    if not plenario.precisa_sincronizar() or not _plenario_lock.acquire(blocking=False):
+        return False
+    try:
+        plenario.sincronizar()
+    finally:
+        _plenario_lock.release()
+    return True
+
+
 def _agendador_diario():
     """Dispensa o serviço de cron: o próprio app atualiza os dados uma vez por dia."""
     import time
@@ -314,6 +373,10 @@ def _agendador_diario():
             radar_se_preciso()
         except Exception:
             logging.exception("radar de notícias")
+        try:
+            plenario_se_preciso()
+        except Exception:
+            logging.exception("Plenário")
         time.sleep(30 * 60)
 
 
