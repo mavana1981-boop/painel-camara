@@ -9,24 +9,21 @@ Roda na atualização diária (depois das etapas principais) e também sob deman
   das pautas — cada item com relator vira uma relatoria daquele deputado, com o resultado do item
   (ex.: "Aprovado o Parecer") e a data da reunião. Na primeira execução, lê também as pautas dos
   últimos 180 dias (MEU_DIAS_HISTORICO) para já começar com histórico.
-- Notícias: só para deputados com pelo menos um usuário vinculado.
+- Notícias: radar.py (portais do Monitor Legislativo + Google Notícias, com análise por IA),
+  só para deputados com pelo menos um usuário vinculado.
 """
 import logging
 import os
 import re
-import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
-from email.utils import parsedate_to_datetime
-from urllib.parse import quote
 
 from sqlalchemy import delete, insert, select, update
 
-from db import (agenda, deputados, engine, meta, noticias, relatorias, temas_radar, usuario_deputados)
+from db import agenda, deputados, engine, meta, relatorias, usuario_deputados
 
 log = logging.getLogger("meu_parlamentar")
 
 DIAS_AGENDA_PASSADO, DIAS_AGENDA_FUTURO = 7, 45
-DIAS_NOTICIAS = 60
 DIAS_HISTORICO = int(os.environ.get("MEU_DIAS_HISTORICO", "180"))
 CHAVE_HISTORICO = "meu:historico_pautas"
 
@@ -255,79 +252,10 @@ def coletar_historico_pautas(hoje=None, dias=DIAS_HISTORICO):
 
 
 # ---------------- radar de notícias ----------------
-
-def url_noticias(consulta):
-    return ("https://news.google.com/rss/search?q=" + quote(f"{consulta} when:7d")
-            + "&hl=pt-BR&gl=BR&ceid=BR:pt-419")
-
-
-def parse_rss(xml_texto):
-    out = []
-    try:
-        raiz = ET.fromstring(xml_texto)
-    except ET.ParseError:
-        return out
-    for it in raiz.iter("item"):
-        titulo = (it.findtext("title") or "").strip()
-        link = (it.findtext("link") or "").strip()
-        if not titulo or not link:
-            continue
-        fonte = (it.findtext("source") or "").strip() or None
-        if fonte and titulo.endswith(f" - {fonte}"):
-            titulo = titulo[: -len(fonte) - 3].strip()
-        try:
-            pub = parsedate_to_datetime(it.findtext("pubDate")).replace(tzinfo=None)
-        except (TypeError, ValueError):
-            pub = None
-        out.append({"titulo": titulo[:500], "link": link[:1000], "fonte": fonte, "publicado": pub})
-    return out
-
-
-def consultas_radar(codigo):
-    with engine.connect() as c:
-        s = c.execute(select(deputados.c.nome).where(deputados.c.codigo == codigo)).first()
-        temas = [r[0] for r in c.execute(select(temas_radar.c.termo).where(
-            temas_radar.c.codigo_deputado == codigo).order_by(temas_radar.c.termo))]
-    out = []
-    if s:
-        out.append((s[0], f'"{s[0]}" deputado'))
-    out += [(t, t) for t in temas]
-    return out
-
-
-def gravar_noticias(conn, codigo, termo, itens, hoje=None):
-    agora = datetime.now()
-    conhecidos = {r[0] for r in conn.execute(select(noticias.c.link).where(noticias.c.codigo_deputado == codigo))}
-    n = 0
-    for it in itens:
-        if it["link"] in conhecidos:
-            continue
-        conhecidos.add(it["link"])
-        conn.execute(insert(noticias).values(codigo_deputado=codigo, termo=termo, coletado_em=agora, **it))
-        n += 1
-    corte = datetime.combine((hoje or date.today()) - timedelta(days=DIAS_NOTICIAS), datetime.min.time())
-    conn.execute(delete(noticias).where(noticias.c.codigo_deputado == codigo, noticias.c.coletado_em < corte))
-    return n
-
-
-def coletar_noticias(codigo):
-    import requests
-    total = 0
-    for termo, consulta in consultas_radar(codigo):
-        try:
-            r = requests.get(url_noticias(consulta), timeout=30,
-                             headers={"User-Agent": "Mozilla/5.0 (painel-camara)"})
-            if r.status_code != 200:
-                log.warning("radar %s/%s: HTTP %s", codigo, termo, r.status_code)
-                continue
-            itens = parse_rss(r.text)
-        except Exception as e:
-            log.warning("radar %s/%s: %s", codigo, termo, e)
-            continue
-        with engine.begin() as c:
-            total += gravar_noticias(c, codigo, termo, itens[:40])
-    log.info("radar deputado %s: %d notícias novas", codigo, total)
-    return total
+# A coleta e a análise ficam em radar.py (modelo do Monitor Legislativo); os nomes abaixo
+# continuam disponíveis aqui por compatibilidade.
+from radar import consultas_radar, gravar_noticias, url_noticias  # noqa: E402,F401
+from radar import parse_feed as parse_rss  # noqa: E402,F401
 
 
 # ---------------- orquestração ----------------
@@ -345,8 +273,8 @@ def executar(codigos=None, agenda_tambem=True):
                 fn()
             except Exception:
                 log.exception(fn.__name__)
-    for cod in (codigos if codigos is not None else deputados_vinculados()):
-        try:
-            coletar_noticias(cod)
-        except Exception:
-            log.exception("notícias do deputado %s", cod)
+    import radar
+    try:
+        radar.ciclo(codigos)
+    except Exception:
+        log.exception("radar de notícias")

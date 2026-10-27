@@ -17,7 +17,7 @@ from sqlalchemy import and_, delete, insert, or_, select, text, update
 import metrics
 import paineis
 import questoes
-from db import (agenda, anexos, deputados, engine, noticias, norm_nome, relatorias, solicitacoes,
+from db import (agenda, anexos, deputados, engine, norm_nome, relatorias, solicitacoes,
                 temas_radar, usuario_deputados)
 
 log = logging.getLogger("meu")
@@ -242,18 +242,23 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
 
 # ---------------- radar ----------------
 
-def radar(cod, termo=""):
-    q = select(noticias).where(noticias.c.codigo_deputado == cod)
-    if termo:
-        q = q.where(noticias.c.termo == termo)
+def radar(cod, termo="", filtro=""):
+    import radar as rd
+    itens = rd.lista(cod, termo, filtro)
     with engine.connect() as c:
-        itens = [dict(r) for r in c.execute(q.order_by(noticias.c.publicado.desc().nullslast(),
-                                                       noticias.c.id.desc()).limit(200)).mappings()]
         temas = [r[0] for r in c.execute(select(temas_radar.c.termo).where(temas_radar.c.codigo_deputado == cod)
                                          .order_by(temas_radar.c.termo))]
         termos = [r[0] for r in c.execute(text("SELECT termo, COUNT(*) n FROM noticias WHERE codigo_deputado = :c "
                                                "GROUP BY termo ORDER BY n DESC"), {"c": cod})]
-    return {"itens": itens, "temas": temas, "termos": termos}
+        cont = c.execute(text(
+            "SELECT COUNT(*) n, SUM(CASE WHEN relevante THEN 1 ELSE 0 END) rel, "
+            "SUM(CASE WHEN analisado_em IS NULL THEN 1 ELSE 0 END) pend, "
+            "SUM(CASE WHEN origem = 'portal' THEN 1 ELSE 0 END) portal, "
+            "SUM(CASE WHEN origem = 'google' OR origem IS NULL THEN 1 ELSE 0 END) google, "
+            "SUM(CASE WHEN relevante AND COALESCE(status, 'Pendente') = 'Pendente' THEN 1 ELSE 0 END) pendentes "
+            "FROM noticias WHERE codigo_deputado = :c"), {"c": cod}).mappings().first()
+    return {"itens": itens, "temas": temas, "termos": termos,
+            "cont": {k: (cont[k] or 0) for k in ("n", "rel", "pend", "portal", "google", "pendentes")}}
 
 
 def alterar_temas(cod, acao, termo):
@@ -425,7 +430,7 @@ def visao(cod):
         "notif": paineis.notificacoes(cod, limite=6),
         "clip": clipping(cod, hoje - timedelta(days=30), hoje),
         "solic": lista_solicitacoes(cod, "")["contagem"],
-        "radar": radar(cod)["itens"][:6],
+        "radar": (radar(cod, filtro="relevantes")["itens"] or radar(cod)["itens"])[:6],
         "questoes": questoes.historico(cod, 3),
     }
 
@@ -508,8 +513,14 @@ def painel(cod):
                             "artigos": len(questoes.artigos(reg["texto"]))} if reg else None
         ctx["gerando"] = any(q["resposta"] is None for q in ctx["hist"])
     elif secao == "radar":
+        import radar as rd
         ctx["termo"] = request.args.get("termo", "")
-        ctx["radar"] = radar(cod, ctx["termo"])
+        ctx["filtro"] = request.args.get("filtro", "")
+        ctx["radar"] = radar(cod, ctx["termo"], ctx["filtro"])
+        ctx["fontes"] = rd.lista_fontes()
+        ctx["ia_ok"] = questoes.configurado()
+        ctx["status_radar"] = rd.STATUS
+        ctx["categorias_radar"] = rd.CATEGORIAS
     elif secao == "rankings":
         ctx["ranks"] = rankings(cod)
     elif secao == "clipping":
@@ -559,6 +570,16 @@ def _post(cod, secao, s, autor):
             flash(f"Regimento cadastrado: {n} artigos encontrados.", "ok")
         elif secao == "radar" and acao in ("add", "del"):
             alterar_temas(cod, acao, f.get("termo"))
+        elif secao == "radar" and acao == "item":
+            import radar as rd
+            rd.atualizar_item(cod, f.get("id", type=int), f)
+            destino = url_for("meu.painel", cod=cod, secao=secao, filtro=request.args.get("filtro", ""),
+                              termo=request.args.get("termo", "")) + f"#n{f.get('id', type=int)}"
+        elif secao == "radar" and acao in ("fonte_add", "fonte_toggle", "fonte_del"):
+            if not g.usuario.get("admin"):
+                abort(403)
+            import radar as rd
+            rd.alterar_fonte(acao, f)
         else:
             abort(400)
     except ValueError as e:

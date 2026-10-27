@@ -105,6 +105,7 @@ paineis.py    Perfil, Proposições, Cota, notificações e rankings correlatos
 meu.py        Meu Parlamentar (rotas e regras)
 coleta_meu.py agenda, pautas/relatorias e radar de notícias
 questoes.py   questões de ordem por IA com base no RICD
+radar.py      radar de notícias (portais do Monitor Legislativo + Google Notícias, análise por IA)
 cota.py       tetos da CEAP por UF
 db.py         tabelas e normalização
 templates/ static/ tests/
@@ -121,12 +122,13 @@ O administrador vê todos os deputados em exercício.
 | Notificações | Mudanças de situação das proposições e proposições novas, detectadas na coleta diária (guardadas por 180 dias) |
 | Solicitações | Registro com status, prazo e anexos (até 10 MB cada, guardados no banco) |
 | Questões de ordem | IA (Claude, API da Anthropic) com base no Regimento Interno da Câmara enviado pelo admin (PDF/TXT) |
-| Radar de notícias | Google Notícias (nome do deputado + temas cadastrados), últimos 60 dias |
+| Radar de notícias | No modelo do Monitor Legislativo: os mesmos portais (RSS, editáveis pelo admin) a cada 2 horas, mais o Google Notícias; entram as notícias que citam o deputado ou um tema cadastrado, e a IA indica relevância, categoria, tipo de ação e ação sugerida. A equipe marca Pendente / Em análise / Ação efetuada |
 | Rankings | Posição entre os deputados em exercício e quanto falta para subir |
 | Clipping | Proposições do deputado com situação de aprovação e relatorias com parecer aprovado, por data |
 
 A Câmara não tem serviço de “relatorias do deputado”: elas são montadas a partir das pautas das reuniões
 deliberativas (`/eventos/{id}/pauta`, que traz o relator de cada item e o resultado). Na primeira coleta, o app
 lê as pautas dos últimos 180 dias (`MEU_DIAS_HISTORICO`) e depois acompanha dia a dia.
-Notícias são coletadas uma vez por dia só para deputados com usuário vinculado; o botão **Atualizar agora**
-busca na hora. Para ligar a IA, configure `ANTHROPIC_API_KEY` no Railway.
+O radar roda a cada 2 horas (`RADAR_HORAS`; `AUTO_RADAR=0` desliga) só para deputados com usuário vinculado; o botão
+**Atualizar agora** busca na hora. A IA do radar e das questões de ordem usa `ANTHROPIC_API_KEY`; o modelo do radar
+fica em `RADAR_MODEL` (padrão `claude-haiku-5-5`) e o limite de análises por deputado e ciclo em `RADAR_MAX_ANALISES` (30).

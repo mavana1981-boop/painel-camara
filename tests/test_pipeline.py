@@ -757,6 +757,166 @@ def test_radar_clipping_rankings_e_paginas():
     assert "meu-link" in html and "style.css?v=" in html
 
 
+
+RSS_PORTAL = """<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>G1</title>
+<item><title>Ana Oposição cobra explicações do ministério sobre obras paradas</title><link>https://g1.exemplo/1</link>
+  <description>&lt;p&gt;A deputada quer saber por que 40 obras estão paralisadas.&lt;/p&gt;</description><pubDate>Mon, 26 Oct 2026 12:00:00 GMT</pubDate></item>
+<item><title>Governo anuncia novo plano</title><link>https://g1.exemplo/2</link>
+  <description>Plano prevê ações de segurança pública nas fronteiras.</description><pubDate>Mon, 26 Oct 2026 10:00:00 GMT</pubDate></item>
+<item><title>Campeonato de futebol começa</title><link>https://g1.exemplo/3</link><description>Esporte.</description></item>
+<item><title>Ana Oposiçãozinha é personagem de novela</title><link>https://g1.exemplo/4</link><description>Ficção.</description></item>
+</channel></rss>"""
+ATOM_PORTAL = """<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Poder360</title>
+<entry><title>Oposição: Ana Oposição apresenta PDL contra decreto</title><link href="https://poder.exemplo/9"/>
+  <summary>O projeto susta o decreto.</summary><updated>2026-10-25T09:00:00Z</updated></entry></feed>"""
+RSS_GOOGLE = """<?xml version="1.0"?><rss><channel>
+<item><title>Deputada Ana Oposição visita hospital em SP - Folha de S.Paulo</title><link>https://news.google/a</link>
+  <description>&lt;a href="x"&gt;Deputada Ana Oposição visita hospital em SP&lt;/a&gt;&amp;nbsp;&amp;nbsp;&lt;font&gt;Folha de S.Paulo&lt;/font&gt;</description>
+  <pubDate>Tue, 27 Oct 2026 08:00:00 GMT</pubDate><source url="https://folha.uol.com.br">Folha de S.Paulo</source></item>
+<item><title>Ana Oposição cobra explicações do ministério sobre obras paradas - G1</title><link>https://g1.exemplo/1</link>
+  <pubDate>Mon, 26 Oct 2026 12:00:00 GMT</pubDate><source url="https://g1.globo.com">G1</source></item>
+</channel></rss>"""
+
+
+def _buscar_fake(url):
+    if url == "https://g1.globo.com/rss/g1/politica/":
+        return RSS_PORTAL.encode()
+    if url == "https://www.poder360.com.br/feed/":
+        return ATOM_PORTAL.encode()
+    if "news.google.com" in url:
+        return RSS_GOOGLE.encode() if "Ana" in url else b"<rss><channel></channel></rss>"
+    return None
+
+
+class _IAFake:
+    """Responde como a IA do Monitor: relevante para cobranças, irrelevante para o resto."""
+    def __init__(self):
+        self.pedidos = []
+
+    def post(self, url, json=None, timeout=None, headers=None):
+        self.pedidos.append(json)
+        msg = json["messages"][0]["content"]
+        if "obras paradas" in msg:
+            txt = ('```json\n{"relevante": true, "categoria": "Infraestrutura e serviços públicos", "tipo_acao": '
+                   '"Requerimento de informações", "acao_sugerida": "Apresentar RIC ao Ministério sobre as 40 obras.", '
+                   '"justificativa": "Omissão do Executivo."}\n```')
+        elif "hospital" in msg:
+            txt = "resposta quebrada sem json"
+        else:
+            txt = '{"relevante": false, "categoria": null, "tipo_acao": null, "acao_sugerida": null, "justificativa": "Sem relação com fiscalização."}'
+
+        class R:
+            status_code = 200
+
+            def json(self_):
+                return {"content": [{"type": "text", "text": txt}]}
+        return R()
+
+
+def test_radar_no_modelo_do_monitor():
+    from datetime import date, datetime, timedelta
+    import app as painel
+    import radar
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM noticias"))
+        c.execute(text("DELETE FROM temas_radar"))
+    radar.garantir_fontes()
+    fontes = radar.lista_fontes()
+    assert len(fontes) == len(radar.FONTES_PADRAO) == 18
+    assert {f["nome"] for f in fontes} >= {"G1 Política", "Poder360", "Folha Poder"}
+    veja = next(f for f in fontes if f["nome"] == "Veja Brasil")
+    adm = _cliente()
+    tok = _tok(adm, "/meu/101?secao=radar")
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "fonte_del", "fonte": veja["id"]})
+    radar.garantir_fontes()                                    # exclusão do admin é respeitada
+    assert len(radar.lista_fontes()) == 17
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "add", "termo": "segurança pública"})
+    assert radar.casa_termo("Ana Oposiçãozinha na novela", radar._termos_norm(101)) is None      # palavra inteira
+    assert radar.casa_termo("A deputada ANA OPOSICAO falou", radar._termos_norm(101)) == "Ana Oposição"
+
+    ia = _IAFake()
+    os.environ["ANTHROPIC_API_KEY"] = "sk-teste"
+    try:
+        res = radar.ciclo([101], buscar=_buscar_fake, sessao=ia)
+        assert res == {"portais": 3, "google": 1, "analisadas": 4}
+        assert radar.ciclo([101], buscar=_buscar_fake, sessao=ia)["portais"] == 0      # já vistas
+    finally:
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+    itens = {n["link"]: n for n in radar.lista(101)}
+    assert set(itens) == {"https://g1.exemplo/1", "https://g1.exemplo/2", "https://poder.exemplo/9", "https://news.google/a"}
+    g1 = itens["https://g1.exemplo/1"]
+    assert g1["origem"] == "portal" and g1["fonte"] == "G1 Política" and g1["termo"] == "Ana Oposição"
+    assert g1["resumo"] == "A deputada quer saber por que 40 obras estão paralisadas."
+    assert g1["relevante"] is True and g1["tipo_acao"] == "Requerimento de informações" and g1["status"] == "Pendente"
+    assert itens["https://g1.exemplo/2"]["termo"] == "segurança pública" and itens["https://g1.exemplo/2"]["relevante"] is False
+    assert itens["https://poder.exemplo/9"]["fonte"] == "Poder360"
+    gg = itens["https://news.google/a"]
+    assert gg["origem"] == "google" and gg["fonte"] == "Folha de S.Paulo" and gg["titulo"] == "Deputada Ana Oposição visita hospital em SP"
+    assert gg["relevante"] is None and "não pôde ser lida" in gg["justificativa"]
+    pedido = ia.pedidos[0]
+    assert pedido["model"] == radar.modelo() and "Liderança da Oposição" in pedido["system"]
+    assert "deputado Ana Oposição (PL-SP)" in pedido["messages"][0]["content"]
+    assert [n["link"] for n in radar.lista(101, filtro="relevantes")] == ["https://g1.exemplo/1"]
+    assert len(radar.lista(101, filtro="portal")) == 3 and len(radar.lista(101, termo="segurança pública")) == 1
+
+    # tela: filtro, análise e acompanhamento pela equipe
+    html = adm.get("/meu/101?secao=radar&filtro=relevantes").get_data(as_text=True)
+    assert "Apresentar RIC ao Ministério sobre as 40 obras." in html and "Omissão do Executivo." in html
+    assert "Campeonato" not in html and "Portais acompanhados" in html and "G1 Política" in html
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": g1["id"], "status": "Ação efetuada",
+                                          "assessor": "Marcelo", "acao_efetuada": "RIC 1234/2026 protocolado"})
+    html = adm.get("/meu/101?secao=radar&filtro=Ação efetuada").get_data(as_text=True)
+    assert "RIC 1234/2026 protocolado" in html and "Marcelo" in html
+    assert radar.lista(102) == []
+    adm.post("/meu/102?secao=radar", data={"_csrf": tok, "acao": "item", "id": g1["id"], "status": "Pendente"})
+    assert radar.lista(101, filtro="Ação efetuada")[0]["id"] == g1["id"]          # item de outro deputado: intocado
+    html = adm.get("/meu/101?secao=visao").get_data(as_text=True)
+    assert "Requerimento de informações" in html                               # selo da IA na visão geral
+
+    # portais: admin acrescenta; quem não é admin não mexe
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "fonte_add", "nome": "Agência Câmara",
+                                          "url": "https://www.camara.leg.br/noticias/rss"})
+    assert "Agência Câmara" in {f["nome"] for f in radar.lista_fontes()}
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "fonte_add", "nome": "Ruim", "url": "ftp://x"})
+    assert "endereço do feed RSS" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    tok_u = _tok(adm, "/usuarios")
+    adm.post("/usuarios", data={"_csrf": tok_u, "acao": "criar", "login": "radar.leitor", "nome": "Leitor", "senha": "senha-segura-2"})
+    uid = _q("SELECT id FROM usuarios WHERE login='radar.leitor'")[0][0]
+    adm.post("/usuarios", data={"_csrf": tok_u, "acao": "vincular", "id": uid, "deputados": ["101"]})
+    u = _cliente_usuario("radar.leitor", "senha-segura-2")
+    tu = _tok(u, "/meu/101?secao=radar")
+    assert u.post("/meu/101?secao=radar", data={"_csrf": tu, "acao": "fonte_del", "fonte": veja["id"]}).status_code == 403
+    assert "Adicionar portal" not in u.get("/meu/101?secao=radar").get_data(as_text=True)
+
+    # limpeza: notícia antiga sem acompanhamento sai; a trabalhada fica
+    with engine.begin() as c:
+        c.execute(text("UPDATE noticias SET coletado_em = :d"), {"d": datetime.now() - timedelta(days=radar.DIAS_NOTICIAS + 5)})
+        radar.gravar_noticias(c, 101, "x", [])
+    assert [n["link"] for n in radar.lista(101)] == ["https://g1.exemplo/1"]
+
+    # agendamento a cada 2 horas
+    radar.ciclo(None, buscar=lambda u: None)
+    assert not radar.precisa_ciclo() and radar.precisa_ciclo(datetime.now() + timedelta(hours=radar.HORAS_CICLO, minutes=1))
+    os.environ["AUTO_RADAR"] = "0"
+    try:
+        assert painel.radar_se_preciso() is False
+    finally:
+        os.environ.pop("AUTO_RADAR")
+    assert radar.extrair_json('lixo {"relevante": false} lixo') == {"relevante": False}
+
+
+def test_banco_antigo_ganha_colunas_novas():
+    """Quem já tinha a tabela de notícias antes do radar novo recebe as colunas no boot."""
+    from sqlalchemy import inspect
+    with engine.begin() as c:
+        c.execute(text("ALTER TABLE noticias DROP COLUMN acao_efetuada"))
+        c.execute(text("ALTER TABLE noticias DROP COLUMN relevante"))
+    assert "relevante" not in {x["name"] for x in inspect(engine).get_columns("noticias")}
+    init_db()
+    cols = {x["name"] for x in inspect(engine).get_columns("noticias")}
+    assert {"relevante", "acao_efetuada", "origem", "resumo"} <= cols
+
+
 def test_atualizar_agora_e_etapa_diaria():
     import coleta_meu
     import meu

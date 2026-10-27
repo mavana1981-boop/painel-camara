@@ -289,6 +289,15 @@ def precisa_atualizar(agora=None, ultima=None):
     return agora - dt > timedelta(hours=20)
 
 
+def radar_se_preciso():
+    """Radar do Meu Parlamentar a cada 2 horas, como o Monitor Legislativo (RADAR_HORAS; AUTO_RADAR=0 desliga)."""
+    import radar
+    if os.environ.get("AUTO_RADAR") == "0" or not radar.precisa_ciclo():
+        return False
+    radar.ciclo()
+    return True
+
+
 def _agendador_diario():
     """Dispensa o serviço de cron: o próprio app atualiza os dados uma vez por dia."""
     import time
@@ -301,6 +310,10 @@ def _agendador_diario():
                 _rodar_coleta(collector.executar)
         except Exception:
             logging.exception("agendador diário")
+        try:
+            radar_se_preciso()
+        except Exception:
+            logging.exception("radar de notícias")
         time.sleep(30 * 60)
 
 

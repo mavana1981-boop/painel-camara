@@ -238,7 +238,7 @@ temas_radar = Table(
     Column("termo", String(120), primary_key=True),
 )
 
-noticias = Table(
+noticias = Table(  # radar: portais acompanhados (como no Monitor Legislativo) + Google Notícias
     "noticias", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("codigo_deputado", Integer, index=True),
@@ -248,6 +248,27 @@ noticias = Table(
     Column("fonte", String(200)),
     Column("publicado", DateTime, index=True),
     Column("coletado_em", DateTime),
+    Column("origem", String(10)),                # "portal" ou "google"
+    Column("resumo", Text),
+    # análise por IA (mesmo formato do Monitor Legislativo)
+    Column("analisado_em", DateTime),
+    Column("relevante", Boolean),
+    Column("categoria", String(80)),
+    Column("tipo_acao", String(80)),
+    Column("acao_sugerida", Text),
+    Column("justificativa", Text),
+    # acompanhamento pela equipe
+    Column("status", String(30)),                # Pendente, Em análise, Ação efetuada
+    Column("assessor", String(120)),
+    Column("acao_efetuada", Text),
+)
+
+fontes_radar = Table(  # portais (RSS) lidos pelo radar
+    "fontes_radar", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("nome", String(120)),
+    Column("url", String(500), unique=True),
+    Column("ativa", Boolean, default=True),
 )
 
 relatorias = Table(  # montadas a partir das pautas das reuniões (o relator de cada item)
@@ -275,6 +296,24 @@ meta = Table(
 
 def init_db():
     metadata.create_all(engine)
+    _colunas_novas()
+
+
+def _colunas_novas():
+    """create_all não altera tabelas que já existem: acrescenta as colunas que faltarem."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    for tabela in metadata.sorted_tables:
+        if not insp.has_table(tabela.name):
+            continue
+        existentes = {c["name"] for c in insp.get_columns(tabela.name)}
+        faltam = [c for c in tabela.columns if c.name not in existentes]
+        if not faltam:
+            continue
+        with engine.begin() as c:
+            for col in faltam:
+                tipo = col.type.compile(dialect=engine.dialect)
+                c.execute(text(f'ALTER TABLE {tabela.name} ADD COLUMN {col.name} {tipo}'))
 
 
 # ---------- Normalização ----------

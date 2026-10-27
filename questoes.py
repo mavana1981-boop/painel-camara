@@ -167,13 +167,13 @@ def montar_pedido(situacao, deputado_nome=None):
     return usuario, [n for n, _ in trechos]
 
 
-def chamar_ia(mensagem_usuario, sessao=None):
+def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180):
     chave = os.environ.get("ANTHROPIC_API_KEY")
     if not chave:
         raise RuntimeError("ANTHROPIC_API_KEY não configurada no Railway.")
-    corpo = {"model": modelo(), "max_tokens": 4000, "system": SISTEMA,
+    corpo = {"model": modelo_ or modelo(), "max_tokens": max_tokens, "system": sistema or SISTEMA,
              "messages": [{"role": "user", "content": mensagem_usuario}]}
-    r = (sessao or requests).post(API_URL, json=corpo, timeout=180, headers={
+    r = (sessao or requests).post(API_URL, json=corpo, timeout=timeout, headers={
         "x-api-key": chave, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     if r.status_code != 200:
         try:

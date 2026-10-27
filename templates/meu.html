@@ -103,7 +103,7 @@
     {% for d in v.clip.dias[:4] %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
     {% else %}<div class="vazio-msg">Nenhuma aprovação nos últimos 30 dias.</div>{% endfor %}</div>
   <div class="card neu"><h2>Radar de notícias <a class="mc-link" href="{{ url_for('meu.painel', cod=cod, secao='radar') }}">ver {{ ic("seta") }}</a></h2>
-    {% for n in v.radar %}<a class="news" href="{{ n.link }}" target="_blank" rel="noopener noreferrer"><b>{{ n.titulo }}</b><span>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</span></a>
+    {% for n in v.radar %}<a class="news" href="{{ n.link }}" target="_blank" rel="noopener noreferrer"><b>{{ n.titulo }}</b><span>{% if n.relevante %}<i class="rn-mini">{{ n.tipo_acao or 'Relevante' }}</i> {% endif %}{{ n.fonte or 'Google Notícias' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</span></a>
     {% else %}<div class="vazio-msg">Sem notícias coletadas ainda.</div>{% endfor %}</div>
 </section>
 {% endif %}
@@ -254,22 +254,60 @@
 
 {# =================== RADAR =================== #}
 {% if secao == 'radar' %}
+{% set rc = radar.cont %}
 <section class="grade larga">
   <div class="card neu">
-    <h2>Radar de notícias <small>últimos 60 dias</small></h2>
-    {% if radar.termos|length > 1 %}<div class="pilulas">
-      <a class="{{ 'sel' if not termo }}" href="{{ url_for('meu.painel', cod=cod, secao='radar') }}">Tudo</a>
-      {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t) }}">{{ t }}</a>{% endfor %}
-    </div>{% endif %}
-    <div class="rolagem" style="max-height:none">
-    {% for n in radar.itens %}<a class="news" href="{{ n.link }}" target="_blank" rel="noopener noreferrer"><b>{{ n.titulo }}</b>
-      <span>{{ [n.fonte, n.publicado|data if n.publicado else None]|select|join(' · ') }}{% if n.fonte or n.publicado %} · {% endif %}<i>{{ n.termo }}</i></span></a>
-    {% else %}<div class="vazio-msg">Nenhuma notícia coletada ainda. O radar roda uma vez por dia; use “Atualizar agora” para buscar já.</div>{% endfor %}
+    <h2>Radar de notícias <small>portais do Monitor Legislativo + Google Notícias · 60 dias</small></h2>
+    {% set q = {'termo': termo} if termo else {} %}
+    <div class="pilulas">
+      {% for k, nome, n in [('', 'Tudo', rc.n), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] %}
+      <a class="{{ 'sel' if filtro == k }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=k or None, **q) }}">{{ nome }}{% if n is not none %} ({{ n }}){% endif %}</a>
+      {% endfor %}
     </div>
+    {% if radar.termos|length > 1 %}<div class="pilulas sec">
+      <a class="{{ 'sel' if not termo }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None) }}">Todos os termos</a>
+      {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t, filtro=filtro or None) }}">{{ t }}</a>{% endfor %}
+    </div>{% endif %}
+    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">A análise por IA está desligada: falta a variável <b>ANTHROPIC_API_KEY</b> no Railway. As notícias continuam sendo coletadas.</div>
+    {% elif rc.pend %}<div class="rn-fila">{{ rc.pend }} notícia(s) aguardando análise da IA — saem no próximo ciclo (a cada 2 horas).</div>{% endif %}
+    <div class="rolagem" style="max-height:none">
+    {% for n in radar.itens %}
+      <article class="rn {{ 'rel' if n.relevante }} {{ 'desc' if n.relevante == false }}" id="n{{ n.id }}">
+        <div class="rn-top">
+          {% if n.origem == 'portal' %}<span class="rn-orig portal">{{ n.fonte }}</span>{% else %}<span class="rn-orig google">Google Notícias</span>{% if n.fonte %}<span class="rn-fonte">{{ n.fonte }}</span>{% endif %}{% endif %}
+          {% if n.publicado %}<span class="rn-data">{{ n.publicado|data }}</span>{% endif %}
+          <span class="rn-termo">{{ n.termo }}</span>
+        </div>
+        <a class="rn-tit" href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.titulo }}</a>
+        {% if n.resumo %}<p class="rn-res">{{ n.resumo }}</p>{% endif %}
+        {% if n.relevante %}
+        <div class="rn-ia">
+          <div class="rn-tags"><span class="rn-cat">{{ n.categoria or 'Outros' }}</span>{% if n.tipo_acao %}<span class="rn-tipo">{{ n.tipo_acao }}</span>{% endif %}
+            <span class="rn-st st-{{ (n.status or 'Pendente')|replace(' ', '-')|lower }}">{{ n.status or 'Pendente' }}</span>{% if n.assessor %}<span class="rn-ass">{{ n.assessor }}</span>{% endif %}</div>
+          {% if n.acao_sugerida %}<p><b>Ação sugerida:</b> {{ n.acao_sugerida }}</p>{% endif %}
+          {% if n.justificativa %}<p class="rn-just"><b>Por quê:</b> {{ n.justificativa }}</p>{% endif %}
+          {% if n.acao_efetuada %}<p class="rn-feita"><b>Ação registrada:</b> {{ n.acao_efetuada }}</p>{% endif %}
+          <form method="post" class="rn-form" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None, termo=termo or None) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="item"><input type="hidden" name="id" value="{{ n.id }}">
+            <select name="status" class="mini" onchange="this.form.querySelector('.rn-ef').style.display=this.value=='Ação efetuada'?'':'none'">
+              {% for st in status_radar %}<option {{ 'selected' if (n.status or 'Pendente') == st }}>{{ st }}</option>{% endfor %}</select>
+            <input name="assessor" class="mini" placeholder="Assessor" value="{{ n.assessor or usuario.nome or usuario.login }}" maxlength="120">
+            <textarea name="acao_efetuada" class="rn-ef mini" rows="2" placeholder="O que foi feito (ex.: RIC 1234/2026 protocolado)" style="{{ '' if n.status == 'Ação efetuada' else 'display:none' }}">{{ n.acao_efetuada or '' }}</textarea>
+            <button class="mini">Salvar</button>
+          </form>
+        </div>
+        {% elif n.relevante == false %}<div class="rn-sem">IA: sem ação parlamentar{% if n.justificativa %} — {{ n.justificativa }}{% endif %}</div>
+        {% elif n.analisado_em %}<div class="rn-sem">{{ n.justificativa }}</div>
+        {% else %}<div class="rn-sem">Aguardando análise da IA</div>{% endif %}
+      </article>
+    {% else %}<div class="vazio-msg">Nenhuma notícia {{ 'neste filtro' if filtro or termo else 'coletada ainda' }}. O radar roda a cada 2 horas; use “Atualizar agora” para buscar já.</div>{% endfor %}
+    </div>
+    <p class="nota">Como no Monitor Legislativo: os portais são lidos a cada 2 horas e cada notícia nova passa pela IA, que diz se cabe ação parlamentar, de que tipo e por quê. Daqui entram só as notícias que citam o nome do deputado ou um tema acompanhado; o Google Notícias complementa com outros veículos.</p>
   </div>
+  <div class="lado-pilha">
   <div class="card neu lado">
     <h2>Temas acompanhados</h2>
-    <div style="padding:12px 14px 4px;font-size:13px;color:var(--suave)">Além do nome do deputado, o radar busca notícias destes temas:</div>
+    <div style="padding:12px 14px 4px;font-size:13px;color:var(--suave)">Além do nome do deputado, o radar busca estes temas nos portais e no Google Notícias:</div>
     <div class="temas">
       {% for t in radar.temas %}<form method="post" class="tema"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="del"><input type="hidden" name="termo" value="{{ t }}">{{ t }} <button title="Remover">×</button></form>
       {% else %}<span style="color:var(--suave);font-size:13px">Nenhum tema cadastrado.</span>{% endfor %}
@@ -278,6 +316,23 @@
       <div class="lin"><input name="termo" maxlength="120" required placeholder="Ex.: Fundo Constitucional do DF"><button class="btn">Adicionar</button></div></form>
     <form method="post" class="meu-form" style="border-top:1px solid var(--linha)"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="atualizar">
       <button class="btn sec com-ic">{{ ic("refresh") }} Atualizar agora</button></form>
+  </div>
+  <div class="card neu lado">
+    <h2>Portais acompanhados <small>{{ fontes|selectattr('ativa')|list|length }} ativos</small></h2>
+    <ul class="fontes-lista">
+      {% for fo in fontes %}<li class="{{ '' if fo.ativa else 'off' }}"><span title="{{ fo.url }}">{{ fo.nome }}</span>
+        {% if usuario.admin %}<form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="fonte" value="{{ fo.id }}">
+          <button name="acao" value="fonte_toggle" class="mini">{{ 'Desligar' if fo.ativa else 'Ligar' }}</button>
+          <button name="acao" value="fonte_del" class="mini perigo" onclick="return confirm('Excluir o portal {{ fo.nome }}?')">×</button></form>{% endif %}</li>
+      {% else %}<li class="off">Nenhum portal cadastrado.</li>{% endfor %}
+    </ul>
+    {% if usuario.admin %}
+    <form method="post" class="meu-form" style="border-top:1px solid var(--linha)"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="fonte_add">
+      <label>Novo portal<input name="nome" maxlength="120" required placeholder="Ex.: Agência Câmara"></label>
+      <label>Endereço do feed RSS<input name="url" type="url" maxlength="500" required placeholder="https://…/feed/"></label>
+      <button class="btn sec">Adicionar portal</button></form>
+    {% else %}<p class="nota">A lista de portais é a mesma para todos os parlamentares e é mantida pelo administrador.</p>{% endif %}
+  </div>
   </div>
 </section>
 {% endif %}
