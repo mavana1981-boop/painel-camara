@@ -668,10 +668,14 @@ td.vinc details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(
 .pl-sem{margin-top:7px;font-size:12px;color:var(--suave)}
 @media (max-width:640px){ .pl-item{gap:10px;padding:12px} .pl-ordem{width:28px;height:28px;font-size:12px} .pl-acoes,.pl-acoes label,.pl-acoes select{width:100%;max-width:none} .pl-abrir{margin-left:0} }
 
-/* barra superior: com Meu parlamentar e Plenário as abas não cabem ao lado da marca em telas médias */
-@media (max-width:1500px){
-  .topo-in{flex-wrap:wrap;row-gap:6px}
-  .abas{order:3;flex:1 1 100%;padding-bottom:2px}
-  .coleta{margin-left:auto}
-}
 .pl-ordem.extra{font-size:16px}
+
+/* barra superior: as abas ficam numa linha própria e quebram em várias linhas — nunca cortam */
+.topo-in{flex-wrap:wrap;row-gap:6px}
+.abas{order:3;flex:1 1 100%;flex-wrap:wrap;overflow:visible;row-gap:4px;padding-bottom:2px}
+.coleta{margin-left:auto}
+@media (max-width:640px){
+  .abas{gap:3px}
+  .abas a{padding:6px 9px;font-size:13px}
+  .abas a.meu-link{margin-right:0}
+}
