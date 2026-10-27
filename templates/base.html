@@ -37,6 +37,12 @@
     {% endif %}
   </div>
 </header>
+<script>(function(){var t=document.querySelector('.topo'),n=t&&t.querySelector('.abas');if(!n)return;
+function aj(){t.classList.remove('empilhado');var ls=n.querySelectorAll('a'),m=t.querySelector('.marca').getBoundingClientRect(),
+ ok=ls.length&&ls[ls.length-1].offsetTop===ls[0].offsetTop&&n.getBoundingClientRect().top<m.bottom;
+ t.querySelectorAll('.coleta,.usr').forEach(function(e){if(e.offsetParent&&e.getBoundingClientRect().top>=m.bottom)ok=false;});
+ if(!ok)t.classList.add('empilhado');}
+aj();addEventListener('resize',aj);if(document.fonts)document.fonts.ready.then(aj);})();</script>
 <main>
 {% with msgs = get_flashed_messages(with_categories=true) %}
   {% for cat, m in msgs %}<div class="aviso {{ cat }}">{{ m }}</div>{% endfor %}
@@ -45,6 +51,5 @@
 </main>
 <div class="rodape"><span>Fonte: Dados Abertos da Câmara dos Deputados (legislativo e CEAP). Uso interno da Liderança da Oposição.</span>
   <span class="credito">Desenvolvido por: <span class="nw">Luisa Marreco – Minoria CD</span> / <span class="nw">Marcelo Uvara – Oposição CD</span></span></div>
-<script>(function(){var a=document.querySelector('.abas a.ativa');if(a&&a.parentNode.scrollWidth>a.parentNode.clientWidth){a.parentNode.scrollLeft=a.offsetLeft-a.parentNode.offsetLeft-16;}})();</script>
 </body>
 </html>

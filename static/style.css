@@ -670,10 +670,12 @@ td.vinc details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(
 
 .pl-ordem.extra{font-size:16px}
 
-/* barra superior: as abas ficam numa linha própria e quebram em várias linhas — nunca cortam */
-.topo-in{flex-wrap:wrap;row-gap:6px}
-.abas{order:3;flex:1 1 100%;flex-wrap:wrap;overflow:visible;row-gap:4px;padding-bottom:2px}
-.coleta{margin-left:auto}
+/* barra superior: as abas ficam ao lado da marca quando cabem; quando não cabem, o script do base.html
+   marca .topo.empilhado e elas descem para uma linha própria, quebrando em várias linhas — nunca cortam */
+.topo-in{flex-wrap:wrap;row-gap:6px;max-width:1560px}
+.abas{flex:1 1 auto;flex-wrap:wrap;overflow:visible;row-gap:4px;min-width:0}
+.topo.empilhado .abas{order:3;flex:1 1 100%;padding-bottom:2px}
+.topo.empilhado .coleta{margin-left:auto}
 @media (max-width:640px){
   .abas{gap:3px}
   .abas a{padding:6px 9px;font-size:13px}
