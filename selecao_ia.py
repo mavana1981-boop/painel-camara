@@ -156,6 +156,32 @@ def sortear(tipos_dos_topicos, eq, rnd=random):
     return out
 
 
+SORTEAR = "__sortear__"     # valor do campo responsável que pede o sorteio
+_COMISSAO = re.compile(r"convoca|convite|convidar|audiencia publica|fiscalizacao e controle|\bpfc\b|comissao", re.I)
+
+
+def tipo_do_texto(texto):
+    """'comissao' quando o pedido é providência de comissão (convocação, convite, audiência, PFC); senão 'outros'."""
+    return "comissao" if _COMISSAO.search(norm_nome(texto or "")) else "outros"
+
+
+def sortear_um(texto, rnd=random):
+    """(tipo, login) para um pedido avulso: equipe do tipo, entre quem tem menos solicitações em aberto."""
+    from sqlalchemy import func
+    tipo = tipo_do_texto(texto)
+    eq = equipes()
+    pool = eq.get(tipo) or eq.get("outros") or eq.get("comissao") or []
+    if not pool:
+        return tipo, None
+    with engine.connect() as c:
+        carga = dict(c.execute(select(solicitacoes.c.responsavel, func.count())
+                               .where(solicitacoes.c.responsavel.in_(pool),
+                                      solicitacoes.c.status.in_(("aberta", "andamento")))
+                               .group_by(solicitacoes.c.responsavel)).all())
+    menor = min(carga.get(x, 0) for x in pool)
+    return tipo, rnd.choice([x for x in pool if carga.get(x, 0) == menor])
+
+
 # ---------------- geração ----------------
 
 def _noticias_por_tema(cod, dias):

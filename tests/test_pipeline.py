@@ -1743,6 +1743,59 @@ def test_area_automatica_e_hora_de_criacao():
     assert meu.data_hora(datetime(2026, 11, 3, 21, 55, tzinfo=timezone.utc)) == "03/11/2026 às 18:55"
 
 
+def test_trocar_responsavel_e_criar_pelo_radar_com_sorteio():
+    from datetime import datetime
+    import selecao_ia as si
+    from db import noticias
+    from sqlalchemy import insert as ins
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    for login, nome in (("lia.com", "Lia Comissão"), ("out.um", "Outro Um"), ("out.dois", "Outro Dois")):
+        adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": login, "nome": nome, "senha": "senha-segura-1"})
+    si.salvar_equipes(["lia.com"], ["out.um", "out.dois"])
+    assert si.tipo_do_texto("Requerimento de convocação do ministro") == "comissao"
+    assert si.tipo_do_texto("Nota à imprensa sobre o Pix") == "outros"
+    with engine.begin() as c:
+        n1 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Ministro some de audiência",
+                                            link="https://n/a1", origem="google", publicado=datetime.now(), relevante=True,
+                                            tipo_acao="Requerimento de convocação", acao_sugerida="Convocar o ministro na comissão")
+                       ).inserted_primary_key[0]
+        n2 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Preço do arroz dispara",
+                                            link="https://n/a2", origem="google", publicado=datetime.now())).inserted_primary_key[0]
+        n3 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Outra alta de preços",
+                                            link="https://n/a3", origem="google", publicado=datetime.now())).inserted_primary_key[0]
+    tok = _tok(adm, "/meu/101?secao=radar")
+    html = adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    assert "＋ Criar solicitação" in html and "sortear pelos critérios" in html
+    # sem responsável + "Criar solicitação": sorteia pelo tipo
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": n1, "status": "Pendente", "criar": "1"})
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": n2, "status": "Pendente", "criar": "1",
+                                            "tarefa": "Nota à imprensa sobre a inflação dos alimentos"})
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": n3, "status": "Pendente", "criar": "1"})
+    r1, r2, r3 = (_q("SELECT s.responsavel FROM noticias n JOIN solicitacoes s ON s.id = n.solicitacao_id WHERE n.id = :n", n=x)[0][0]
+                  for x in (n1, n2, n3))
+    assert r1 == "lia.com"                                                         # convocação → comissão
+    assert {r2, r3} == {"out.um", "out.dois"}                                       # equilibra a carga entre os de outros
+    assert "sorteado pelos critérios" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    # trocar o responsável direto na solicitação (e a notícia acompanha)
+    sid = _q("SELECT solicitacao_id FROM noticias WHERE id = :n", n=n2)[0][0]
+    t2 = _tok(adm, "/meu/101?secao=solicitacoes")
+    html = adm.get(f"/meu/101?secao=solicitacoes&abrir={sid}").get_data(as_text=True)
+    assert "Trocar responsável…" in html
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": t2, "acao": "responsavel", "id": sid, "responsavel": "lia.com"})
+    assert _q("SELECT responsavel, visto_em FROM solicitacoes WHERE id = :s", s=sid)[0] == ("lia.com", None)
+    assert _q("SELECT assessor FROM noticias WHERE id = :n", n=n2)[0][0] == "Lia Comissão"
+    assert "Responsável: Lia Comissão." in adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": t2, "acao": "responsavel", "id": sid, "responsavel": "__sortear__"})
+    assert _q("SELECT responsavel FROM solicitacoes WHERE id = :s", s=sid)[0][0] in ("out.um", "out.dois")
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": t2, "acao": "responsavel", "id": sid, "responsavel": ""})
+    assert _q("SELECT responsavel FROM solicitacoes WHERE id = :s", s=sid)[0][0] is None
+    # nova solicitação manual com sorteio
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": t2, "acao": "nova", "titulo": "Audiência pública sobre o Pix",
+                                                  "responsavel": "__sortear__"})
+    assert _q("SELECT responsavel FROM solicitacoes WHERE titulo = 'Audiência pública sobre o Pix'")[0][0] == "lia.com"
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_"):

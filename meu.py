@@ -335,7 +335,7 @@ def criar_solicitacao(cod, f, arquivos, autor):
         raise ValueError("Informe o título da solicitação.")
     agora = datetime.now()
     datas = _datas_solicitacao(f, padrao_solicitacao=agora_brt().date())
-    resp = _responsavel_valido(f.get("responsavel"))
+    resp = _responsavel_valido(f.get("responsavel"), f"{titulo} {f.get('descricao') or ''}")
     with engine.begin() as c:
         sid = c.execute(insert(solicitacoes).values(
             codigo_deputado=cod, titulo=titulo[:200], descricao=(f.get("descricao") or "").strip() or None,
@@ -367,8 +367,12 @@ def _datas_solicitacao(f, padrao_solicitacao=None):
     return {"data_solicitacao": ds, "prazo": prazo, "data_solucao": sol}
 
 
-def _responsavel_valido(login):
+def _responsavel_valido(login, texto_sorteio=None):
+    """Login de usuário ativo; "__sortear__" sorteia pelos critérios da Seleção da IA (comissão × outros)."""
     login = (login or "").strip()
+    if login == "__sortear__":
+        import selecao_ia as si
+        return si.sortear_um(texto_sorteio or "")[1]
     if not login:
         return None
     with engine.connect() as c:
@@ -398,6 +402,16 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
             elif novo in ("aberta", "andamento"):
                 valores["data_solucao"] = None          # reaberta: ainda sem solução
             c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(**valores))
+        elif acao == "responsavel":
+            sol = c.execute(select(solicitacoes.c.titulo, solicitacoes.c.descricao, solicitacoes.c.responsavel)
+                            .where(solicitacoes.c.id == sid)).first()
+            resp = _responsavel_valido(f.get("responsavel"), f"{sol[0]} {sol[1] or ''}")
+            if resp != sol[2]:
+                agora = datetime.now()
+                c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(
+                    responsavel=resp, atribuido_por=autor if resp else None, atribuido_em=agora if resp else None,
+                    visto_em=agora if resp and resp == autor else None, atualizado_em=agora))
+                _sincronizar_responsavel_noticia(c, sid, resp)
         elif acao == "concluir":
             atual = c.execute(select(solicitacoes.c.data_solicitacao).where(solicitacoes.c.id == sid)).scalar()
             hoje = agora_brt().date().isoformat()
@@ -418,13 +432,15 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
                 valores["resumo_realizado"] = (f.get("resumo_realizado") or "").strip() or None
                 valores["no_clipping"] = f.get("no_clipping") == "1"
             if "responsavel" in f:
-                resp = _responsavel_valido(f.get("responsavel"))
+                sol = c.execute(select(solicitacoes.c.titulo, solicitacoes.c.descricao).where(solicitacoes.c.id == sid)).first()
+                resp = _responsavel_valido(f.get("responsavel"), f"{sol[0]} {sol[1] or ''}")
                 antes = c.execute(select(solicitacoes.c.responsavel).where(solicitacoes.c.id == sid)).scalar()
                 if resp != antes:
                     agora = datetime.now()
                     valores.update(responsavel=resp, atribuido_por=autor if resp else None,
                                    atribuido_em=agora if resp else None,
                                    visto_em=agora if resp and resp == autor else None)
+                    _sincronizar_responsavel_noticia(c, sid, resp)
             if datas["data_solucao"]:
                 st = c.execute(select(solicitacoes.c.status).where(solicitacoes.c.id == sid)).scalar()
                 if st in ("aberta", "andamento"):
@@ -737,7 +753,12 @@ def radar_item(cod, nid, f, autor):
     import radar as rd
     from db import noticias
     status = f.get("status") if f.get("status") in rd.STATUS else "Pendente"
-    resp = _responsavel_valido(f.get("responsavel"))
+    with engine.connect() as c:
+        n0 = c.execute(select(noticias.c.titulo, noticias.c.tipo_acao, noticias.c.acao_sugerida, noticias.c.solicitacao_id)
+                       .where(noticias.c.id == nid)).first()
+    pedir = f.get("criar") == "1" and n0 is not None and not n0[3]
+    escolha = f.get("responsavel") or ("__sortear__" if pedir else "")
+    resp = _responsavel_valido(escolha, " ".join(str(x or "") for x in (n0 or [])[:3]) + " " + (f.get("tarefa") or ""))
     feita = (f.get("acao_efetuada") or "").strip()[:4000] or None
     prazo = _iso(f.get("prazo"))
     agora, hoje = datetime.now(), agora_brt().date().isoformat()
@@ -748,7 +769,7 @@ def radar_item(cod, nid, f, autor):
         sid = n["solicitacao_id"]
         if sid and not c.execute(select(solicitacoes.c.id).where(solicitacoes.c.id == sid)).first():
             sid = None                                   # a solicitação foi excluída
-        if not sid and resp:
+        if not sid and (resp or pedir):
             desc = "\n\n".join(x for x in (
                 f"Notícia: {n['titulo']}", n["link"], n.get("resumo"),
                 f"Ação sugerida pela IA: {n['acao_sugerida']}" if n.get("acao_sugerida") else None,
@@ -782,6 +803,21 @@ def radar_item(cod, nid, f, autor):
             status=status, assessor=(resp and (nome_resp or resp)) or (f.get("assessor") or "").strip()[:120] or n["assessor"],
             acao_efetuada=feita, solicitacao_id=sid))
     return sid
+
+
+def _q_resp(sid):
+    with engine.connect() as c:
+        login = c.execute(select(solicitacoes.c.responsavel).where(solicitacoes.c.id == sid)).scalar()
+    u = __import__("fotos").por_login(login) if login else None
+    return (u or {}).get("nome") or login
+
+
+def _sincronizar_responsavel_noticia(c, sid, resp):
+    """Troca de responsável na solicitação vale também para a notícia do radar que a originou."""
+    from db import noticias
+    u = __import__("fotos").por_login(resp) if resp else None
+    c.execute(update(noticias).where(noticias.c.solicitacao_id == sid)
+              .values(assessor=((u or {}).get("nome") or resp) if resp else None))
 
 
 def _sincronizar_noticia(c, sid):
@@ -1008,13 +1044,17 @@ def _post(cod, secao, s, autor, pleno=True):
             flash("Solicitação registrada.", "ok")
             if not f.get("area"):
                 __import__("areas").classificar_em_segundo_plano()
-        elif secao == "solicitacoes" and acao in ("status", "anexar", "editar", "concluir", "excluir", "excluir_anexo"):
+        elif secao == "solicitacoes" and acao in ("status", "anexar", "editar", "concluir", "excluir", "excluir_anexo",
+                                                   "responsavel"):
             sid = f.get("id", type=int)
             alterar_solicitacao(cod, sid, acao, f, request.files.getlist("arquivos"), autor)
             if acao == "anexar":
                 flash("Arquivos anexados.", "ok")
             elif acao == "editar":
                 flash("Solicitação atualizada.", "ok")
+            elif acao == "responsavel":
+                novo = _q_resp(sid)
+                flash(f"Responsável: {novo}." if novo else "Solicitação sem responsável.", "ok")
             elif acao == "concluir":
                 flash("Solicitação concluída" + (" e registrada no clipping do parlamentar." if f.get("no_clipping") == "1"
                                                  else ".") , "ok")
@@ -1042,8 +1082,9 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "radar" and acao == "item":
             sid = radar_item(cod, f.get("id", type=int), f, autor)
             if sid:
-                flash("Notícia atualizada e registrada em Solicitações" +
-                      (f" para {f.get('responsavel')}." if f.get("responsavel") else "."), "ok")
+                quem = _q_resp(sid)
+                flash("Notícia registrada em Solicitações · responsável: " + (quem or "ninguém (configure as equipes "
+                      "na Seleção da IA)") + ("" if f.get("responsavel") else " (sorteado pelos critérios)"), "ok")
             destino = url_for("meu.painel", cod=cod, secao=secao, filtro=request.args.get("filtro", ""),
                               termo=request.args.get("termo", "")) + f"#n{f.get('id', type=int)}"
         elif secao == "radar" and acao == "selecao_gerar":

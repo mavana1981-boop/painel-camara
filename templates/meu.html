@@ -284,6 +284,7 @@
     <span class="resp-av">{% if atual %}{{ avatar(atual, 30) }}{% endif %}</span>
     <select name="responsavel" onchange="var o=this.options[this.selectedIndex],b=this.parentNode.querySelector('.resp-av');b.innerHTML=o.value?(document.getElementById('av-'+o.value)||{}).innerHTML||'':''">
       <option value="">— sem responsável —</option>
+      <option value="__sortear__">🎲 Sortear pelos critérios (comissão × outros assuntos)</option>
       {% for u in usuarios_resp %}<option value="{{ u.login }}" {{ 'selected' if u.login == atual }}>{{ u.nome or u.login }} ({{ u.login }}){% if u.equipe in ('oposicao', 'minoria') %} · {{ 'Oposição' if u.equipe == 'oposicao' else 'Minoria' }}{% endif %}</option>{% endfor %}
     </select>
   </span>
@@ -316,8 +317,15 @@
             <div class="sol-resp-box"><span>Responsável</span>
               {% if x.responsavel %}{% set ru = usuarios_resp|selectattr('login', 'equalto', x.responsavel)|first %}
                 <b>{{ avatar(x.responsavel, 30) }} {{ (ru.nome if ru else x.responsavel) }}</b>
-                {% if x.atribuido_por %}<small>atribuída por {{ x.atribuido_por }}{% if x.atribuido_em %} em {{ x.atribuido_em|data }}{% endif %}</small>{% endif %}
-              {% else %}<b style="color:var(--suave)">ninguém</b>{% endif %}</div>
+                {% if x.atribuido_por %}<small>atribuída por {{ x.atribuido_por }}{% if x.atribuido_em %} em {{ x.atribuido_em|data_hora }}{% endif %}</small>{% endif %}
+              {% else %}<b style="color:var(--suave)">ninguém</b>{% endif %}
+              {% if pleno %}<form method="post" class="resp-rapido"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="responsavel"><input type="hidden" name="id" value="{{ x.id }}">
+                <select name="responsavel" class="mini" onchange="this.form.submit()" title="Trocar o responsável">
+                  <option value="" disabled selected>Trocar responsável…</option>
+                  <option value="__sortear__">🎲 Sortear pelos critérios</option>
+                  {% for u in usuarios_resp if u.login != x.responsavel %}<option value="{{ u.login }}">{{ u.nome or u.login }}{% if u.equipe in ('oposicao', 'minoria') %} · {{ 'Oposição' if u.equipe == 'oposicao' else 'Minoria' }}{% endif %}</option>{% endfor %}
+                  {% if x.responsavel %}<option value="">— tirar o responsável —</option>{% endif %}
+                </select></form>{% endif %}</div>
           </div>
           {% if x.descricao %}<div class="sol-desc">{{ x.descricao }}</div>{% endif %}
           {% if x.anexos %}<div class="sol-anexos">{% for a in x.anexos %}
@@ -526,6 +534,7 @@
             {% set resp_atual = (usuarios_resp|selectattr('nome', 'equalto', n.assessor)|map(attribute='login')|first) or (usuarios_resp|selectattr('login', 'equalto', n.assessor)|map(attribute='login')|first) %}
             <select name="responsavel" class="mini" title="Responsável — recebe o aviso de tarefa e a solicitação">
               <option value="">— responsável —</option>
+              {% if not n.solicitacao_id %}<option value="__sortear__">🎲 sortear pelos critérios</option>{% endif %}
               {% for u in usuarios_resp %}<option value="{{ u.login }}" {{ 'selected' if u.login == resp_atual }}>{{ u.nome or u.login }}{% if u.equipe in ('oposicao', 'minoria') %} · {{ 'Oposição' if u.equipe == 'oposicao' else 'Minoria' }}{% endif %}</option>{% endfor %}</select>
             <label class="rn-prazo">prazo <input type="date" name="prazo" class="mini"></label>
             <select name="status" class="mini" onchange="this.form.querySelector('.rn-ef').style.display=this.value=='Ação efetuada'?'':'none'">
@@ -533,6 +542,7 @@
             {% if not n.solicitacao_id %}<textarea name="tarefa" class="mini" rows="2" placeholder="O que fazer (vai para a solicitação){% if n.acao_sugerida %} — ex.: {{ n.acao_sugerida[:90] }}{% endif %}"></textarea>{% endif %}
             <textarea name="acao_efetuada" class="rn-ef mini" rows="2" placeholder="O que foi feito (ex.: RIC 1234/2026 protocolado) — vai para o clipping" style="{{ '' if n.status == 'Ação efetuada' else 'display:none' }}">{{ n.acao_efetuada or '' }}</textarea>
             <button class="mini">Salvar</button>
+            {% if not n.solicitacao_id %}<button class="mini rn-criar" name="criar" value="1" title="Sem responsável escolhido, o painel sorteia pelos critérios (comissão → Lianna; outros assuntos → equipe de outros)">＋ Criar solicitação</button>{% endif %}
           </form>
         </details>
       </article>
