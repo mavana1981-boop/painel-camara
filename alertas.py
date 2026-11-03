@@ -15,7 +15,7 @@ from datetime import datetime
 
 from sqlalchemy import delete, insert, select
 
-from db import autorias, engine, norm_nome, termos_alerta
+from db import autorias, engine, norm_nome, sem_acento, termos_alerta
 
 TERMOS_PADRAO = [
     "gênero", "identidade de gênero", "ideologia de gênero", "linguagem neutra", "misoginia", "feminicídio",
@@ -29,6 +29,12 @@ TERMOS_PADRAO = [
 
 
 # ---------------- lista de termos ----------------
+
+def norm_termo(t):
+    """Como norm_nome, mas mantém os números ('8 de janeiro' não pode virar 'de janeiro')."""
+    s = re.sub(r"[^a-z0-9 ]", " ", sem_acento(t or "").lower())
+    return re.sub(r"\s+", " ", s).strip()
+
 
 def _semear():
     with engine.begin() as c:
@@ -47,10 +53,10 @@ def termos():
 
 def adicionar(termo, autor):
     termo = re.sub(r"\s+", " ", (termo or "").strip())[:80]
-    if len(norm_nome(termo)) < 3:
+    if len(norm_termo(termo)) < 3:
         raise ValueError("Informe um termo com pelo menos 3 letras.")
     _semear()
-    if norm_nome(termo) in {norm_nome(t) for t in termos()}:
+    if norm_termo(termo) in {norm_termo(t) for t in termos()}:
         raise ValueError(f"“{termo}” já está na lista.")
     with engine.begin() as c:
         c.execute(insert(termos_alerta).values(termo=termo, criado_por=autor, criado_em=datetime.now()))
@@ -65,7 +71,7 @@ def compilar(lista=None):
     """[(termo, regex)] — casa pelo começo da palavra, sem acento."""
     out = []
     for t in lista if lista is not None else termos():
-        n = norm_nome(t)
+        n = norm_termo(t)
         if n:
             out.append((t, re.compile(r"(?<![a-z0-9])" + re.escape(n).replace(r"\ ", r"\s+"))))
     return out
@@ -73,7 +79,7 @@ def compilar(lista=None):
 
 def achar(texto, regras):
     """Termos (na grafia da lista) encontrados no texto."""
-    n = norm_nome(texto or "")
+    n = norm_termo(texto)
     return [t for t, rx in regras if rx.search(n)] if n else []
 
 

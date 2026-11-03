@@ -945,6 +945,10 @@ def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
     regras = alertas.compilar(["misogin", "drogas"])
     assert alertas.achar("Combate ao discurso misógino", regras) == ["misogin"]
     assert alertas.achar("Fiscalização de drogarias", alertas.compilar(["drogas"])) == []
+    r8 = alertas.compilar(["8 de janeiro"])
+    assert alertas.achar("Anistia aos condenados pelos atos de 8 de janeiro de 2023", r8) == ["8 de janeiro"]
+    assert alertas.achar("Homenagem ao Rio de Janeiro", r8) == []
+    assert alertas.achar("Sessão de 18 de janeiro", r8) == [] and alertas.achar("Prazo até janeiro", r8) == []
     # PDF traz os avisos
     pdf = adm.get(f"/meu/101/agenda.pdf?periodo=data&de={dia}&todos=1")
     texto = " ".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.data)).pages)
