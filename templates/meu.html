@@ -284,7 +284,7 @@
     <span class="resp-av">{% if atual %}{{ avatar(atual, 30) }}{% endif %}</span>
     <select name="responsavel" onchange="var o=this.options[this.selectedIndex],b=this.parentNode.querySelector('.resp-av');b.innerHTML=o.value?(document.getElementById('av-'+o.value)||{}).innerHTML||'':''">
       <option value="">— sem responsável —</option>
-      {% for u in usuarios_resp %}<option value="{{ u.login }}" {{ 'selected' if u.login == atual }}>{{ u.nome or u.login }} ({{ u.login }})</option>{% endfor %}
+      {% for u in usuarios_resp %}<option value="{{ u.login }}" {{ 'selected' if u.login == atual }}>{{ u.nome or u.login }} ({{ u.login }}){% if u.equipe in ('oposicao', 'minoria') %} · {{ 'Oposição' if u.equipe == 'oposicao' else 'Minoria' }}{% endif %}</option>{% endfor %}
     </select>
   </span>
 </label>
@@ -487,7 +487,7 @@
             {% set resp_atual = (usuarios_resp|selectattr('nome', 'equalto', n.assessor)|map(attribute='login')|first) or (usuarios_resp|selectattr('login', 'equalto', n.assessor)|map(attribute='login')|first) %}
             <select name="responsavel" class="mini" title="Responsável — recebe o aviso de tarefa e a solicitação">
               <option value="">— responsável —</option>
-              {% for u in usuarios_resp %}<option value="{{ u.login }}" {{ 'selected' if u.login == resp_atual }}>{{ u.nome or u.login }}</option>{% endfor %}</select>
+              {% for u in usuarios_resp %}<option value="{{ u.login }}" {{ 'selected' if u.login == resp_atual }}>{{ u.nome or u.login }}{% if u.equipe in ('oposicao', 'minoria') %} · {{ 'Oposição' if u.equipe == 'oposicao' else 'Minoria' }}{% endif %}</option>{% endfor %}</select>
             <label class="rn-prazo">prazo <input type="date" name="prazo" class="mini"></label>
             <select name="status" class="mini" onchange="this.form.querySelector('.rn-ef').style.display=this.value=='Ação efetuada'?'':'none'">
               {% for st in status_radar %}<option {{ 'selected' if (n.status or 'Pendente') == st }}>{{ st }}</option>{% endfor %}</select>

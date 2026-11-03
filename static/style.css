@@ -899,3 +899,8 @@ details.rn-acomp .rn-form{margin-top:6px}
 .tut-grade p{margin:4px 0 0;font-size:13px;color:#3d4753}
 .tut-fim{text-align:center;color:var(--suave);font-size:13px;margin:4px 0 0}
 @media (max-width:800px){.tut{grid-template-columns:1fr}.tut-indice{position:static;flex-direction:row;flex-wrap:wrap}.tut-indice a{padding:4px 8px}}
+
+.eq-sel{font-weight:600;border-radius:14px}
+.eq-sel.eq-oposicao{background:#e7effc;color:#1d4fa3;border-color:#bcd0f2}
+.eq-sel.eq-minoria{background:#fbf1d9;color:#7a5a12;border-color:#ecd9a6}
+.eq-sel.eq-restrito{background:#f1f1f1;color:#666}

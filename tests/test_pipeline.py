@@ -1439,7 +1439,7 @@ def test_importa_usuarios_do_minha_pauta():
     foto = "data:image/png;base64," + base64.b64encode(_png((10, 80, 160))).decode()
     db.executemany("INSERT INTO users (username, password, role, categoria, foto, nome_display) VALUES (?,?,?,?,?,?)", [
         ("admin", h("senha-do-mp"), "Admin", "geral", None, "Admin"),
-        ("marcelo.uvara", h("marcelo123"), "Admin", "geral", foto, "Marcelo Uvara"),
+        ("marcelo.uvara", h("marcelo123"), "Admin", "oposicao", foto, "Marcelo Uvara"),
         ("Luisa.Marreco", h("luisa123"), "Assessor", "minoria", foto, "Luisa Marreco"),
         ("PL", h("123"), "Assessor", "restrito", None, "Orientação"),
     ])
@@ -1453,6 +1453,8 @@ def test_importa_usuarios_do_minha_pauta():
     assert adms == {"marcelo.uvara"}                                       # só Marcelo é administrador
     nome, = _q("SELECT nome FROM usuarios WHERE login='luisa.marreco'")[0]
     assert nome == "Luisa Marreco"
+    eq = dict(_q("SELECT login, equipe FROM usuarios WHERE login IN ('luisa.marreco','pl','admin')"))
+    assert eq == {"luisa.marreco": "minoria", "pl": "restrito", "admin": "geral"}
     lid = _q("SELECT id FROM usuarios WHERE login='luisa.marreco'")[0][0]
     assert _q("SELECT origem FROM fotos_usuarios WHERE usuario_id = :u", u=lid)[0][0] == "minha_pauta"
     # login com a senha do Minha Pauta (bcrypt), que vira o hash do painel no 1º acesso
@@ -1463,6 +1465,12 @@ def test_importa_usuarios_do_minha_pauta():
     assert _cliente_usuario("luisa.marreco", "luisa123").get("/usuarios").status_code == 403  # não é admin
     m = _cliente_usuario("marcelo.uvara", "marcelo123")
     html = m.get("/usuarios").get_data(as_text=True)
+    assert "Minoria (1)" in html and 'eq-sel eq-minoria' in html
+    assert "<b>luisa.marreco</b>" in m.get("/usuarios?equipe=minoria").get_data(as_text=True)
+    assert "<b>luisa.marreco</b>" not in m.get("/usuarios?equipe=oposicao").get_data(as_text=True)
+    mid = _q("SELECT id FROM usuarios WHERE login='marcelo.uvara'")[0][0]
+    m.post("/usuarios", data={"_csrf": _tok(m, "/usuarios"), "acao": "equipe", "id": mid, "equipe": "oposicao"})
+    assert _q("SELECT equipe FROM usuarios WHERE id = :u", u=mid)[0][0] == "oposicao"
     assert "Importar do Minha Pauta" in html and "Só marcelo.uvara fica como administrador" in html
     c = _anonimo()
     tok = re.search(r'name="_csrf" value="([^"]+)"', c.get("/login").get_data(as_text=True)).group(1)

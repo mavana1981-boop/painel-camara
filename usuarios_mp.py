@@ -24,7 +24,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from db import engine, meta, norm_nome, usuarios
 
 log = logging.getLogger("usuarios_mp")
-MARCA = "usuarios_mp:importado"
+MARCA = "usuarios_mp:importado:v2"      # v2: traz também a equipe (Oposição/Minoria) — reimporta uma vez
 
 
 def admins_do_painel():
@@ -52,6 +52,15 @@ def senha_confere(hash_, senha):
         return False
 
 
+EQUIPES = [("oposicao", "Oposição"), ("minoria", "Minoria"), ("geral", "Geral"), ("restrito", "Restrito")]
+
+
+def equipe_de(categoria):
+    """Categoria do Minha Pauta → equipe no painel ('admin' de lá conta como geral)."""
+    c = (categoria or "").strip().lower()
+    return c if c in dict(EQUIPES) else ("geral" if c else None)
+
+
 def ler_usuarios(conn):
     import plenario
     cols = plenario._colunas(conn, "users")
@@ -75,7 +84,7 @@ def importar(conn_fonte=None):
     agora = datetime.now()
     with engine.begin() as c:
         existentes = {r["login"]: dict(r) for r in c.execute(
-            select(usuarios.c.id, usuarios.c.login, usuarios.c.nome, usuarios.c.senha_mp)).mappings()}
+            select(usuarios.c.id, usuarios.c.login, usuarios.c.nome, usuarios.c.senha_mp, usuarios.c.equipe)).mappings()}
         for r in linhas:
             login = (r.get("username") or "").strip().lower()
             senha = (r.get("password") or "").strip()
@@ -83,15 +92,19 @@ def importar(conn_fonte=None):
                 ignorados.append(login or "(sem nome)")
                 continue
             nome = (r.get("nome_display") or "").strip() or r["username"].strip()
+            equipe = equipe_de(r.get("categoria"))
             atual = existentes.get(login)
             if atual is None:
                 c.execute(insert(usuarios).values(login=login[:60], nome=nome[:120], senha_hash=senha[:300],
-                                                  senha_mp=senha[:300], admin=False, ativo=True, criado=agora))
+                                                  senha_mp=senha[:300], equipe=equipe, admin=False, ativo=True,
+                                                  criado=agora))
                 criados.append(login)
             else:
                 valores = {}
                 if (atual["nome"] or "") != nome:
                     valores["nome"] = nome[:120]
+                if equipe and atual["equipe"] != equipe:
+                    valores["equipe"] = equipe
                 if atual["senha_mp"] != senha:     # senha nova no Minha Pauta (ou 1ª importação): vale a de lá
                     valores.update(senha_hash=senha[:300], senha_mp=senha[:300])
                 if valores:

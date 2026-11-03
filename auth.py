@@ -253,6 +253,9 @@ def gerenciar():
                 c.execute(delete(fotos_usuarios).where(fotos_usuarios.c.usuario_id == uid))
                 c.execute(delete(usuarios).where(usuarios.c.id == uid))
                 flash("Usuário excluído.", "ok")
+        if acao == "equipe" and uid and request.form.get("equipe", "") in ("", *dict(usuarios_mp.EQUIPES)):
+            with engine.begin() as c:
+                c.execute(update(usuarios).where(usuarios.c.id == uid).values(equipe=request.form.get("equipe") or None))
         if acao == "importar_mp":
             try:
                 r = usuarios_mp.importar()
@@ -298,4 +301,5 @@ def gerenciar():
         importado_em = c.execute(select(meta.c.valor).where(meta.c.chave == usuarios_mp.MARCA)).scalar()
     return render_template("usuarios.html", aba=None, lista=lista, vinculos=meu.todos_vinculos(), fotos_origem=fotos_origem,
                            admins_painel=usuarios_mp.admins_do_painel(), importado_em=importado_em,
+                           equipes=usuarios_mp.EQUIPES, filtro_equipe=request.args.get("equipe", ""),
                            deputados=paineis.lista_deputados())

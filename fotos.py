@@ -144,7 +144,7 @@ def usuarios_ativos():
     """Usuários ativos (para escolher o responsável), com a indicação de foto."""
     if "_usuarios_ativos" not in g:
         with engine.connect() as c:
-            lista = [dict(r) for r in c.execute(select(usuarios.c.id, usuarios.c.login, usuarios.c.nome)
+            lista = [dict(r) for r in c.execute(select(usuarios.c.id, usuarios.c.login, usuarios.c.nome, usuarios.c.equipe)
                                                 .where(usuarios.c.ativo.is_(True))).mappings()]
         lista.sort(key=lambda u: norm_nome(u["nome"] or u["login"]))
         g._usuarios_ativos = lista

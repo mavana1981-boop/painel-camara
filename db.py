@@ -159,7 +159,8 @@ usuarios = Table(
     Column("criado", DateTime),
     Column("ultimo_acesso", DateTime),
     Column("preferencias", Text),
-    Column("senha_mp", String(300)),             # último hash de senha importado do Minha Pauta                # JSON: escolhas salvas como padrão (ex.: ocultar sessões solenes)
+    Column("senha_mp", String(300)),
+    Column("equipe", String(20)),                # oposicao, minoria, geral, restrito (categoria do Minha Pauta)             # último hash de senha importado do Minha Pauta                # JSON: escolhas salvas como padrão (ex.: ocultar sessões solenes)
 )
 
 termos_alerta = Table(  # termos sensíveis para a Oposição procurados nas pautas da agenda (lista da equipe)
