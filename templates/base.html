@@ -32,6 +32,7 @@
       {{ avatar(usuario, 28, 'av-topo') }}
       <span class="quem">{{ usuario.nome or usuario.login }}</span>
       {% if usuario.admin %}<a href="{{ url_for('auth.gerenciar') }}">Usuários</a>{% endif %}
+      <a href="{{ url_for('ajuda.tutorial') }}" title="Tutorial rápido">Ajuda</a>
       <a href="{{ url_for('auth.conta') }}">Conta</a>
       <form method="post" action="{{ url_for('auth.sair') }}" style="margin:0">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button>Sair</button></form>
@@ -49,6 +50,13 @@ aj();addEventListener('resize',aj);if(document.fonts)document.fonts.ready.then(a
 {% with msgs = get_flashed_messages(with_categories=true) %}
   {% for cat, m in msgs %}<div class="aviso {{ cat }}">{{ m }}</div>{% endfor %}
 {% endwith %}
+{% if convite_tutorial %}
+<div class="convite-tut">
+  <span>👋 Primeira vez por aqui? Veja em 3 minutos o que o painel faz.</span>
+  <a class="btn" href="{{ url_for('ajuda.tutorial') }}">Abrir o tutorial</a>
+  <form method="post" action="{{ url_for('ajuda.dispensar') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="mini">Agora não</button></form>
+</div>
+{% endif %}
 {% if minhas_tarefas and mostrar_tarefas %}
 {% set atrasadas = minhas_tarefas|selectattr('atrasada')|list|length %}
 <section class="tarefas" id="tarefas">

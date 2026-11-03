@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block titulo %}Tutorial{% endblock %}
+
+{% macro passo(n, titulo) -%}
+<li><span class="tut-n">{{ n }}</span><div><b>{{ titulo }}</b><p>{{ caller() }}</p></div></li>
+{%- endmacro %}
+
+{% block conteudo %}
+<header class="tut-cab">
+  <span class="tut-rot">Tutorial rápido</span>
+  <h1>O que dá para fazer no Painel da Câmara</h1>
+  <p>Em resumo: acompanhar como os deputados votam, cuidar do dia a dia do parlamentar (agenda, pedidos, notícias) e
+    gerar o relatório do que a equipe entregou. Leva uns 3 minutos para ler.</p>
+</header>
+
+<div class="tut">
+  <nav class="tut-indice" aria-label="Índice">
+    <a href="#comeco">Primeiros passos</a>
+    <a href="#votacoes">Abas de votação</a>
+    <a href="#meu">Meu parlamentar</a>
+    <a href="#agenda">· Agenda</a>
+    <a href="#notificacoes">· Notificações</a>
+    <a href="#solicitacoes">· Solicitações</a>
+    <a href="#radar">· Radar de notícias</a>
+    <a href="#clipping">· Clipping e relatório</a>
+    <a href="#outros">· Questões de ordem e rankings</a>
+    <a href="#tarefas">Tarefas e avisos</a>
+    <a href="#conta">Conta e preferências</a>
+    {% if usuario.admin %}<a href="#admin">Administração</a>{% endif %}
+  </nav>
+
+  <div class="tut-corpo">
+    <section class="card neu tut-sec" id="comeco">
+      <h2>Primeiros passos</h2>
+      <ol class="tut-passos">
+        {% call passo(1, "Entre com o mesmo usuário e senha do Minha Pauta") %}Se esquecer a senha, peça ao administrador para redefinir em Usuários. Para trocar a sua, use <b>Conta</b>, no alto da tela.{% endcall %}
+        {% call passo(2, "Abra o Meu parlamentar") %}O botão amarelo no topo leva à área do deputado a que você está vinculado. Se tiver mais de um, escolha na lista.{% endcall %}
+        {% call passo(3, "Olhe a Visão geral") %}Mostra num lugar só os próximos compromissos, as mudanças de status, as aprovações, as solicitações em aberto e as notícias.{% endcall %}
+        {% call passo(4, "Fique de olho no sino") %}Quando alguém atribui uma tarefa a você, o sino no topo mostra o número e a tela inicial lista as tarefas com o prazo.{% endcall %}
+        {% call passo(5, "Registre o que foi feito") %}Ao concluir um pedido, escreva o resumo e anexe o resultado: isso alimenta o clipping e o relatório anual do parlamentar.{% endcall %}
+      </ol>
+    </section>
+
+    <section class="card neu tut-sec" id="votacoes">
+      <h2>Abas de votação <small>barra verde do topo</small></h2>
+      <div class="tut-grade">
+        <div><b>Orientações</b><p>Governismo e oposicionismo de cada deputado nas votações nominais do Plenário. Use os filtros de período, partido, UF e matéria.</p></div>
+        <div><b>Rankings</b><p>Posição de todos os deputados em exercício em cada indicador (fidelidade, participação, economia da cota...).</p></div>
+        <div><b>Votações</b><p>Cada votação com a orientação do Governo, da Oposição e dos partidos, e como cada um votou.</p></div>
+        <div><b>Perfil, Proposições e Cota</b><p>Escolha um deputado para ver dados, projetos apresentados (e há quantos dias estão parados) e gastos da cota parlamentar.</p></div>
+        <div><b>Plenário</b><p>A pauta mais recente preparada no Minha Pauta, com as notas técnicas e as orientações da equipe.</p></div>
+      </div>
+      <p class="tut-dica">Os dados são atualizados todo dia a partir das 6h. A data da última atualização aparece no topo.</p>
+    </section>
+
+    <section class="card neu tut-sec" id="meu">
+      <h2>Meu parlamentar <small>área do deputado</small></h2>
+      <p class="tut-intro">Cada pessoa vê só os deputados aos quais foi vinculada (o administrador vê todos). Quem recebeu uma tarefa de um deputado com quem não tem vínculo consegue abrir só as próprias solicitações.</p>
+
+      <h3 id="agenda">📅 Agenda</h3>
+      <ul class="tut-lista">
+        <li><b>Do deputado</b> mostra o Plenário e os órgãos de que ele participa; <b>Toda a Câmara</b> mostra tudo.</li>
+        <li>Selo <span class="ag-tag cit">deputado na pauta</span>: diz <b>qual proposição</b> e se ele é relator ou autor/coautor.</li>
+        <li>Selo <span class="ag-tag semprop">SEM PROPOSIÇÃO DO DEPUTADO</span>: a pauta saiu e não tem nada dele. <span class="ag-tag pendente">pauta não publicada</span>: a Câmara ainda não divulgou.</li>
+        <li>Aviso <span class="ag-tag alerta">⚠ tema sensível</span>: a ementa de algum item tem um termo da lista da equipe (gênero, misoginia, aborto...). A lista fica ao lado da agenda e pode ser editada por todos.</li>
+        <li><b>Ocultar sessões solenes</b>: liga e desliga; clique em <b>Salvar como padrão</b> para a agenda já abrir assim.</li>
+        <li><b>Novo compromisso</b> lança reuniões da equipe; <b>Imprimir agenda</b> gera o PDF do dia, da semana ou de um período.</li>
+      </ul>
+
+      <h3 id="notificacoes">🔔 Notificações</h3>
+      <ul class="tut-lista">
+        <li>Mudanças de situação das proposições do deputado, detectadas todo dia.</li>
+        <li><b>Por tipo e proposição</b>: agrupadas pelo tipo (ex.: Requerimento de Urgência). Abra o tipo e depois a proposição para ver a linha do tempo.</li>
+        <li><b>Por data</b>: um bloco por dia. Filtre por 7 dias, 30 dias ou tudo, e salve o modo preferido como padrão.</li>
+      </ul>
+
+      <h3 id="solicitacoes">📝 Solicitações</h3>
+      <ol class="tut-passos">
+        {% call passo(1, "Registre o pedido") %}Título, descrição, quem pediu, <b>data da solicitação</b>, <b>prazo final</b>, <b>responsável</b> e anexos.{% endcall %}
+        {% call passo(2, "O responsável é avisado") %}Ele vê a tarefa na tela inicial, com o prazo e a foto, e o sino mostra o número de pendências.{% endcall %}
+        {% call passo(3, "Acompanhe pelo status") %}Aberta, em andamento, concluída ou arquivada. Em atraso, aparece em vermelho.{% endcall %}
+        {% call passo(4, "Conclua com o resumo") %}Ao escolher <b>Concluída</b>, abre o quadro “O que foi feito”: escreva o resumo, anexe o resultado e deixe marcado <b>Registrar no clipping</b>.{% endcall %}
+      </ol>
+      <p class="tut-dica">Datas e responsável podem ser corrigidos depois em <b>Editar datas e responsável</b>, dentro do pedido.</p>
+
+      <h3 id="radar">📰 Radar de notícias</h3>
+      <ul class="tut-lista">
+        <li>Notícias dos portais e do Google Notícias que citam o deputado ou os temas acompanhados. A IA indica as que pedem ação parlamentar e sugere qual.</li>
+        <li>Em <b>qualquer notícia</b>, abra <b>Atribuir responsável / gerar ação</b>: escolha a pessoa, o prazo e o que fazer. Isso <b>cria uma solicitação</b> e avisa o responsável.</li>
+        <li>Marcar <b>Ação efetuada</b> conclui a solicitação e leva o que foi feito para o clipping. Concluir pela solicitação também atualiza a notícia.</li>
+      </ul>
+
+      <h3 id="clipping">✅ Clipping e relatório de realizações</h3>
+      <ul class="tut-lista">
+        <li>Por data: <b>solicitações atendidas</b> (com resumo e anexos), proposições do deputado aprovadas e relatorias aprovadas.</li>
+        <li><b>Relatório de realizações</b>: escolha o ano e clique em <b>Gerar PDF</b>. Sai pronto para imprimir, mês a mês, com os totais.</li>
+      </ul>
+
+      <h3 id="outros">⚖️ Questões de ordem e rankings</h3>
+      <ul class="tut-lista">
+        <li><b>Questões de ordem</b>: descreva a situação e a IA redige uma minuta com base no Regimento Interno. Confira os artigos antes de usar.</li>
+        <li><b>Rankings</b>: a posição do deputado em cada indicador e quanto falta para subir.</li>
+      </ul>
+    </section>
+
+    <section class="card neu tut-sec" id="tarefas">
+      <h2>Tarefas e avisos</h2>
+      <ul class="tut-lista">
+        <li>Na <b>tela inicial</b> (e na Visão geral), o quadro <b>Tarefas atribuídas a você</b> lista o que está aberto ou em andamento, do prazo mais próximo para o mais distante, com “faltam N dias” ou “atrasada há N dias”.</li>
+        <li>A etiqueta <span class="tf-novo">nova</span> some quando você abre a lista de solicitações daquele deputado.</li>
+        <li>Clique na tarefa para ir direto ao pedido.</li>
+      </ul>
+    </section>
+
+    <section class="card neu tut-sec" id="conta">
+      <h2>Conta e preferências</h2>
+      <ul class="tut-lista">
+        <li><b>Conta</b>: troque a sua senha.</li>
+        <li>Escolhas com <b>Salvar como padrão</b> (sessões solenes, modo das notificações) valem só para você.</li>
+        <li>Sua foto vem do Minha Pauta; para trocar, peça ao administrador.</li>
+      </ul>
+    </section>
+
+    {% if usuario.admin %}
+    <section class="card neu tut-sec" id="admin">
+      <h2>Administração <small>só administradores</small></h2>
+      <ul class="tut-lista">
+        <li><b>Usuários</b>: crie, desative, redefina senhas e dê ou tire o perfil de administrador.</li>
+        <li><b>Vínculos</b>: em “Meu parlamentar”, marque os deputados que cada pessoa pode abrir.</li>
+        <li><b>Importar do Minha Pauta</b>: traz usuários novos (login, nome, senha e foto) e atualiza quem trocou a senha lá.</li>
+        <li><b>Fotos</b>: envie ou troque a foto de alguém; a enviada aqui prevalece sobre a do Minha Pauta.</li>
+        <li><b>Regimento</b> (Questões de ordem) e <b>portais</b> (Radar) também são mantidos pelo administrador.</li>
+      </ul>
+    </section>
+    {% endif %}
+
+    <p class="tut-fim">Dúvida ou ideia de melhoria? Fale com Marcelo Uvara (Oposição) ou Luisa Marreco (Minoria).</p>
+  </div>
+</div>
+{% endblock %}

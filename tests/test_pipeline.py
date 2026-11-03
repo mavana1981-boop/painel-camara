@@ -1556,6 +1556,27 @@ def test_radar_qualquer_noticia_vira_solicitacao_com_responsavel():
     assert _q("SELECT solicitacao_id FROM noticias WHERE id = :n", n=nid)[0][0] is None
 
 
+def test_tutorial_e_convite_no_primeiro_acesso():
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": "novato", "nome": "Novato", "senha": "senha-segura-1"})
+    u = _cliente_usuario("novato", "senha-segura-1")
+    html = u.get("/orientacoes").get_data(as_text=True)
+    assert "Primeira vez por aqui?" in html and 'href="/ajuda"' in html
+    t = u.get("/ajuda").get_data(as_text=True)
+    assert "Tutorial rápido" in t and "SEM PROPOSIÇÃO DO DEPUTADO" in t and "Relatório de realizações" in t
+    assert "Administração" not in t                                   # só para administradores
+    assert "Primeira vez por aqui?" not in u.get("/orientacoes").get_data(as_text=True)   # abrir o tutorial dispensa
+    assert "Administração" in adm.get("/ajuda").get_data(as_text=True)
+    n2 = "novato2"
+    adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": n2, "nome": "N2", "senha": "senha-segura-1"})
+    u2 = _cliente_usuario(n2, "senha-segura-1")
+    tk = _tok(u2, "/orientacoes")
+    u2.post("/ajuda/dispensar", data={"_csrf": tk})
+    assert "Primeira vez por aqui?" not in u2.get("/orientacoes").get_data(as_text=True)
+    assert _anonimo().get("/ajuda").status_code == 302
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_"):

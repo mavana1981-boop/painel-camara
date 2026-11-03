@@ -58,6 +58,8 @@ import meu  # noqa: E402
 import fotos  # noqa: E402
 app.register_blueprint(meu.bp)
 app.register_blueprint(fotos.bp)
+import ajuda  # noqa: E402
+app.register_blueprint(ajuda.bp)
 
 ABAS = [("perfil", "Perfil"), ("proposicoes", "Proposições"), ("cota", "Cota"),
         ("votacoes", "Votações"), ("orientacoes", "Orientações"), ("rankings", "Rankings"),

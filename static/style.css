@@ -866,3 +866,36 @@ details.rn-acomp:not([open]) .rn-atr::after{content:" ▸"}
 .rn-sol .ic{width:13px;height:13px}
 .rn-prazo{display:inline-flex;gap:4px;align-items:center;font-size:11px;color:var(--suave)}
 details.rn-acomp .rn-form{margin-top:6px}
+
+/* tutorial */
+.convite-tut{display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:linear-gradient(90deg,#fbf6e8,#fff);border:1px solid #ecdcae;
+  border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px}
+.convite-tut span{flex:1;min-width:220px;font-weight:600;color:var(--pri-esc)}
+.convite-tut form{margin:0}
+.convite-tut .btn{text-decoration:none}
+.tut-cab{background:linear-gradient(135deg,var(--pri-esc),var(--pri));color:#fff;border-radius:14px;padding:22px 24px;margin-bottom:14px;border-bottom:3px solid var(--ouro)}
+.tut-rot{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--ouro);font-weight:700}
+.tut-cab h1{margin:4px 0 6px;font-size:24px}
+.tut-cab p{margin:0;opacity:.9;max-width:760px}
+.tut{display:grid;grid-template-columns:220px 1fr;gap:14px;align-items:start}
+.tut-indice{position:sticky;top:120px;background:var(--card);border:1px solid var(--linha);border-radius:10px;padding:8px;display:flex;flex-direction:column}
+.tut-indice a{padding:6px 10px;border-radius:6px;text-decoration:none;font-size:13px;color:var(--tinta)}
+.tut-indice a:hover{background:var(--pri-cl);color:var(--pri-esc)}
+.tut-corpo{display:flex;flex-direction:column;gap:14px;min-width:0}
+.tut-sec{scroll-margin-top:120px}
+.tut-sec h3{margin:16px 14px 6px;font-size:14.5px;color:var(--pri-esc);scroll-margin-top:120px}
+.tut-intro,.tut-dica{margin:10px 14px;font-size:13px;color:var(--suave)}
+.tut-dica{background:#f6faf7;border-left:3px solid var(--pri-med);padding:7px 10px;border-radius:0 6px 6px 0}
+.tut-passos{list-style:none;margin:0;padding:10px 14px;display:flex;flex-direction:column;gap:10px}
+.tut-passos li{display:flex;gap:10px;align-items:flex-start}
+.tut-n{flex:none;width:26px;height:26px;border-radius:50%;background:var(--pri);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+.tut-passos b{font-size:14px}
+.tut-passos p{margin:2px 0 0;font-size:13px;color:#3d4753}
+.tut-lista{margin:0;padding:4px 14px 10px 32px;display:flex;flex-direction:column;gap:6px;font-size:13.5px}
+.tut-lista .ag-tag{font-size:10.5px}
+.tut-grade{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;padding:12px 14px}
+.tut-grade>div{border:1px solid var(--linha);border-radius:8px;padding:10px 12px;background:#fbfdfc}
+.tut-grade b{color:var(--pri-esc)}
+.tut-grade p{margin:4px 0 0;font-size:13px;color:#3d4753}
+.tut-fim{text-align:center;color:var(--suave);font-size:13px;margin:4px 0 0}
+@media (max-width:800px){.tut{grid-template-columns:1fr}.tut-indice{position:static;flex-direction:row;flex-wrap:wrap}.tut-indice a{padding:4px 8px}}
