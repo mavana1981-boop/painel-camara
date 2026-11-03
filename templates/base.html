@@ -71,7 +71,7 @@ aj();addEventListener('resize',aj);if(document.fonts)document.fonts.ready.then(a
       <span class="tf-av">{{ avatar(usuario, 36) }}</span>
       <span class="tf-txt">
         <b>{% if t.nova %}<i class="tf-novo">nova</i> {% endif %}{{ t.titulo }}</b>
-        <small>{{ t.deputado or 'Parlamentar' }}{% if t.atribuido_por %} · atribuída por {{ avatar(t.atribuido_por, 16) }} {{ t.atribuido_por }}{% endif %}{% if t.atribuido_em %} em {{ t.atribuido_em|data }}{% endif %}</small>
+        <small>{% if t.area %}<span class="area-chip">{{ t.area }}</span> {% endif %}{{ t.deputado or 'Parlamentar' }}{% if t.criado_em %} · criada em {{ t.criado_em|data_hora }}{% endif %}{% if t.atribuido_por %} · atribuída por {{ avatar(t.atribuido_por, 16) }} {{ t.atribuido_por }}{% endif %}{% if t.atribuido_em %} em {{ t.atribuido_em|data }}{% endif %}</small>
       </span>
       <span class="tf-prazo">{% if t.prazo %}<span>Prazo final</span><b>{{ t.prazo|data }}</b>
         <small>{% if t.dias < 0 %}atrasada há {{ -t.dias }} dia{{ 's' if t.dias != -1 }}{% elif t.dias == 0 %}vence hoje{% elif t.dias == 1 %}vence amanhã{% else %}faltam {{ t.dias }} dias{% endif %}</small>

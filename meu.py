@@ -108,6 +108,7 @@ def tarefas_do_usuario(login, limite=20):
     with engine.connect() as c:
         rows = [dict(r) for r in c.execute(
             select(solicitacoes.c.id, solicitacoes.c.codigo_deputado, solicitacoes.c.titulo, solicitacoes.c.status,
+                   solicitacoes.c.criado_em, solicitacoes.c.area,
                    solicitacoes.c.prazo, solicitacoes.c.data_solicitacao, solicitacoes.c.atribuido_por,
                    solicitacoes.c.atribuido_em, solicitacoes.c.visto_em, deputados.c.nome.label("deputado"))
             .select_from(solicitacoes.outerjoin(deputados, deputados.c.codigo == solicitacoes.c.codigo_deputado))
@@ -1005,6 +1006,8 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "solicitacoes" and acao == "nova":
             criar_solicitacao(cod, f, request.files.getlist("arquivos"), autor)
             flash("Solicitação registrada.", "ok")
+            if not f.get("area"):
+                __import__("areas").classificar_em_segundo_plano()
         elif secao == "solicitacoes" and acao in ("status", "anexar", "editar", "concluir", "excluir", "excluir_anexo"):
             sid = f.get("id", type=int)
             alterar_solicitacao(cod, sid, acao, f, request.files.getlist("arquivos"), autor)
@@ -1161,6 +1164,22 @@ def md_simples(texto):
     if lista:
         html.append("</ul>")
     return Markup("\n".join(html))
+
+
+@bp.app_template_filter("data_hora")
+def data_hora(v):
+    """Data e hora de um registro (gravado no horário do servidor) no horário de Brasília: 03/11/2026 às 18:55."""
+    if not v:
+        return ""
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v)
+        except ValueError:
+            return v
+    if v.tzinfo is None:
+        v = v.astimezone()                    # o horário gravado é o do servidor (UTC no Railway)
+    v = v.astimezone(BRT)
+    return f"{v:%d/%m/%Y} às {v:%H:%M}"
 
 
 @bp.app_template_filter("isodata")

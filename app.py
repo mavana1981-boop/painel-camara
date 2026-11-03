@@ -63,6 +63,9 @@ app.register_blueprint(ajuda.bp)
 try:
     import selecao_ia  # noqa: E402
     selecao_ia.limpar_selecao_por_palavras()
+    import areas  # noqa: E402
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("AUTO_CARGA") == "1":
+        areas.classificar_em_segundo_plano()          # área das solicitações antigas
 except Exception:
     logging.getLogger(__name__).exception("limpeza da seleção da IA")
 

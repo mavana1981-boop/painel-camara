@@ -396,6 +396,11 @@ def _ciclo(codigos, buscar, sessao):
                 res["analisadas"] += analisar(cod, sessao=sessao)
                 import questoes
                 import selecao_ia
+                try:
+                    import areas
+                    areas.classificar()
+                except Exception:
+                    log.exception("áreas das solicitações")
                 if questoes.configurado() and selecao_ia.precisa_gerar(cod):   # 1x por dia, a partir das 7h
                     try:
                         selecao_ia.gerar(cod, sessao=sessao)

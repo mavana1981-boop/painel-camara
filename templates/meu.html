@@ -306,7 +306,7 @@
           <b>{{ x.titulo }}</b>
           {% if x.area %}<span class="area-chip">{{ x.area }}</span>{% endif %}
           {% if x.responsavel %}<span class="sol-resp" title="Responsável: {{ x.responsavel }}">{{ avatar(x.responsavel, 26) }}</span>{% endif %}
-          <span class="sol-meta">{{ (x.data_solicitacao or x.criado_em)|data }}{% if x.solicitante %} · {{ x.solicitante }}{% endif %}{% if x.prazo %} · prazo {{ x.prazo|data }}{% endif %}{% if x.data_solucao %} · solucionada {{ x.data_solucao|data }}{% endif %}{% if x.atrasada %} <span class="sol-atraso">atrasada</span>{% endif %}{% if x.no_prazo == False %} <span class="sol-atraso">fora do prazo</span>{% endif %}{% if x.anexos %} · 📎 {{ x.anexos|length }}{% endif %}</span>
+          <span class="sol-meta"><span class="sol-criada" title="Registrada no painel">🕒 criada em {{ x.criado_em|data_hora }}</span>{% if x.data_solicitacao and x.data_solicitacao != (x.criado_em|string)[:10] %} · pedida em {{ x.data_solicitacao|data }}{% endif %}{% if x.solicitante %} · {{ x.solicitante }}{% endif %}{% if x.prazo %} · prazo {{ x.prazo|data }}{% endif %}{% if x.data_solucao %} · solucionada {{ x.data_solucao|data }}{% endif %}{% if x.atrasada %} <span class="sol-atraso">atrasada</span>{% endif %}{% if x.no_prazo == False %} <span class="sol-atraso">fora do prazo</span>{% endif %}{% if x.anexos %} · 📎 {{ x.anexos|length }}{% endif %}</span>
         </summary>
         <div class="sol-corpo">
           <div class="sol-datas">
@@ -366,7 +366,7 @@
               <button class="mini">Salvar</button>
             </form>
           </details>
-          <div class="sol-meta" style="margin-top:6px">Registrada por {{ x.criado_por }} em {{ x.criado_em|data }}</div>
+          <div class="sol-meta" style="margin-top:6px">Registrada por {{ x.criado_por }} em {{ x.criado_em|data_hora }}{% if x.atualizado_em and x.atualizado_em != x.criado_em %} · última alteração em {{ x.atualizado_em|data_hora }}{% endif %}</div>
         </div>
       </details>
     {% else %}<div class="vazio-msg">Nenhuma solicitação {{ 'com este status' if filtro_status else 'registrada' }}.</div>{% endfor %}
@@ -483,6 +483,7 @@
         {% if t.noticias_l %}<details class="sel-nots"><summary>{{ t.noticias_l|length }} notícia{{ 's' if t.noticias_l|length != 1 }}</summary>
           <ul>{% for n in t.noticias_l %}<li><a href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.titulo }}</a> <small>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</small></li>{% endfor %}</ul></details>{% endif %}
         <div class="sel-rodape">
+          {% if t.criado_em %}<span class="sol-criada">🕒 criada em {{ t.criado_em|data_hora }}</span>{% endif %}
           {% if t.responsavel %}<span class="sel-resp">{{ avatar(t.responsavel, 26) }} {{ (usuarios_resp|selectattr('login', 'equalto', t.responsavel)|map(attribute='nome')|first) or t.responsavel }}</span>
           {% else %}<span class="sel-resp" style="color:#b03021">sem responsável — configure as equipes ao lado</span>{% endif %}
           {% if t.solicitacao_id %}<a class="rn-sol" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', abrir=t.solicitacao_id) }}#s{{ t.solicitacao_id }}">ver solicitação {{ ic("seta") }}</a>{% endif %}

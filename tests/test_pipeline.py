@@ -1721,6 +1721,28 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
         c.execute(text("UPDATE usuarios SET ativo = :t WHERE login = 'marcelo.uvara'"), {"t": True})
 
 
+def test_area_automatica_e_hora_de_criacao():
+    import areas
+    adm = _cliente()
+    tok = _tok(adm, "/meu/101?secao=solicitacoes")
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "nova", "titulo": "RIC sobre falta de vacinas nas UBS",
+                                                  "descricao": "Pedido sobre o SUS"})
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "nova", "titulo": "Nota sobre o acordo com a Venezuela"})
+    with engine.begin() as c:
+        c.execute(text("UPDATE solicitacoes SET area = NULL WHERE titulo LIKE 'RIC sobre falta%' OR titulo LIKE 'Nota sobre o acordo%'"))
+    while areas.classificar(esperar=True):
+        pass
+    a = dict(_q("SELECT titulo, area FROM solicitacoes WHERE titulo LIKE 'RIC sobre falta%' OR titulo LIKE 'Nota sobre o acordo%'"))
+    assert a == {"RIC sobre falta de vacinas nas UBS": "Saúde", "Nota sobre o acordo com a Venezuela": "Política Externa"}
+    assert not _q("SELECT id FROM solicitacoes WHERE area IS NULL")                   # todas ficam com área
+    html = adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    assert '<span class="area-chip">Saúde</span>' in html and "criada em " in html
+    assert re.search(r"criada em \d{2}/\d{2}/\d{4} às \d{2}:\d{2}", html)
+    import meu
+    from datetime import datetime, timezone
+    assert meu.data_hora(datetime(2026, 11, 3, 21, 55, tzinfo=timezone.utc)) == "03/11/2026 às 18:55"
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_"):
