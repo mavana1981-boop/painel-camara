@@ -855,3 +855,14 @@ details.nt-prop>summary{list-style:none;cursor:pointer;display:flex;gap:10px;ali
 
 .ag-tag.semprop{background:#eef1f5;color:#4a5560;border:1px dashed #b9c2cd;font-weight:700;letter-spacing:.2px}
 .ag-tag.pendente{background:#f6f7f9;color:#7a8592;font-style:italic}
+
+/* radar: acompanhamento em todas as notícias */
+details.rn-acomp{margin-top:8px;border-top:1px dashed var(--linha);padding-top:6px}
+details.rn-acomp>summary{list-style:none;cursor:pointer;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}
+details.rn-acomp>summary::-webkit-details-marker{display:none}
+.rn-atr{color:var(--pri);font-weight:600}
+details.rn-acomp:not([open]) .rn-atr::after{content:" ▸"}
+.rn-sol{color:var(--pri);font-weight:600;text-decoration:none;display:inline-flex;gap:3px;align-items:center}
+.rn-sol .ic{width:13px;height:13px}
+.rn-prazo{display:inline-flex;gap:4px;align-items:center;font-size:11px;color:var(--suave)}
+details.rn-acomp .rn-form{margin-top:6px}

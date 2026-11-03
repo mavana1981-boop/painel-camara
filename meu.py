@@ -429,11 +429,15 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
             _guardar_anexos(c, sid, arquivos, autor)
             c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(atualizado_em=datetime.now()))
         elif acao == "excluir":
+            from db import noticias
+            c.execute(update(noticias).where(noticias.c.solicitacao_id == sid).values(solicitacao_id=None))
             c.execute(delete(anexos).where(anexos.c.solicitacao_id == sid))
             c.execute(delete(solicitacoes).where(solicitacoes.c.id == sid))
         elif acao == "excluir_anexo":
             c.execute(delete(anexos).where(anexos.c.id == f.get("anexo", type=int),
                                            anexos.c.solicitacao_id == sid))
+        if acao in ("status", "concluir", "editar"):
+            _sincronizar_noticia(c, sid)
 
 
 # ---------------- radar ----------------
@@ -715,6 +719,80 @@ def notificacoes_agrupadas(cod, dias=0):
             "recentes": sum(1 for n in itens if n["recente"])}
 
 
+# ---------------- radar → solicitações ----------------
+
+STATUS_RADAR_SOL = {"Pendente": "aberta", "Em análise": "andamento", "Ação efetuada": "concluida"}
+
+
+def radar_item(cod, nid, f, autor):
+    """Acompanhamento de uma notícia do radar (qualquer notícia, não só as que a IA marcou).
+    Com responsável escolhido, a notícia vira uma solicitação do parlamentar (com o aviso de tarefa na tela
+    inicial do responsável); status e ação efetuada seguem para a solicitação — "Ação efetuada" a conclui e
+    leva ao clipping. Devolve o id da solicitação (ou None)."""
+    import radar as rd
+    from db import noticias
+    status = f.get("status") if f.get("status") in rd.STATUS else "Pendente"
+    resp = _responsavel_valido(f.get("responsavel"))
+    feita = (f.get("acao_efetuada") or "").strip()[:4000] or None
+    prazo = _iso(f.get("prazo"))
+    agora, hoje = datetime.now(), agora_brt().date().isoformat()
+    with engine.begin() as c:
+        n = c.execute(select(noticias).where(noticias.c.id == nid, noticias.c.codigo_deputado == cod)).mappings().first()
+        if not n:
+            abort(404)
+        sid = n["solicitacao_id"]
+        if sid and not c.execute(select(solicitacoes.c.id).where(solicitacoes.c.id == sid)).first():
+            sid = None                                   # a solicitação foi excluída
+        if not sid and resp:
+            desc = "\n\n".join(x for x in (
+                f"Notícia: {n['titulo']}", n["link"], n.get("resumo"),
+                f"Ação sugerida pela IA: {n['acao_sugerida']}" if n.get("acao_sugerida") else None,
+                (f.get("tarefa") or "").strip() and f"O que fazer: {f.get('tarefa').strip()}") if x)
+            sid = c.execute(insert(solicitacoes).values(
+                codigo_deputado=cod, titulo=("Radar: " + (n["titulo"] or "notícia"))[:200], descricao=desc,
+                solicitante="Radar de notícias", status="aberta", data_solicitacao=hoje, prazo=prazo,
+                responsavel=resp, atribuido_por=autor, atribuido_em=agora, visto_em=agora if resp == autor else None,
+                criado_por=autor, criado_em=agora, atualizado_em=agora)).inserted_primary_key[0]
+        if sid:
+            atual = c.execute(select(solicitacoes).where(solicitacoes.c.id == sid)).mappings().first()
+            v = {"atualizado_em": agora}
+            if resp and resp != atual["responsavel"]:      # reatribuição: novo aviso para o novo responsável
+                v.update(responsavel=resp, atribuido_por=autor, atribuido_em=agora,
+                         visto_em=agora if resp == autor else None)
+            if prazo and prazo != atual["prazo"]:
+                v["prazo"] = prazo
+            novo_st = STATUS_RADAR_SOL[status]
+            if novo_st != atual["status"] and atual["status"] != "arquivada":
+                v["status"] = novo_st
+                if novo_st == "concluida":
+                    v.update(data_solucao=atual["data_solucao"] or max(hoje, atual["data_solicitacao"] or hoje),
+                             no_clipping=True if atual["no_clipping"] is None else atual["no_clipping"])
+                else:
+                    v["data_solucao"] = None
+            if feita and feita != atual["resumo_realizado"]:
+                v["resumo_realizado"] = feita
+            c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(**v))
+        nome_resp = (__import__("fotos").por_login(resp) or {}).get("nome") if resp else None
+        c.execute(update(noticias).where(noticias.c.id == nid).values(
+            status=status, assessor=(resp and (nome_resp or resp)) or (f.get("assessor") or "").strip()[:120] or n["assessor"],
+            acao_efetuada=feita, solicitacao_id=sid))
+    return sid
+
+
+def _sincronizar_noticia(c, sid):
+    """Solicitação que veio do radar mudou de status/resumo: a notícia acompanha."""
+    from db import noticias
+    s = c.execute(select(solicitacoes.c.status, solicitacoes.c.resumo_realizado).where(solicitacoes.c.id == sid)).first()
+    if not s:
+        return
+    st = {"aberta": "Pendente", "andamento": "Em análise", "concluida": "Ação efetuada"}.get(s[0])
+    v = {"status": st} if st else {}
+    if s[1]:
+        v["acao_efetuada"] = s[1]
+    if v:
+        c.execute(update(noticias).where(noticias.c.solicitacao_id == sid).values(**v))
+
+
 # ---------------- visão geral ----------------
 
 def visao(cod):
@@ -867,6 +945,7 @@ def painel(cod):
         ctx["ia_ok"] = questoes.configurado()
         ctx["status_radar"] = rd.STATUS
         ctx["categorias_radar"] = rd.CATEGORIAS
+        ctx["usuarios_resp"] = __import__("fotos").usuarios_ativos()
     elif secao == "rankings":
         ctx["ranks"] = rankings(cod)
     elif secao == "clipping":
@@ -948,8 +1027,10 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "radar" and acao in ("add", "del"):
             alterar_temas(cod, acao, f.get("termo"))
         elif secao == "radar" and acao == "item":
-            import radar as rd
-            rd.atualizar_item(cod, f.get("id", type=int), f)
+            sid = radar_item(cod, f.get("id", type=int), f, autor)
+            if sid:
+                flash("Notícia atualizada e registrada em Solicitações" +
+                      (f" para {f.get('responsavel')}." if f.get("responsavel") else "."), "ok")
             destino = url_for("meu.painel", cod=cod, secao=secao, filtro=request.args.get("filtro", ""),
                               termo=request.args.get("termo", "")) + f"#n{f.get('id', type=int)}"
         elif secao == "radar" and acao in ("fonte_add", "fonte_toggle", "fonte_del"):

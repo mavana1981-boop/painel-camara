@@ -289,6 +289,7 @@ noticias = Table(  # radar: portais acompanhados (como no Monitor Legislativo) +
     Column("status", String(30)),                # Pendente, Em análise, Ação efetuada
     Column("assessor", String(120)),
     Column("acao_efetuada", Text),
+    Column("solicitacao_id", Integer),           # solicitação criada ao atribuir um responsável
 )
 
 fontes_radar = Table(  # portais (RSS) lidos pelo radar

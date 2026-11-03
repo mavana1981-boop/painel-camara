@@ -1494,6 +1494,68 @@ def test_importa_usuarios_do_minha_pauta():
                    {"h": generate_password_hash("senha-de-teste-123")})
 
 
+def test_radar_qualquer_noticia_vira_solicitacao_com_responsavel():
+    from datetime import date, datetime, timedelta
+    from db import noticias
+    from sqlalchemy import insert as ins
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": "rita", "nome": "Rita Souza", "senha": "senha-segura-1"})
+    with engine.begin() as c:
+        nid = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Ministério muda regra do Pix",
+                                             link="https://exemplo.com/pix", fonte="Folha", publicado=datetime.now(),
+                                             origem="google", relevante=False, justificativa="Sem pertinência",
+                                             analisado_em=datetime.now())).inserted_primary_key[0]
+        nid2 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Notícia ainda não analisada",
+                                              link="https://exemplo.com/x", origem="portal", fonte="Agência",
+                                              publicado=datetime.now())).inserted_primary_key[0]
+    html = adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    bloco = html.split(f'id="n{nid}"')[1].split("</article>")[0]
+    assert 'name="responsavel"' in bloco and "Atribuir responsável / gerar ação" in bloco and "Rita Souza" in bloco
+    assert 'name="responsavel"' in html.split(f'id="n{nid2}"')[1].split("</article>")[0]     # mesmo sem análise da IA
+    tok = _tok(adm, "/meu/101?secao=radar")
+    prazo = (date.today() + timedelta(days=2)).isoformat()
+    r = adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": nid, "responsavel": "rita",
+                                                "status": "Pendente", "prazo": prazo, "tarefa": "Avaliar RIC ao BC"})
+    assert r.status_code == 302
+    sid, = _q("SELECT solicitacao_id FROM noticias WHERE id = :n", n=nid)[0]
+    tit, resp, pz, st, desc, sol = _q("SELECT titulo, responsavel, prazo, status, descricao, solicitante FROM solicitacoes "
+                                      "WHERE id = :s", s=sid)[0]
+    assert tit == "Radar: Ministério muda regra do Pix" and resp == "rita" and pz == prazo and st == "aberta"
+    assert "https://exemplo.com/pix" in desc and "Avaliar RIC ao BC" in desc and sol == "Radar de notícias"
+    assert _q("SELECT assessor FROM noticias WHERE id = :n", n=nid)[0][0] == "Rita Souza"
+    # aviso de tarefa na tela inicial da Rita
+    rita = _cliente_usuario("rita", "senha-segura-1")
+    inicio = rita.get("/orientacoes").get_data(as_text=True)
+    assert "Radar: Ministério muda regra do Pix" in inicio and "Nova tarefa atribuída a você" in inicio
+    # salvar de novo não duplica; "Em análise" vira "em andamento"
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": nid, "responsavel": "rita", "status": "Em análise"})
+    assert _q("SELECT COUNT(*) FROM solicitacoes WHERE titulo LIKE 'Radar: Ministério%'")[0][0] == 1
+    assert _q("SELECT status FROM solicitacoes WHERE id = :s", s=sid)[0][0] == "andamento"
+    html = adm.get("/meu/101?secao=radar&filtro=Em análise").get_data(as_text=True)
+    assert "Ministério muda regra do Pix" in html and "ver solicitação" in html                     # filtro vale p/ qualquer notícia
+    # ação efetuada conclui a solicitação e leva ao clipping
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": nid, "responsavel": "rita",
+                                            "status": "Ação efetuada", "acao_efetuada": "RIC 900/2026 protocolado ao BC"})
+    st, res, ds, clip = _q("SELECT status, resumo_realizado, data_solucao, no_clipping FROM solicitacoes WHERE id = :s", s=sid)[0]
+    assert st == "concluida" and res == "RIC 900/2026 protocolado ao BC" and ds == date.today().isoformat() and clip
+    assert "RIC 900/2026 protocolado ao BC" in adm.get("/meu/101?secao=clipping").get_data(as_text=True)
+    assert "Radar: Ministério" not in rita.get("/orientacoes").get_data(as_text=True)              # saiu das pendências
+    # e o caminho inverso: reabrir a solicitação devolve a notícia para "Pendente"
+    t2 = _tok(adm, "/meu/101?secao=solicitacoes")
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": t2, "acao": "status", "id": sid, "status": "aberta"})
+    assert _q("SELECT status FROM noticias WHERE id = :n", n=nid)[0][0] == "Pendente"
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": t2, "acao": "concluir", "id": sid, "no_clipping": "1",
+                                                  "resumo": "Resposta do BC recebida"})
+    assert _q("SELECT status, acao_efetuada FROM noticias WHERE id = :n", n=nid)[0] == ("Ação efetuada", "Resposta do BC recebida")
+    # sem responsável: só acompanha a notícia, sem solicitação
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": nid2, "status": "Em análise"})
+    assert _q("SELECT status, solicitacao_id FROM noticias WHERE id = :n", n=nid2)[0] == ("Em análise", None)
+    # excluir a solicitação solta a notícia
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": t2, "acao": "excluir", "id": sid})
+    assert _q("SELECT solicitacao_id FROM noticias WHERE id = :n", n=nid)[0][0] is None
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_"):

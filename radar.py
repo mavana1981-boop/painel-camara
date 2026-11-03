@@ -22,7 +22,7 @@ import threading
 from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
-from sqlalchemy import delete, insert, or_, select, update
+from sqlalchemy import and_, delete, func, insert, or_, select, update
 
 from db import deputados as parlamentares
 from db import engine, fontes_radar, meta, noticias, norm_nome, temas_radar, usuario_deputados
@@ -355,8 +355,11 @@ def lista(codigo, termo="", filtro="", limite=200):
         q = q.where(noticias.c.relevante.is_(True))
     elif filtro in ("portal", "google"):
         q = q.where(noticias.c.origem == filtro)
+    elif filtro == "Pendente":   # relevantes ainda sem andamento + qualquer notícia atribuída e pendente
+        q = q.where(or_(and_(noticias.c.relevante.is_(True), func.coalesce(noticias.c.status, "Pendente") == "Pendente"),
+                        and_(noticias.c.solicitacao_id.isnot(None), noticias.c.status == "Pendente")))
     elif filtro in STATUS:
-        q = q.where(noticias.c.relevante.is_(True), noticias.c.status == filtro)
+        q = q.where(noticias.c.status == filtro)
     with engine.connect() as c:
         return [dict(r) for r in c.execute(q.order_by(noticias.c.publicado.desc().nullslast(), noticias.c.id.desc())
                                            .limit(limite)).mappings()]
