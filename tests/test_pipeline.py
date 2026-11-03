@@ -1585,6 +1585,95 @@ def test_tutorial_e_convite_no_primeiro_acesso():
     assert _anonimo().get("/ajuda").status_code == 302
 
 
+def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
+    import random
+    from datetime import datetime, timedelta
+    import questoes
+    import selecao_ia as si
+    from db import noticias, temas_radar
+    from sqlalchemy import insert as ins, delete as dele
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    for login, nome in (("lianna.souza", "Lianna Souza"), ("marcelo.uvara2", "Marcelo Uvara"), ("marcelo.oliveira", "Marcelo Oliveira"),
+                        ("elyesley.silva", "Elyesley Silva"), ("vinicius.melo", "Vinicius Melo"), ("luiz.garibaldi", "Luiz Garibaldi"),
+                        ("andre.alencar", "André Alencar")):
+        adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": login, "nome": nome, "senha": "senha-segura-1"})
+    with engine.begin() as c:
+        c.execute(text("UPDATE usuarios SET equipe = 'oposicao' WHERE login IN ('lianna.souza','marcelo.uvara2','elyesley.silva','vinicius.melo','andre.alencar')"))
+        c.execute(text("UPDATE usuarios SET equipe = 'minoria' WHERE login IN ('marcelo.oliveira','luiz.garibaldi')"))
+        c.execute(text("UPDATE usuarios SET ativo = :f WHERE login = 'marcelo.uvara'"), {"f": False})   # do teste anterior
+    eq = si.equipes()
+    assert eq["comissao"] == ["lianna.souza"]
+    assert eq["outros"] == ["marcelo.uvara2", "elyesley.silva", "vinicius.melo", "luiz.garibaldi", "andre.alencar"]
+    assert si.nao_encontrados() == []
+    # notícias de dois temas
+    agora = datetime.now()
+    with engine.begin() as c:
+        c.execute(dele(noticias).where(noticias.c.codigo_deputado == 102))
+        c.execute(ins(temas_radar).values(codigo_deputado=102, termo="segurança pública"))
+        ids = {}
+        for i, (termo, tit) in enumerate([("Bruno Governo", "Bruno Governo critica ministro da Justiça"),
+                                          ("Bruno Governo", "Bruno Governo cobra ministro sobre presídios"),
+                                          ("Bruno Governo", "Bruno Governo apresenta projeto sobre Pix"),
+                                          ("segurança pública", "Facções avançam no Nordeste"),
+                                          ("segurança pública", "Governo corta verba da PF"),
+                                          ("segurança pública", "Facções dominam presídios")]):
+            ids[i] = c.execute(ins(noticias).values(codigo_deputado=102, termo=termo, titulo=tit, link=f"https://n/{i}",
+                                                    fonte="G1", origem="google", publicado=agora - timedelta(days=1))).inserted_primary_key[0]
+        c.execute(ins(noticias).values(codigo_deputado=102, termo="Bruno Governo", titulo="Notícia antiga", link="https://n/old",
+                                       origem="google", publicado=agora - timedelta(days=30)))
+    resposta = {"temas": [
+        {"tema": "Bruno Governo", "topicos": [
+            {"topico": "Cobranças ao ministro da Justiça", "resumo": "Duas notícias.", "tipo": "comissao",
+             "acao_sugerida": "Requerimento de convocação na CSPCCO", "noticias": [ids[0], ids[1], 999999]},
+            {"topico": "Projeto sobre Pix", "resumo": "Uma notícia.", "tipo": "outros", "acao_sugerida": "Nota", "noticias": [ids[2]]}]},
+        {"tema": "Segurança Pública", "topicos": [
+            {"topico": "Avanço das facções", "tipo": "outros", "noticias": [ids[3], ids[5]]},
+            {"topico": "Corte na PF", "tipo": "xyz", "noticias": [ids[4]]}]}]}
+    pedidos = []
+    orig_cfg, orig_ia = questoes.configurado, questoes.chamar_ia
+    questoes.configurado = lambda: True
+    questoes.chamar_ia = lambda msg, *a, **k: (pedidos.append(msg), "Aqui está:\n" + json.dumps(resposta))[1]
+    try:
+        tok = _tok(adm, "/meu/102?secao=radar&filtro=selecao")
+        html = adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
+        assert "Seleção da IA" in html and "Nenhuma seleção ainda" in html and "Distribuição da Seleção da IA" in html
+        random.seed(3)
+        r = adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_gerar"})
+        assert r.status_code == 302
+    finally:
+        questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
+    assert "Notícia antiga" not in pedidos[0] and "### Tema: segurança pública" in pedidos[0]
+    sel = si.ultimo_lote(102)
+    assert sel["total"] == 4 and set(sel["temas"]) == {"Bruno Governo", "segurança pública"}
+    tops = {t["topico"]: t for ts in sel["temas"].values() for t in ts}
+    assert tops["Cobranças ao ministro da Justiça"]["responsavel"] == "lianna.souza"          # comissão → Lianna
+    outros = [tops[k]["responsavel"] for k in ("Projeto sobre Pix", "Avanço das facções", "Corte na PF")]
+    assert len(set(outros)) == 3 and set(outros) <= set(eq["outros"])                        # sorteio sem repetir
+    assert tops["Corte na PF"]["tipo"] == "outros" and len(tops["Cobranças ao ministro da Justiça"]["noticias_l"]) == 2
+    sols = _q("SELECT titulo, responsavel, solicitante, prazo FROM solicitacoes WHERE titulo LIKE 'Seleção da IA:%' AND codigo_deputado = 102")
+    assert len(sols) == 4 and all(s[2] == "Seleção da IA (radar)" and s[3] for s in sols)
+    assert _q("SELECT solicitacao_id IS NOT NULL FROM noticias WHERE id = :n", n=ids[0])[0][0]
+    html = adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
+    assert "Cobranças ao ministro da Justiça" in html and "Requerimento de convocação na CSPCCO" in html
+    assert "Comissão" in html and "Outros assuntos" in html and "ver solicitação" in html
+    # a Lianna recebe o aviso de tarefa
+    li = _cliente_usuario("lianna.souza", "senha-segura-1")
+    assert "Seleção da IA: Cobranças ao ministro da Justiça" in li.get("/orientacoes").get_data(as_text=True)
+    # equipes editáveis
+    adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_equipes",
+                                                          "comissao": ["lianna.souza", "vinicius.melo"], "outros": ["andre.alencar"]})
+    assert si.equipes() == {"comissao": ["lianna.souza", "vinicius.melo"], "outros": ["andre.alencar"]}
+    assert not si.precisa_gerar(102, datetime.now().replace(hour=12))                        # já gerou hoje
+    assert not si.precisa_gerar(102, datetime.now().replace(hour=6) + timedelta(days=1))     # antes das 7h
+    assert si.precisa_gerar(102, datetime.now().replace(hour=8) + timedelta(days=1))
+    # sem IA: usa as palavras mais frequentes, sem quebrar
+    r = si.gerar(102)
+    assert r["sem_ia"] and len(r["topicos"]) >= 2
+    with engine.begin() as c:
+        c.execute(text("UPDATE usuarios SET ativo = :t WHERE login = 'marcelo.uvara'"), {"t": True})
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_"):

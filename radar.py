@@ -394,6 +394,13 @@ def _ciclo(codigos, buscar, sessao):
             try:
                 res["google"] += coletar_google(cod, buscar)
                 res["analisadas"] += analisar(cod, sessao=sessao)
+                import questoes
+                import selecao_ia
+                if questoes.configurado() and selecao_ia.precisa_gerar(cod):   # 1x por dia, a partir das 7h
+                    try:
+                        selecao_ia.gerar(cod, sessao=sessao)
+                    except ValueError as e:
+                        log.info("seleção da IA %s: %s", cod, e)
             except Exception:
                 log.exception("radar do parlamentar %s", cod)
     if codigos is None:

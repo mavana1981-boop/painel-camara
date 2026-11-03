@@ -157,3 +157,11 @@ Na primeira subida com `MINHA_PAUTA_DATABASE_URL` configurada, o painel importa 
 (mesmo login em minúsculas, nome, senha e foto). As senhas vêm como hash bcrypt e continuam valendo; no primeiro
 login certo viram o hash do painel. Depois da importação só os logins de `ADMINS_PAINEL` (padrão `marcelo.uvara`)
 ficam como administradores — se nenhum deles existir, nada muda. Para repetir: Usuários → **Importar do Minha Pauta**.
+
+## Seleção da IA (Radar)
+Filtro **✨ Seleção da IA** no Radar: uma vez por dia (a partir das 7h, no ciclo do radar) ou pelo botão
+**Gerar nova seleção**, a IA lê as notícias dos últimos `SELECAO_DIAS` (7) dias de cada tema acompanhado e escolhe,
+por contexto, pelo menos 2 tópicos por tema, classificados em *comissão* ou *outros assuntos*. Cada tópico vira uma
+solicitação (prazo de `SELECAO_PRAZO_DIAS` = 3 dias) com responsável sorteado — sem repetir até todos receberem —
+entre a equipe do tipo. Padrão: comissão = Lianna; outros = Marcelo, Elyezer, Vinicius, Garibaldi e André Alencar
+(casados com os usuários pelo nome, preferindo a equipe Oposição); editável no quadro “Distribuição”.

@@ -293,6 +293,22 @@ noticias = Table(  # radar: portais acompanhados (como no Monitor Legislativo) +
     Column("solicitacao_id", Integer),           # solicitação criada ao atribuir um responsável
 )
 
+selecao_ia = Table(  # radar: tópicos escolhidos pela IA (≥2 por tema acompanhado), já distribuídos à equipe
+    "selecao_ia", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("codigo_deputado", Integer, index=True),
+    Column("lote", String(19), index=True),      # AAAA-MM-DDTHH:MM:SS da geração
+    Column("tema", String(120)),
+    Column("topico", String(200)),
+    Column("resumo", Text),
+    Column("tipo", String(20)),                  # comissao ou outros
+    Column("acao_sugerida", Text),
+    Column("noticias", Text),                    # JSON: ids das notícias do tópico
+    Column("responsavel", String(60)),
+    Column("solicitacao_id", Integer),
+    Column("criado_em", DateTime),
+)
+
 fontes_radar = Table(  # portais (RSS) lidos pelo radar
     "fontes_radar", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),

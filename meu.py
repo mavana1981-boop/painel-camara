@@ -945,6 +945,11 @@ def painel(cod):
         ctx["ia_ok"] = questoes.configurado()
         ctx["status_radar"] = rd.STATUS
         ctx["categorias_radar"] = rd.CATEGORIAS
+        if ctx["filtro"] == "selecao":
+            import selecao_ia as si
+            ctx["selecao"] = si.ultimo_lote(cod)
+            ctx["sel_equipes"], ctx["sel_tipos"] = si.equipes(), si.TIPOS
+            ctx["sel_faltam"], ctx["sel_dias"] = si.nao_encontrados(), si.DIAS
         ctx["usuarios_resp"] = __import__("fotos").usuarios_ativos()
     elif secao == "rankings":
         ctx["ranks"] = rankings(cod)
@@ -1033,6 +1038,17 @@ def _post(cod, secao, s, autor, pleno=True):
                       (f" para {f.get('responsavel')}." if f.get("responsavel") else "."), "ok")
             destino = url_for("meu.painel", cod=cod, secao=secao, filtro=request.args.get("filtro", ""),
                               termo=request.args.get("termo", "")) + f"#n{f.get('id', type=int)}"
+        elif secao == "radar" and acao == "selecao_gerar":
+            import selecao_ia as si
+            r = si.gerar(cod, autor=autor)
+            flash(f"Seleção gerada: {len(r['topicos'])} tópico(s), já distribuídos e registrados em Solicitações."
+                  + (" A IA não respondeu; usei as palavras mais frequentes das manchetes." if r["sem_ia"] else ""), "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao")
+        elif secao == "radar" and acao == "selecao_equipes":
+            import selecao_ia as si
+            si.salvar_equipes(f.getlist("comissao"), f.getlist("outros"))
+            flash("Equipes da Seleção da IA salvas.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao")
         elif secao == "radar" and acao in ("fonte_add", "fonte_toggle", "fonte_del"):
             if not g.usuario.get("admin"):
                 abort(403)

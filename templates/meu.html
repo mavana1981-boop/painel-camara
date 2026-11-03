@@ -444,7 +444,7 @@
     <h2>Radar de notícias <small>portais do Monitor Legislativo + Google Notícias · 60 dias</small></h2>
     {% set q = {'termo': termo} if termo else {} %}
     <div class="pilulas">
-      {% for k, nome, n in [('', 'Tudo', rc.n), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] %}
+      {% for k, nome, n in [('', 'Tudo', rc.n), ('selecao', '✨ Seleção da IA', None), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] %}
       <a class="{{ 'sel' if filtro == k }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=k or None, **q) }}">{{ nome }}{% if n is not none %} ({{ n }}){% endif %}</a>
       {% endfor %}
     </div>
@@ -452,8 +452,42 @@
       <a class="{{ 'sel' if not termo }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None) }}">Todos os termos</a>
       {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t, filtro=filtro or None) }}">{{ t }}</a>{% endfor %}
     </div>{% endif %}
-    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">A análise por IA está desligada: falta a variável <b>ANTHROPIC_API_KEY</b> no Railway. As notícias continuam sendo coletadas.</div>
+    {% if not ia_ok and filtro != 'selecao' %}<div class="aviso erro" style="margin:12px 16px 0">A análise por IA está desligada: falta a variável <b>ANTHROPIC_API_KEY</b> no Railway. As notícias continuam sendo coletadas.</div>
     {% elif rc.pend %}<div class="rn-fila">{{ rc.pend }} notícia(s) aguardando análise da IA — saem no próximo ciclo (a cada 2 horas).</div>{% endif %}
+    {% if filtro == 'selecao' %}
+    <div class="sel-cab">
+      <div>{% if selecao %}<b>Seleção de {{ selecao.gerado_em.strftime('%d/%m/%Y às %H:%M') }}</b> · {{ selecao.total }} tópico{{ 's' if selecao.total != 1 }} de {{ selecao.temas|length }} tema{{ 's' if selecao.temas|length != 1 }}
+        {% else %}<b>Nenhuma seleção ainda.</b>{% endif %}
+        <small>A IA lê as notícias dos últimos {{ sel_dias }} dias de cada tema acompanhado e escolhe, pelo contexto, os assuntos que mais aparecem (pelo menos 2 por tema). Cada tópico já vira uma solicitação com responsável sorteado. Roda sozinha uma vez por dia, a partir das 7h.</small></div>
+      <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Gerando…'">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_gerar">
+        <button class="btn">✨ Gerar nova seleção</button></form>
+    </div>
+    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">Sem a chave da IA (ANTHROPIC_API_KEY), a seleção usa só as palavras mais frequentes das manchetes e não roda sozinha.</div>{% endif %}
+    {% if selecao %}
+    {% for tema, tops in selecao.temas.items() %}
+      <div class="sel-tema"><span>Tema</span> {{ tema }} <small>{{ tops|length }} tópico{{ 's' if tops|length != 1 }}</small></div>
+      {% for t in tops %}
+      <article class="sel-top {{ t.tipo }}">
+        <div class="sel-l1">
+          <span class="sel-tipo {{ t.tipo }}">{{ sel_tipos[t.tipo] }}</span>
+          <b>{{ t.topico }}</b>
+          {% if t.status %}<span class="sol-st {{ t.status }}">{{ status|selectattr(0, 'equalto', t.status)|map(attribute=1)|first }}</span>{% endif %}
+        </div>
+        {% if t.resumo %}<p class="sel-res">{{ t.resumo }}</p>{% endif %}
+        {% if t.acao_sugerida %}<p class="sel-acao"><b>Ação sugerida:</b> {{ t.acao_sugerida }}</p>{% endif %}
+        {% if t.noticias_l %}<details class="sel-nots"><summary>{{ t.noticias_l|length }} notícia{{ 's' if t.noticias_l|length != 1 }}</summary>
+          <ul>{% for n in t.noticias_l %}<li><a href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.titulo }}</a> <small>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</small></li>{% endfor %}</ul></details>{% endif %}
+        <div class="sel-rodape">
+          {% if t.responsavel %}<span class="sel-resp">{{ avatar(t.responsavel, 26) }} {{ (usuarios_resp|selectattr('login', 'equalto', t.responsavel)|map(attribute='nome')|first) or t.responsavel }}</span>
+          {% else %}<span class="sel-resp" style="color:#b03021">sem responsável — configure as equipes ao lado</span>{% endif %}
+          {% if t.solicitacao_id %}<a class="rn-sol" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', abrir=t.solicitacao_id) }}#s{{ t.solicitacao_id }}">ver solicitação {{ ic("seta") }}</a>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    {% endfor %}
+    {% else %}<div class="vazio-msg">Clique em “Gerar nova seleção” para a IA escolher os tópicos das notícias dos últimos dias.</div>{% endif %}
+    {% else %}
     <div class="rolagem" style="max-height:none">
     {% for n in radar.itens %}
       <article class="rn {{ 'rel' if n.relevante }} {{ 'desc' if n.relevante == false }}" id="n{{ n.id }}">
@@ -499,9 +533,28 @@
       </article>
     {% else %}<div class="vazio-msg">Nenhuma notícia {{ 'neste filtro' if filtro or termo else 'coletada ainda' }}. O radar roda a cada 2 horas; use “Atualizar agora” para buscar já.</div>{% endfor %}
     </div>
+    {% endif %}
     <p class="nota">Como no Monitor Legislativo: os portais são lidos a cada 2 horas e cada notícia nova passa pela IA, que diz se cabe ação parlamentar, de que tipo e por quê. Daqui entram só as notícias que citam o nome do deputado ou um tema acompanhado; o Google Notícias complementa com outros veículos.</p>
   </div>
   <div class="lado-pilha">
+  {% if filtro == 'selecao' %}
+  <div class="card neu lado">
+    <h2>Distribuição da Seleção da IA <small>sorteio equilibrado</small></h2>
+    {% if sel_faltam %}<div class="aviso" style="margin:10px 14px 0;background:#fff7e6;color:#7a5a12">Não encontrei usuário para: {{ sel_faltam|join(', ') }}. Marque abaixo quem é quem e salve.</div>{% endif %}
+    <form method="post" class="meu-form sel-eq" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_equipes">
+      {% for k, rot, dica in [('comissao', 'Requisições atinentes a comissão', 'audiência pública, convocação, fiscalização'), ('outros', 'Outros assuntos', 'demais providências')] %}
+      <fieldset><legend>{{ rot }} <small>{{ dica }}</small></legend>
+        {% for u in usuarios_resp if u.equipe == 'oposicao' or u.login in sel_equipes[k] %}
+        <label class="chk">{{ avatar(u, 22) }}<input type="checkbox" name="{{ k }}" value="{{ u.login }}" {{ 'checked' if u.login in sel_equipes[k] }}> {{ u.nome or u.login }}{% if u.equipe != 'oposicao' %} <small>({{ u.equipe or 'sem equipe' }})</small>{% endif %}</label>
+        {% endfor %}
+      </fieldset>
+      {% endfor %}
+      <small style="color:var(--suave)">Aparecem os servidores da Oposição (e quem já estiver marcado). A equipe vem de Usuários.</small>
+      <button class="btn">Salvar equipes</button>
+    </form>
+  </div>
+  {% endif %}
   <div class="card neu lado">
     <h2>Temas acompanhados</h2>
     <div style="padding:12px 14px 4px;font-size:13px;color:var(--suave)">Além do nome do deputado, o radar busca estes temas nos portais e no Google Notícias:</div>
