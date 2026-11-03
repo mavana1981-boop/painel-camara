@@ -28,6 +28,8 @@
     {% if op and op.ultima_coleta %}<div class="coleta" title="Última atualização dos dados">Dados de {{ op.ultima_coleta|data }}</div>{% endif %}
     {% if usuario %}
     <div class="usr">
+      {% if minhas_tarefas %}<a class="sino" href="{{ url_for('index') }}#tarefas" title="{{ minhas_tarefas|length }} tarefa(s) atribuída(s) a você"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg><i class="{{ 'nova' if minhas_tarefas|selectattr('nova')|list }}">{{ minhas_tarefas|length }}</i></a>{% endif %}
+      {{ avatar(usuario, 28, 'av-topo') }}
       <span class="quem">{{ usuario.nome or usuario.login }}</span>
       {% if usuario.admin %}<a href="{{ url_for('auth.gerenciar') }}">Usuários</a>{% endif %}
       <a href="{{ url_for('auth.conta') }}">Conta</a>
@@ -47,6 +49,30 @@ aj();addEventListener('resize',aj);if(document.fonts)document.fonts.ready.then(a
 {% with msgs = get_flashed_messages(with_categories=true) %}
   {% for cat, m in msgs %}<div class="aviso {{ cat }}">{{ m }}</div>{% endfor %}
 {% endwith %}
+{% if minhas_tarefas and mostrar_tarefas %}
+{% set atrasadas = minhas_tarefas|selectattr('atrasada')|list|length %}
+<section class="tarefas" id="tarefas">
+  <div class="tf-cab">
+    {{ avatar(usuario, 48) }}
+    <div><b>{{ 'Nova tarefa atribuída a você' if minhas_tarefas|length == 1 and minhas_tarefas[0].nova else 'Tarefas atribuídas a você' }}</b>
+      <small>{{ minhas_tarefas|length }} pendente{{ 's' if minhas_tarefas|length != 1 }}{% if atrasadas %} · <span class="tf-atr">{{ atrasadas }} atrasada{{ 's' if atrasadas != 1 }}</span>{% endif %}</small></div>
+  </div>
+  <div class="tf-lista">
+  {% for t in minhas_tarefas %}
+    <a class="tf {{ 'atrasada' if t.atrasada }} {{ 'nova' if t.nova }}" href="{{ url_for('meu.painel', cod=t.codigo_deputado, secao='solicitacoes', abrir=t.id) }}#s{{ t.id }}">
+      <span class="tf-av">{{ avatar(usuario, 36) }}</span>
+      <span class="tf-txt">
+        <b>{% if t.nova %}<i class="tf-novo">nova</i> {% endif %}{{ t.titulo }}</b>
+        <small>{{ t.deputado or 'Parlamentar' }}{% if t.atribuido_por %} · atribuída por {{ avatar(t.atribuido_por, 16) }} {{ t.atribuido_por }}{% endif %}{% if t.atribuido_em %} em {{ t.atribuido_em|data }}{% endif %}</small>
+      </span>
+      <span class="tf-prazo">{% if t.prazo %}<span>Prazo final</span><b>{{ t.prazo|data }}</b>
+        <small>{% if t.dias < 0 %}atrasada há {{ -t.dias }} dia{{ 's' if t.dias != -1 }}{% elif t.dias == 0 %}vence hoje{% elif t.dias == 1 %}vence amanhã{% else %}faltam {{ t.dias }} dias{% endif %}</small>
+        {% else %}<span>Prazo final</span><b>sem prazo</b>{% endif %}</span>
+    </a>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
 {% block conteudo %}{% endblock %}
 </main>
 <div class="rodape"><span>Fonte: Dados Abertos da Câmara dos Deputados (legislativo e CEAP). Uso interno da Liderança da Oposição.</span>

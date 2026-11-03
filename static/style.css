@@ -700,3 +700,62 @@ details.ag-hist[open] summary{background:#f4f8f5}
 .meu-form label.chk{flex-direction:row;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;font-size:13px;color:var(--tinta)}
 .meu-form label.chk input{width:auto;margin:0}
 .meu-form [hidden]{display:none!important}
+
+/* fotos dos usuários */
+.av{border-radius:50%;object-fit:cover;flex:none;display:inline-flex;align-items:center;justify-content:center;
+  vertical-align:middle;border:2px solid #fff;box-shadow:0 0 0 1px var(--linha);background:#eef2f6}
+.av-ini{color:#fff;font-weight:700;letter-spacing:.3px;line-height:1}
+.usr .av-topo{border-color:var(--ouro);box-shadow:none}
+.usr{align-items:center}
+.sino{position:relative;display:inline-flex;align-items:center;color:#fff;text-decoration:none;padding:4px}
+.sino svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.sino i{position:absolute;top:-3px;right:-5px;min-width:17px;height:17px;border-radius:9px;background:var(--ouro);color:var(--pri-esc);
+  font:700 10px/17px system-ui,sans-serif;text-align:center;font-style:normal;padding:0 4px}
+.sino i.nova{background:#e5483a;color:#fff}
+
+/* aviso de tarefas na tela inicial */
+.tarefas{background:var(--card);border:1px solid var(--linha);border-left:4px solid var(--ouro);border-radius:12px;
+  margin-bottom:14px;box-shadow:0 1px 3px rgba(22,32,46,.06);overflow:hidden}
+.tf-cab{display:flex;gap:12px;align-items:center;padding:12px 16px;background:linear-gradient(90deg,#fbf6e8,#fff)}
+.tf-cab b{display:block;font-size:15px;color:var(--pri-esc)}
+.tf-cab small{color:var(--suave);font-size:12px}
+.tf-atr{color:#b03021;font-weight:700}
+.tf-lista{display:flex;flex-direction:column}
+.tf{display:flex;gap:12px;align-items:center;padding:10px 16px;border-top:1px solid #edf1f5;text-decoration:none}
+.tf:hover{background:#f6faf7}
+.tf.nova{background:#fffaf0}
+.tf-txt{flex:1;min-width:0}
+.tf-txt b{display:block;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tf-txt small{color:var(--suave);font-size:12px;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.tf-novo{font-style:normal;font-size:10px;font-weight:700;text-transform:uppercase;background:#e5483a;color:#fff;border-radius:4px;padding:1px 5px;vertical-align:1px}
+.tf-prazo{text-align:right;flex:none;min-width:104px}
+.tf-prazo span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--suave);font-weight:600}
+.tf-prazo b{display:block;font-size:14px;color:var(--pri-esc)}
+.tf-prazo small{font-size:11px;color:var(--suave)}
+.tf.atrasada .tf-prazo b,.tf.atrasada .tf-prazo small{color:#b03021}
+@media (max-width:560px){.tf{flex-wrap:wrap}.tf-av{display:none}.tf-prazo{text-align:left;min-width:0;width:100%}.tf-txt b{white-space:normal}}
+
+/* solicitações: datas e responsável */
+.sol-resp{display:inline-flex}
+.sol-datas{display:grid;grid-template-columns:repeat(3,minmax(90px,1fr)) minmax(180px,2fr);gap:8px;margin-bottom:10px}
+.sol-datas>div{background:#fff;border:1px solid var(--linha);border-radius:8px;padding:7px 10px;display:flex;flex-direction:column;gap:2px}
+.sol-datas span{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--suave);font-weight:600}
+.sol-datas b{font-size:13px;display:flex;align-items:center;gap:6px}
+.sol-datas small{font-size:11px;color:var(--suave)}
+.sol-datas .atraso{border-color:#f0c4be;background:#fdf3f2}.sol-datas .atraso b{color:#b03021}
+.sol-datas .ok{border-color:#bfe0c9;background:#f1f9f3}.sol-datas .ok b{color:#1d6b34}
+@media (max-width:700px){.sol-datas{grid-template-columns:repeat(3,1fr)}.sol-resp-box{grid-column:1/-1}}
+.sol-editar{margin-top:10px;border:1px dashed var(--linha);border-radius:8px;background:#fff}
+.sol-editar>summary{cursor:pointer;padding:7px 10px;font-size:12px;font-weight:600;color:var(--pri)}
+.sol-ed-form{padding:0 10px 10px}
+.lin3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+@media (max-width:560px){.lin3{grid-template-columns:1fr}}
+.resp-sel{display:flex;gap:8px;align-items:center}
+.resp-sel select{flex:1}
+.resp-av:empty{display:none}
+.usr a.sino{border:none;padding:4px;background:none}
+.us-foto{display:flex;align-items:center;gap:6px}
+.us-foto form{margin:0}
+.us-foto input[type=file]{display:none}
+.us-foto label.mini{cursor:pointer}
+.sol-ed-form button{align-self:flex-start;padding:5px 16px}

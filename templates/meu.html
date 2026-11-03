@@ -173,7 +173,19 @@
 {% endif %}
 
 {# =================== SOLICITAÇÕES =================== #}
+{% macro campo_responsavel(atual) %}
+<label>Responsável
+  <span class="resp-sel">
+    <span class="resp-av">{% if atual %}{{ avatar(atual, 30) }}{% endif %}</span>
+    <select name="responsavel" onchange="var o=this.options[this.selectedIndex],b=this.parentNode.querySelector('.resp-av');b.innerHTML=o.value?(document.getElementById('av-'+o.value)||{}).innerHTML||'':''">
+      <option value="">— sem responsável —</option>
+      {% for u in usuarios_resp %}<option value="{{ u.login }}" {{ 'selected' if u.login == atual }}>{{ u.nome or u.login }} ({{ u.login }})</option>{% endfor %}
+    </select>
+  </span>
+</label>
+{% endmacro %}
 {% if secao == 'solicitacoes' %}
+<div hidden>{% for u in usuarios_resp %}<template id="av-{{ u.login }}">{{ avatar(u, 30) }}</template>{% endfor %}</div>
 <section class="grade larga">
   <div class="card neu">
     <h2>Solicitações do parlamentar <small>{{ sol.itens|length }}</small></h2>
@@ -183,13 +195,24 @@
     </div>
     <div class="rolagem" style="max-height:none">
     {% for x in sol.itens %}
-      <details class="sol {{ x.status }}">
+      <details class="sol {{ x.status }}" id="s{{ x.id }}"{% if abrir == x.id %} open{% endif %}>
         <summary>
           <span class="sol-st {{ x.status }}">{{ status|selectattr(0, 'equalto', x.status)|map(attribute=1)|first }}</span>
           <b>{{ x.titulo }}</b>
-          <span class="sol-meta">{{ x.criado_em|data }}{% if x.solicitante %} · {{ x.solicitante }}{% endif %}{% if x.prazo %} · prazo {{ x.prazo|data }}{% endif %}{% if x.atrasada %} <span class="sol-atraso">atrasada</span>{% endif %}{% if x.anexos %} · 📎 {{ x.anexos|length }}{% endif %}</span>
+          {% if x.responsavel %}<span class="sol-resp" title="Responsável: {{ x.responsavel }}">{{ avatar(x.responsavel, 26) }}</span>{% endif %}
+          <span class="sol-meta">{{ (x.data_solicitacao or x.criado_em)|data }}{% if x.solicitante %} · {{ x.solicitante }}{% endif %}{% if x.prazo %} · prazo {{ x.prazo|data }}{% endif %}{% if x.data_solucao %} · solucionada {{ x.data_solucao|data }}{% endif %}{% if x.atrasada %} <span class="sol-atraso">atrasada</span>{% endif %}{% if x.no_prazo == False %} <span class="sol-atraso">fora do prazo</span>{% endif %}{% if x.anexos %} · 📎 {{ x.anexos|length }}{% endif %}</span>
         </summary>
         <div class="sol-corpo">
+          <div class="sol-datas">
+            <div><span>Solicitação</span><b>{{ x.data_solicitacao|data if x.data_solicitacao else '—' }}</b></div>
+            <div class="{{ 'atraso' if x.atrasada }}"><span>Prazo final</span><b>{{ x.prazo|data if x.prazo else '—' }}</b></div>
+            <div class="{{ 'ok' if x.no_prazo else ('atraso' if x.no_prazo == False) }}"><span>Solução</span><b>{{ x.data_solucao|data if x.data_solucao else '—' }}</b></div>
+            <div class="sol-resp-box"><span>Responsável</span>
+              {% if x.responsavel %}{% set ru = usuarios_resp|selectattr('login', 'equalto', x.responsavel)|first %}
+                <b>{{ avatar(x.responsavel, 30) }} {{ (ru.nome if ru else x.responsavel) }}</b>
+                {% if x.atribuido_por %}<small>atribuída por {{ x.atribuido_por }}{% if x.atribuido_em %} em {{ x.atribuido_em|data }}{% endif %}</small>{% endif %}
+              {% else %}<b style="color:var(--suave)">ninguém</b>{% endif %}</div>
+          </div>
           {% if x.descricao %}<div class="sol-desc">{{ x.descricao }}</div>{% endif %}
           {% if x.anexos %}<div class="sol-anexos">{% for a in x.anexos %}
             <span class="anexo"><a href="{{ url_for('meu.baixar_anexo', cod=cod, aid=a.id) }}">{{ a.nome }}</a> <small>{{ a.tamanho|tamanho }}</small>
@@ -201,27 +224,41 @@
               <select name="status" class="mini" onchange="this.form.submit()">{% for k, nome in status %}<option value="{{ k }}" {{ 'selected' if x.status == k }}>{{ nome }}</option>{% endfor %}</select></form>
             <form method="post" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="anexar"><input type="hidden" name="id" value="{{ x.id }}">
               <input type="file" name="arquivos" multiple class="mini" required><button class="mini">Anexar</button></form>
-            <form method="post" onsubmit="return confirm('Excluir esta solicitação e os anexos?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="{{ x.id }}">
-              <button class="mini perigo">Excluir</button></form>
+            {% if pleno %}<form method="post" onsubmit="return confirm('Excluir esta solicitação e os anexos?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="{{ x.id }}">
+              <button class="mini perigo">Excluir</button></form>{% endif %}
           </div>
+          <details class="sol-editar">
+            <summary>Editar datas{{ ' e responsável' if pleno }}</summary>
+            <form method="post" class="meu-form sol-ed-form"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="editar"><input type="hidden" name="id" value="{{ x.id }}">
+              <div class="lin3">
+                <label>Data da solicitação<input type="date" name="data_solicitacao" value="{{ x.data_solicitacao or '' }}"></label>
+                <label>Prazo final<input type="date" name="prazo" value="{{ x.prazo or '' }}"></label>
+                <label>Data da solução<input type="date" name="data_solucao" value="{{ x.data_solucao or '' }}"></label>
+              </div>
+              {% if pleno %}{{ campo_responsavel(x.responsavel) }}{% endif %}
+              <button class="mini">Salvar</button>
+            </form>
+          </details>
           <div class="sol-meta" style="margin-top:6px">Registrada por {{ x.criado_por }} em {{ x.criado_em|data }}</div>
         </div>
       </details>
     {% else %}<div class="vazio-msg">Nenhuma solicitação {{ 'com este status' if filtro_status else 'registrada' }}.</div>{% endfor %}
     </div>
   </div>
-  <div class="card neu lado">
+  {% if pleno %}<div class="card neu lado">
     <h2>Nova solicitação</h2>
     <form method="post" enctype="multipart/form-data" class="meu-form">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="nova">
       <label>Título<input name="titulo" required maxlength="200" placeholder="Ex.: Nota técnica sobre o PL 1234/2025"></label>
       <label>Descrição<textarea name="descricao" rows="5" placeholder="O que foi pedido, contexto, contatos…"></textarea></label>
-      <div class="lin"><label>Solicitante<input name="solicitante" maxlength="120" placeholder="Ex.: o deputado"></label><label>Prazo<input type="date" name="prazo"></label></div>
+      <div class="lin"><label>Solicitante<input name="solicitante" maxlength="120" placeholder="Ex.: o deputado"></label><label>Data da solicitação<input type="date" name="data_solicitacao" value="{{ hoje.isoformat() }}"></label></div>
+      <div class="lin"><label>Prazo final<input type="date" name="prazo"></label><label>Data da solução<input type="date" disabled title="Preenchida quando a solicitação for concluída"></label></div>
+      {{ campo_responsavel(None) }}
       <label>Anexos<input type="file" name="arquivos" multiple></label>
       <small style="color:var(--suave)">PDF, Word, Excel, PowerPoint, imagens, TXT, CSV, ZIP ou e-mail · até 10 MB cada.</small>
       <button class="btn com-ic">{{ ic("mais") }} Registrar solicitação</button>
     </form>
-  </div>
+  </div>{% else %}<div class="card neu lado"><h2>Suas tarefas</h2><p class="nota">Você vê aqui as solicitações deste parlamentar atribuídas a você. Ao terminar, mude o status para <b>Concluída</b> — a data da solução é registrada na hora — ou informe a data em “Editar datas”.</p></div>{% endif %}
 </section>
 {% endif %}
 

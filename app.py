@@ -55,7 +55,9 @@ init_db()
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024   # anexos (10 MB cada) e Regimento em PDF
 auth.configurar(app)
 import meu  # noqa: E402
+import fotos  # noqa: E402
 app.register_blueprint(meu.bp)
+app.register_blueprint(fotos.bp)
 
 ABAS = [("perfil", "Perfil"), ("proposicoes", "Proposições"), ("cota", "Cota"),
         ("votacoes", "Votações"), ("orientacoes", "Orientações"), ("rankings", "Rankings"),

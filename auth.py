@@ -245,8 +245,28 @@ def gerenciar():
             elif acao == "excluir" and uid:
                 from db import usuario_deputados
                 c.execute(delete(usuario_deputados).where(usuario_deputados.c.usuario_id == uid))
+                from db import fotos_usuarios
+                c.execute(delete(fotos_usuarios).where(fotos_usuarios.c.usuario_id == uid))
                 c.execute(delete(usuarios).where(usuarios.c.id == uid))
                 flash("Usuário excluído.", "ok")
+        if acao in ("foto", "foto_remover") and uid:
+            import fotos
+            try:
+                if acao == "foto":
+                    fotos.salvar(uid, request.files.get("foto"))
+                    flash("Foto atualizada.", "ok")
+                else:
+                    fotos.remover(uid)
+                    import plenario
+                    if plenario.configurado():      # volta na hora a foto do Minha Pauta, se houver
+                        try:
+                            with plenario.fonte().connect() as cf:
+                                fotos.sincronizar(cf)
+                        except Exception:
+                            pass
+                    flash("Foto removida.", "ok")
+            except ValueError as e:
+                flash(str(e), "erro")
         if acao == "vincular" and uid:
             import meu
             cods = [int(x) for x in request.form.getlist("deputados") if x.isdigit()]
@@ -257,5 +277,8 @@ def gerenciar():
     import paineis
     with engine.connect() as c:
         lista = [dict(r) for r in c.execute(select(usuarios).order_by(usuarios.c.login)).mappings()]
-    return render_template("usuarios.html", aba=None, lista=lista, vinculos=meu.todos_vinculos(),
+    from db import fotos_usuarios
+    with engine.connect() as c:
+        fotos_origem = {r[0]: r[1] for r in c.execute(select(fotos_usuarios.c.usuario_id, fotos_usuarios.c.origem))}
+    return render_template("usuarios.html", aba=None, lista=lista, vinculos=meu.todos_vinculos(), fotos_origem=fotos_origem,
                            deputados=paineis.lista_deputados())

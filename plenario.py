@@ -186,6 +186,15 @@ def _evento_info(evento_id):
 
 # ---------------- sincronização ----------------
 
+def _copiar_fotos(conn):
+    """As fotos dos assessores cadastradas no Minha Pauta passam a valer no painel (ver fotos.py)."""
+    try:
+        import fotos
+        fotos.sincronizar(conn)
+    except Exception:
+        log.exception("cópia das fotos do Minha Pauta")
+
+
 def sincronizar(conn_fonte=None):
     """Copia as últimas pautas do Minha Pauta. Devolve quantas pautas foram gravadas (None sem configuração)."""
     if conn_fonte is None and not configurado():
@@ -193,9 +202,11 @@ def sincronizar(conn_fonte=None):
     with _lock:
         if conn_fonte is not None:
             pautas = ler_pautas(conn_fonte)
+            _copiar_fotos(conn_fonte)
         else:
             with fonte().connect() as c:
                 pautas = ler_pautas(c)
+                _copiar_fotos(c)
         agora = datetime.now()
         with engine.connect() as c:
             conhecidas = {r[0]: r[1] for r in c.execute(select(plenario_pautas.c.evento_id, plenario_pautas.c.data))}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block titulo %}Usuários{% endblock %}
 {% block conteudo %}
+<p class="nota" style="margin:0 0 10px">As fotos vêm do app Minha Pauta (mesmo usuário ou mesmo nome) a cada sincronização do Plenário. Uma foto enviada aqui prevalece; o “×” volta a usar a do Minha Pauta.</p>
 <div class="card neu" style="margin-bottom:14px">
   <h2>Novo usuário</h2>
   <form method="post" class="form-linha">
@@ -18,10 +19,18 @@
   <h2>Usuários <small>{{ lista|length }}</small></h2>
   <div class="rolagem" style="max-height:none">
   <table>
-    <thead><tr><th>Usuário</th><th>Nome</th><th class="c">Perfil</th><th class="c">Situação</th><th class="m-esc">Último acesso</th><th>Meu parlamentar</th><th>Ações</th></tr></thead>
+    <thead><tr><th>Foto</th><th>Usuário</th><th>Nome</th><th class="c">Perfil</th><th class="c">Situação</th><th class="m-esc">Último acesso</th><th>Meu parlamentar</th><th>Ações</th></tr></thead>
     <tbody>
     {% for u in lista %}
       <tr>
+        <td><div class="us-foto">{{ avatar(u, 34) }}
+          <form method="post" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="acao" value="foto"><input type="hidden" name="id" value="{{ u.id }}">
+            <label class="mini" title="Enviar foto">{{ 'Trocar' if u.id in fotos_origem else 'Enviar' }}<input type="file" name="foto" accept="image/*" onchange="this.form.submit()"></label></form>
+          {% if fotos_origem.get(u.id) == 'painel' %}<form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="acao" value="foto_remover"><input type="hidden" name="id" value="{{ u.id }}">
+            <button class="mini" title="Voltar a usar a foto do Minha Pauta">×</button></form>{% endif %}
+        </div></td>
         <td><b>{{ u.login }}</b>{% if u.id == usuario.id %} <span class="fora">você</span>{% endif %}</td>
         <td>{{ u.nome or '' }}</td>
         <td class="c">{{ 'Admin' if u.admin else 'Leitura' }}</td>

@@ -635,6 +635,139 @@ def test_solicitacoes_com_anexos():
     assert not _q("SELECT id FROM anexos WHERE solicitacao_id = :s", s=sid)
 
 
+def _png(cor=(200, 30, 30)):
+    import io as _io
+    from PIL import Image
+    b = _io.BytesIO()
+    Image.new("RGB", (600, 400), cor).save(b, "PNG")
+    return b.getvalue()
+
+
+def test_solicitacao_com_datas_responsavel_e_aviso_na_tela_inicial():
+    import base64
+    import io
+    import sqlite3
+    from datetime import date, timedelta
+    import fotos
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    for login, nome in (("joana.lima", "Joana Lima"), ("pedro", "Pedro Alves")):
+        adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": login, "nome": nome, "senha": "senha-segura-1"})
+    joana = _q("SELECT id FROM usuarios WHERE login='joana.lima'")[0][0]
+    pedro = _q("SELECT id FROM usuarios WHERE login='pedro'")[0][0]
+
+    # fotos do Minha Pauta: casa pelo login (joana.lima) e pelo nome exibido (Pedro Alves)
+    caminho = os.path.join(_tmp, "minha_pauta_fotos.db")
+    db = sqlite3.connect(caminho)
+    db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, nome_display TEXT, foto TEXT)")
+    uri = "data:image/png;base64," + base64.b64encode(_png()).decode()
+    db.execute("INSERT INTO users (username, nome_display, foto) VALUES ('Joana.Lima', 'Joana', ?)", (uri,))
+    db.execute("INSERT INTO users (username, nome_display, foto) VALUES ('pedroa', 'Pedro Alves', ?)", (uri,))
+    db.execute("INSERT INTO users (username, nome_display, foto) VALUES ('outro', 'Sem Conta', 'data:image/png;base64,!!')")
+    db.commit()
+    from sqlalchemy import create_engine
+    with create_engine(f"sqlite:///{caminho}").connect() as cf:
+        assert fotos.sincronizar(cf) == 2
+        assert fotos.sincronizar(cf) == 0                                  # nada mudou
+    img = adm.get(f"/foto/{joana}")
+    assert img.status_code == 200 and img.headers["Content-Type"] == "image/jpeg" and img.data[:2] == b"\xff\xd8"
+    from PIL import Image
+    assert max(Image.open(io.BytesIO(img.data)).size) <= 256                # reduzida
+    assert adm.get("/foto/999999").status_code == 404
+    assert _anonimo().get(f"/foto/{joana}").status_code == 302              # exige login
+    html = adm.get("/usuarios").get_data(as_text=True)
+    assert f'src="/foto/{joana}?v=' in html and f'src="/foto/{pedro}?v=' in html
+
+    # nova solicitação com datas e responsável
+    hoje = date.today()
+    tok = _tok(adm, "/meu/101?secao=solicitacoes")
+    form = adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    assert 'name="data_solicitacao"' in form and 'name="responsavel"' in form and "Joana Lima (joana.lima)" in form
+    r = adm.post("/meu/101?secao=solicitacoes", data={
+        "_csrf": tok, "acao": "nova", "titulo": "Minuta de PDL sobre a portaria", "solicitante": "o deputado",
+        "data_solicitacao": (hoje - timedelta(days=1)).isoformat(), "prazo": (hoje + timedelta(days=3)).isoformat(),
+        "responsavel": "joana.lima"})
+    assert r.status_code == 302
+    sid, ds, resp, por = _q("SELECT id, data_solicitacao, responsavel, atribuido_por FROM solicitacoes "
+                            "WHERE titulo = 'Minuta de PDL sobre a portaria'")[0]
+    assert ds == (hoje - timedelta(days=1)).isoformat() and resp == "joana.lima" and por == "admin"
+    r = adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "nova", "titulo": "X", "responsavel": "ninguem"})
+    assert "usuário ativo" in adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "nova", "titulo": "Datas trocadas",
+                                                  "data_solicitacao": "2026-05-10", "prazo": "2026-05-01"})
+    assert "não pode ser anterior" in adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    assert not _q("SELECT id FROM solicitacoes WHERE titulo IN ('X', 'Datas trocadas')")
+
+    # Joana não tem vínculo com o deputado, mas recebeu a tarefa
+    u = _cliente_usuario("joana.lima", "senha-segura-1")
+    r = u.get("/")
+    inicio = u.get(r.headers["Location"]).get_data(as_text=True)
+    assert 'id="tarefas"' in inicio and "Nova tarefa atribuída a você" in inicio
+    assert "Minuta de PDL sobre a portaria" in inicio and "faltam 3 dias" in inicio
+    assert (hoje + timedelta(days=3)).strftime("%d/%m/%Y") in inicio and "atribuída por" in inicio
+    assert f'src="/foto/{joana}?v=' in inicio                                # foto do usuário
+    assert f"/meu/101?secao=solicitacoes&amp;abrir={sid}" in inicio
+    assert 'class="sino"' in u.get("/rankings").get_data(as_text=True)       # aviso no topo em toda página
+    assert 'id="tarefas"' not in u.get("/rankings").get_data(as_text=True)   # o quadro só na tela inicial
+    assert 'id="tarefas"' not in adm.get("/orientacoes").get_data(as_text=True)  # admin não tem tarefa
+    # acesso limitado às próprias tarefas
+    assert u.get("/meu/101").headers["Location"].endswith("/meu/101?secao=solicitacoes")
+    assert u.get("/meu/101?secao=agenda").status_code == 302
+    assert u.get("/meu/102?secao=solicitacoes").status_code == 403
+    html = u.get(f"/meu/101?secao=solicitacoes&abrir={sid}").get_data(as_text=True)
+    assert "Minuta de PDL sobre a portaria" in html and "Nota técnica sobre" not in html and "Nova solicitação" not in html
+    assert f'id="s{sid}" open' in html and "Suas tarefas" in html
+    assert _q("SELECT visto_em FROM solicitacoes WHERE id = :s", s=sid)[0][0] is not None     # deixou de ser nova
+    assert "Nova tarefa" not in u.get("/orientacoes").get_data(as_text=True)
+    tj = _tok(u, "/meu/101?secao=solicitacoes")
+    assert u.post("/meu/101?secao=solicitacoes", data={"_csrf": tj, "acao": "excluir", "id": sid}).status_code == 403
+    assert u.post("/meu/101?secao=solicitacoes", data={"_csrf": tj, "acao": "nova", "titulo": "y"}).status_code == 403
+    # tenta reatribuir: ignorado; conclui pela troca de status -> data da solução = hoje
+    u.post("/meu/101?secao=solicitacoes", data={"_csrf": tj, "acao": "editar", "id": sid, "responsavel": "pedro",
+                                                "data_solicitacao": ds, "prazo": (hoje + timedelta(days=3)).isoformat()})
+    assert _q("SELECT responsavel FROM solicitacoes WHERE id = :s", s=sid)[0][0] == "joana.lima"
+    r = u.post("/meu/101?secao=solicitacoes", data={"_csrf": tj, "acao": "status", "id": sid, "status": "concluida"})
+    assert r.status_code == 302
+    st, sol = _q("SELECT status, data_solucao FROM solicitacoes WHERE id = :s", s=sid)[0]
+    assert st == "concluida" and sol == hoje.isoformat()
+    assert 'id="tarefas"' not in u.get("/orientacoes").get_data(as_text=True)     # sem pendências
+    html = adm.get(f"/meu/101?secao=solicitacoes&abrir={sid}").get_data(as_text=True)
+    assert "solucionada " + hoje.strftime("%d/%m/%Y") in html and "Joana Lima" in html
+
+    # admin reabre (limpa a solução) e reatribui a Pedro; informar a solução conclui
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "status", "id": sid, "status": "andamento"})
+    assert _q("SELECT data_solucao FROM solicitacoes WHERE id = :s", s=sid)[0][0] is None
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "editar", "id": sid, "responsavel": "pedro",
+                                                  "data_solicitacao": (hoje - timedelta(days=10)).isoformat(),
+                                                  "prazo": (hoje - timedelta(days=2)).isoformat()})
+    resp, visto = _q("SELECT responsavel, visto_em FROM solicitacoes WHERE id = :s", s=sid)[0]
+    assert resp == "pedro" and visto is None
+    p = _cliente_usuario("pedro", "senha-segura-1")
+    inicio = p.get("/orientacoes").get_data(as_text=True)
+    assert "atrasada há 2 dias" in inicio and f'src="/foto/{pedro}?v=' in inicio
+    assert u.get("/meu/101?secao=solicitacoes").status_code == 403           # Joana perdeu a tarefa
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "editar", "id": sid, "responsavel": "pedro",
+                                                  "data_solicitacao": ds, "prazo": (hoje + timedelta(days=1)).isoformat(),
+                                                  "data_solucao": hoje.isoformat()})
+    assert _q("SELECT status FROM solicitacoes WHERE id = :s", s=sid)[0][0] == "concluida"
+
+    # foto enviada pelo admin prevalece e pode ser removida
+    tu = _tok(adm, "/usuarios")
+    r = adm.post("/usuarios", content_type="multipart/form-data", data={
+        "_csrf": tu, "acao": "foto", "id": pedro, "foto": (io.BytesIO(_png((0, 90, 200))), "eu.png")})
+    assert r.status_code == 302
+    assert _q("SELECT origem FROM fotos_usuarios WHERE usuario_id = :u", u=pedro)[0][0] == "painel"
+    with create_engine(f"sqlite:///{caminho}").connect() as cf:
+        fotos.sincronizar(cf)
+    assert _q("SELECT origem FROM fotos_usuarios WHERE usuario_id = :u", u=pedro)[0][0] == "painel"
+    adm.post("/usuarios", content_type="multipart/form-data", data={
+        "_csrf": tu, "acao": "foto", "id": pedro, "foto": (io.BytesIO(b"MZ"), "x.exe")})
+    assert "JPG, PNG" in adm.get("/usuarios").get_data(as_text=True)
+    adm.post("/usuarios", data={"_csrf": tu, "acao": "foto_remover", "id": pedro})
+    assert not _q("SELECT 1 FROM fotos_usuarios WHERE usuario_id = :u", u=pedro)
+    assert 'class="av av-ini' in adm.get("/usuarios").get_data(as_text=True)      # iniciais sem foto
+
+
 def _regimento_falso():
     linhas = []
     for n in range(1, 283):

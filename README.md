@@ -121,7 +121,7 @@ O administrador vê todos os deputados em exercício.
 |---|---|
 | Agenda | Eventos dos órgãos do deputado e sessões do Plenário (API `/eventos`, 7 dias atrás e 45 à frente) + compromissos lançados pela equipe. “Deputado na pauta” = relator de item da pauta |
 | Notificações | Mudanças de situação das proposições e proposições novas, detectadas na coleta diária (guardadas por 180 dias) |
-| Solicitações | Registro com status, prazo e anexos (até 10 MB cada, guardados no banco) |
+| Solicitações | Registro com status, data da solicitação, prazo final, data da solução, responsável (usuário do sistema) e anexos (até 10 MB cada, guardados no banco). Quem recebe a tarefa vê o aviso na tela inicial (com prazo e foto) e acessa as próprias tarefas mesmo sem vínculo com o deputado |
 | Questões de ordem | IA (Claude, API da Anthropic) com base no Regimento Interno da Câmara enviado pelo admin (PDF/TXT) |
 | Radar de notícias | No modelo do Monitor Legislativo: os mesmos portais (RSS, editáveis pelo admin) a cada 2 horas, mais o Google Notícias; entram as notícias que citam o deputado ou um tema cadastrado, e a IA indica relevância, categoria, tipo de ação e ação sugerida. A equipe marca Pendente / Em análise / Ação efetuada |
 | Rankings | Posição entre os deputados em exercício e quanto falta para subir |
@@ -146,3 +146,8 @@ O painel lê o banco do Minha Pauta em modo somente leitura e guarda uma cópia 
 `MINHA_PAUTA_DATABASE_URL` com o endereço do PostgreSQL do Minha Pauta (no mesmo projeto do Railway:
 `${{ NomeDoPostgresDoMinhaPauta.DATABASE_URL }}`; em outro projeto: a `DATABASE_PUBLIC_URL` dele).
 Notas, orientações e ordem continuam sendo editadas no Minha Pauta.
+
+## Fotos dos usuários
+Copiadas do Minha Pauta (tabela `users`, campo `foto`) a cada sincronização do Plenário, casando pelo login
+ou pelo nome exibido; ficam reduzidas a 256 px em `fotos_usuarios`. Em **Usuários** o administrador pode enviar
+outra foto (prevalece sobre a do Minha Pauta) ou removê-la. Sem foto, aparece um círculo com as iniciais.

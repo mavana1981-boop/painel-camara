@@ -160,6 +160,15 @@ usuarios = Table(
     Column("ultimo_acesso", DateTime),
 )
 
+fotos_usuarios = Table(  # fotos dos usuários (copiadas do Minha Pauta ou enviadas aqui); fora de `usuarios`
+    "fotos_usuarios", metadata,  # para não carregar a imagem a cada requisição
+    Column("usuario_id", Integer, primary_key=True),
+    Column("mime", String(40)),
+    Column("conteudo", LargeBinary),
+    Column("origem", String(20)),                # minha_pauta ou painel
+    Column("atualizado_em", DateTime),
+)
+
 # ---------------- Meu Parlamentar ----------------
 
 usuario_deputados = Table(  # quem pode abrir o "Meu Parlamentar" de qual deputado (admin vê todos)
@@ -195,7 +204,13 @@ solicitacoes = Table(
     Column("descricao", Text),
     Column("solicitante", String(120)),          # quem pediu (o deputado, chefe de gabinete...)
     Column("status", String(20)),                # aberta, andamento, concluida, arquivada
-    Column("prazo", String(10)),
+    Column("prazo", String(10)),                 # prazo final (AAAA-MM-DD)
+    Column("data_solicitacao", String(10)),      # quando o pedido foi feito (pode ser anterior ao registro)
+    Column("data_solucao", String(10)),          # quando foi resolvido (preenchida ao concluir)
+    Column("responsavel", String(60), index=True),   # login do usuário encarregado
+    Column("atribuido_por", String(60)),
+    Column("atribuido_em", DateTime),
+    Column("visto_em", DateTime),                # quando o responsável abriu a tarefa (tira o "nova")
     Column("criado_por", String(60)),
     Column("criado_em", DateTime),
     Column("atualizado_em", DateTime),

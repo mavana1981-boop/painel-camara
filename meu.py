@@ -18,7 +18,7 @@ import metrics
 import paineis
 import questoes
 from db import (agenda, anexos, deputados, engine, norm_nome, relatorias, solicitacoes,
-                temas_radar, usuario_deputados)
+                temas_radar, usuario_deputados, usuarios)
 
 log = logging.getLogger("meu")
 bp = Blueprint("meu", __name__, url_prefix="/meu")
@@ -70,11 +70,26 @@ def todos_vinculos():
 
 
 def _exigir_acesso(cod):
-    u = g.get("usuario") or {}
-    if u.get("admin"):
-        return
-    if cod not in vinculos_do_usuario(u.get("id")):
+    if not _acesso_pleno(cod):
         abort(403)
+
+
+def _acesso_pleno(cod):
+    u = g.get("usuario") or {}
+    return bool(u.get("admin")) or cod in vinculos_do_usuario(u.get("id"))
+
+
+def _tem_tarefa(cod, sid=None):
+    """O usuário é responsável por alguma solicitação deste deputado (ou pela solicitação `sid`)?"""
+    login = (g.get("usuario") or {}).get("login")
+    if not login:
+        return False
+    q = select(solicitacoes.c.id).where(solicitacoes.c.codigo_deputado == cod,
+                                        solicitacoes.c.responsavel == login)
+    if sid is not None:
+        q = q.where(solicitacoes.c.id == sid)
+    with engine.connect() as c:
+        return c.execute(q.limit(1)).first() is not None
 
 
 def tem_acesso_menu():
@@ -82,6 +97,30 @@ def tem_acesso_menu():
     if not u:
         return False
     return bool(u.get("admin")) or bool(vinculos_do_usuario(u["id"]))
+
+
+# ---------------- tarefas atribuídas (aviso na tela inicial) ----------------
+
+def tarefas_do_usuario(login, limite=20):
+    """Solicitações abertas ou em andamento atribuídas ao usuário, das mais urgentes para as menos."""
+    if not login:
+        return []
+    with engine.connect() as c:
+        rows = [dict(r) for r in c.execute(
+            select(solicitacoes.c.id, solicitacoes.c.codigo_deputado, solicitacoes.c.titulo, solicitacoes.c.status,
+                   solicitacoes.c.prazo, solicitacoes.c.data_solicitacao, solicitacoes.c.atribuido_por,
+                   solicitacoes.c.atribuido_em, solicitacoes.c.visto_em, deputados.c.nome.label("deputado"))
+            .select_from(solicitacoes.outerjoin(deputados, deputados.c.codigo == solicitacoes.c.codigo_deputado))
+            .where(solicitacoes.c.responsavel == login, solicitacoes.c.status.in_(("aberta", "andamento")))
+        ).mappings()]
+    hoje = agora_brt().date()
+    for t in rows:
+        p = _data(t["prazo"])
+        t["dias"] = (p - hoje).days if p else None
+        t["atrasada"] = t["dias"] is not None and t["dias"] < 0
+        t["nova"] = t["visto_em"] is None
+    rows.sort(key=lambda t: (t["prazo"] is None, t["prazo"] or "", -(t["atribuido_em"] or datetime.min).timestamp()))
+    return rows[:limite]
 
 
 # ---------------- utilitários ----------------
@@ -200,8 +239,10 @@ def remover_compromisso(cod, aid):
 
 # ---------------- solicitações ----------------
 
-def lista_solicitacoes(cod, status=""):
+def lista_solicitacoes(cod, status="", responsavel=None):
     q = select(solicitacoes).where(solicitacoes.c.codigo_deputado == cod)
+    if responsavel:
+        q = q.where(solicitacoes.c.responsavel == responsavel)
     if status:
         q = q.where(solicitacoes.c.status == status)
     with engine.connect() as c:
@@ -215,13 +256,16 @@ def lista_solicitacoes(cod, status=""):
                                .order_by(anexos.c.id)).mappings():
                 anx.setdefault(r["solicitacao_id"], []).append(dict(r))
         contagem = {k: 0 for k, _ in STATUS}
-        for r in c.execute(text("SELECT status, COUNT(*) n FROM solicitacoes WHERE codigo_deputado = :c "
-                                "GROUP BY status"), {"c": cod}):
+        filtro_resp = " AND responsavel = :r" if responsavel else ""
+        for r in c.execute(text("SELECT status, COUNT(*) n FROM solicitacoes WHERE codigo_deputado = :c"
+                                + filtro_resp + " GROUP BY status"), {"c": cod, "r": responsavel}):
             contagem[r[0]] = r[1]
-    hoje = date.today().isoformat()
+    hoje = agora_brt().date().isoformat()
     for i in itens:
         i["anexos"] = anx.get(i["id"], [])
         i["atrasada"] = bool(i["prazo"] and i["prazo"] < hoje and i["status"] in ("aberta", "andamento"))
+        fim = i.get("data_solucao")
+        i["no_prazo"] = (fim <= i["prazo"]) if (fim and i["prazo"]) else None
     return {"itens": itens, "contagem": contagem}
 
 
@@ -250,14 +294,47 @@ def criar_solicitacao(cod, f, arquivos, autor):
     if not titulo:
         raise ValueError("Informe o título da solicitação.")
     agora = datetime.now()
+    datas = _datas_solicitacao(f, padrao_solicitacao=agora_brt().date())
+    resp = _responsavel_valido(f.get("responsavel"))
     with engine.begin() as c:
         sid = c.execute(insert(solicitacoes).values(
             codigo_deputado=cod, titulo=titulo[:200], descricao=(f.get("descricao") or "").strip() or None,
             solicitante=(f.get("solicitante") or "").strip()[:120] or None, status="aberta",
-            prazo=(_data(f.get("prazo")) or None) and _data(f.get("prazo")).isoformat(),
+            prazo=datas["prazo"], data_solicitacao=datas["data_solicitacao"],
+            responsavel=resp, atribuido_por=autor if resp else None, atribuido_em=agora if resp else None,
+            visto_em=agora if resp and resp == autor else None,
             criado_por=autor, criado_em=agora, atualizado_em=agora)).inserted_primary_key[0]
         _guardar_anexos(c, sid, arquivos, autor)
     return sid
+
+
+def _iso(v):
+    d = _data((v or "").strip())
+    return d.isoformat() if d else None
+
+
+def _datas_solicitacao(f, padrao_solicitacao=None):
+    """Data da solicitação, prazo final e data da solução, conferindo a ordem entre elas."""
+    prazo, sol = _iso(f.get("prazo")), _iso(f.get("data_solucao"))
+    ds = _iso(f.get("data_solicitacao"))
+    if not ds and padrao_solicitacao:      # sem data informada: hoje (ou o prazo, se já venceu)
+        ds = min([padrao_solicitacao.isoformat()] + [x for x in (prazo, sol) if x])
+    if ds and prazo and prazo < ds:
+        raise ValueError("O prazo final não pode ser anterior à data da solicitação.")
+    if ds and sol and sol < ds:
+        raise ValueError("A data da solução não pode ser anterior à data da solicitação.")
+    return {"data_solicitacao": ds, "prazo": prazo, "data_solucao": sol}
+
+
+def _responsavel_valido(login):
+    login = (login or "").strip()
+    if not login:
+        return None
+    with engine.connect() as c:
+        ok = c.execute(select(usuarios.c.id).where(usuarios.c.login == login, usuarios.c.ativo.is_(True))).first()
+    if not ok:
+        raise ValueError("Escolha como responsável um usuário ativo do sistema.")
+    return login
 
 
 def _solicitacao_do_deputado(c, cod, sid):
@@ -270,8 +347,32 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
         if not _solicitacao_do_deputado(c, cod, sid):
             abort(404)
         if acao == "status" and f.get("status") in dict(STATUS):
-            c.execute(update(solicitacoes).where(solicitacoes.c.id == sid)
-                      .values(status=f["status"], atualizado_em=datetime.now()))
+            novo = f["status"]
+            atual = c.execute(select(solicitacoes.c.data_solucao, solicitacoes.c.data_solicitacao)
+                              .where(solicitacoes.c.id == sid)).first()
+            valores = {"status": novo, "atualizado_em": datetime.now()}
+            if novo == "concluida" and not atual[0]:
+                hoje = agora_brt().date().isoformat()
+                valores["data_solucao"] = max(hoje, atual[1] or hoje)
+            elif novo in ("aberta", "andamento"):
+                valores["data_solucao"] = None          # reaberta: ainda sem solução
+            c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(**valores))
+        elif acao == "editar":
+            datas = _datas_solicitacao(f)
+            valores = {"atualizado_em": datetime.now(), **datas}
+            if "responsavel" in f:
+                resp = _responsavel_valido(f.get("responsavel"))
+                antes = c.execute(select(solicitacoes.c.responsavel).where(solicitacoes.c.id == sid)).scalar()
+                if resp != antes:
+                    agora = datetime.now()
+                    valores.update(responsavel=resp, atribuido_por=autor if resp else None,
+                                   atribuido_em=agora if resp else None,
+                                   visto_em=agora if resp and resp == autor else None)
+            if datas["data_solucao"]:
+                st = c.execute(select(solicitacoes.c.status).where(solicitacoes.c.id == sid)).scalar()
+                if st in ("aberta", "andamento"):
+                    valores["status"] = "concluida"     # informou a solução: está concluída
+            c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(**valores))
         elif acao == "anexar":
             _guardar_anexos(c, sid, arquivos, autor)
             c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(atualizado_em=datetime.now()))
@@ -500,16 +601,39 @@ def atualizar_em_segundo_plano(cod):
 
 # ---------------- rotas ----------------
 
+TELAS_INICIAIS = {"orientacoes", "meu.inicio"}
+
+
 @bp.app_context_processor
 def _ctx():
-    return {"menu_meu": tem_acesso_menu()}
+    u = g.get("usuario")
+    if not u:
+        return {"menu_meu": False}
+    if "_tarefas" not in g:
+        g._tarefas = tarefas_do_usuario(u.get("login"))
+    ep = request.endpoint or ""
+    inicial = ep in TELAS_INICIAIS or (ep == "meu.painel" and request.args.get("secao", "visao") == "visao")
+    return {"menu_meu": tem_acesso_menu() or bool(g._tarefas), "minhas_tarefas": g._tarefas,
+            "mostrar_tarefas": inicial and request.method == "GET"}
+
+
+def _deputados_com_tarefa(login):
+    with engine.connect() as c:
+        return sorted({r[0] for r in c.execute(select(solicitacoes.c.codigo_deputado)
+                                               .where(solicitacoes.c.responsavel == login))})
 
 
 @bp.route("/")
 def inicio():
     cods = deputados_do_usuario()
     if not cods:
-        abort(403)
+        tarefas = _deputados_com_tarefa(g.usuario.get("login"))
+        if not tarefas:
+            abort(403)
+        if len(tarefas) == 1:
+            return redirect(url_for("meu.painel", cod=tarefas[0], secao="solicitacoes"))
+        lista = [s for s in paineis.lista_deputados() if s["codigo"] in set(tarefas)]
+        return render_template("meu_escolher.html", aba="meu", lista=lista, vinc=set(), so_tarefas=True)
     u = g.usuario
     vinc = vinculos_do_usuario(u["id"])
     if len(vinc) == 1:
@@ -523,19 +647,25 @@ def inicio():
 
 @bp.route("/<int:cod>", methods=["GET", "POST"])
 def painel(cod):
-    _exigir_acesso(cod)
+    pleno = _acesso_pleno(cod)
+    if not pleno and not _tem_tarefa(cod):
+        abort(403)
     s = paineis.deputado(cod)
     if not s:
         abort(404)
     secao = request.args.get("secao", "visao")
     if secao not in dict(SECOES):
         secao = "visao"
+    if not pleno and secao != "solicitacoes":   # quem só recebeu tarefa vê apenas as próprias solicitações
+        return redirect(url_for("meu.painel", cod=cod, secao="solicitacoes"))
     autor = g.usuario.get("login")
     if request.method == "POST":
-        return _post(cod, secao, s, autor)
+        return _post(cod, secao, s, autor, pleno)
     hoje = agora_brt().date()
-    ctx = {"aba": "meu", "s": s, "cod": cod, "secao": secao, "secoes": SECOES, "status": STATUS,
-           "meus": [x for x in paineis.lista_deputados() if x["codigo"] in set(deputados_do_usuario())],
+    meus = set(deputados_do_usuario()) | (set() if pleno else {cod})
+    ctx = {"aba": "meu", "s": s, "cod": cod, "secao": secao, "pleno": pleno, "status": STATUS,
+           "secoes": SECOES if pleno else [x for x in SECOES if x[0] == "solicitacoes"],
+           "meus": [x for x in paineis.lista_deputados() if x["codigo"] in meus],
            "hoje": hoje}
     if secao == "visao":
         ctx["v"] = visao(cod)
@@ -552,7 +682,13 @@ def painel(cod):
         ctx["notif"] = paineis.notificacoes(cod, limite=150)
     elif secao == "solicitacoes":
         ctx["filtro_status"] = request.args.get("status", "")
-        ctx["sol"] = lista_solicitacoes(cod, ctx["filtro_status"])
+        ctx["sol"] = lista_solicitacoes(cod, ctx["filtro_status"], None if pleno else autor)
+        ctx["usuarios_resp"] = __import__("fotos").usuarios_ativos()
+        ctx["abrir"] = request.args.get("abrir", type=int)
+        with engine.begin() as c:     # o responsável abriu a lista: as tarefas dele deixam de ser "novas"
+            c.execute(update(solicitacoes).where(solicitacoes.c.codigo_deputado == cod,
+                                                 solicitacoes.c.responsavel == autor,
+                                                 solicitacoes.c.visto_em.is_(None)).values(visto_em=datetime.now()))
     elif secao == "questoes":
         ctx["hist"] = questoes.historico(cod)
         ctx["ia_ok"] = questoes.configurado()
@@ -578,9 +714,15 @@ def painel(cod):
     return render_template("meu.html", **ctx)
 
 
-def _post(cod, secao, s, autor):
+def _post(cod, secao, s, autor, pleno=True):
     f, destino = request.form, url_for("meu.painel", cod=cod, secao=secao)
     acao = f.get("acao", "")
+    if not pleno:   # responsável sem vínculo: só mexe nas próprias tarefas (status, datas, anexos)
+        if secao != "solicitacoes" or acao not in ("status", "anexar", "editar", "excluir_anexo") \
+                or not _tem_tarefa(cod, f.get("id", type=int)):
+            abort(403)
+        f = f.copy()
+        f.pop("responsavel", None)
     try:
         if acao == "atualizar":
             ok = atualizar_em_segundo_plano(cod)
@@ -594,11 +736,15 @@ def _post(cod, secao, s, autor):
         elif secao == "solicitacoes" and acao == "nova":
             criar_solicitacao(cod, f, request.files.getlist("arquivos"), autor)
             flash("Solicitação registrada.", "ok")
-        elif secao == "solicitacoes" and acao in ("status", "anexar", "excluir", "excluir_anexo"):
-            alterar_solicitacao(cod, f.get("id", type=int), acao, f, request.files.getlist("arquivos"), autor)
+        elif secao == "solicitacoes" and acao in ("status", "anexar", "editar", "excluir", "excluir_anexo"):
+            sid = f.get("id", type=int)
+            alterar_solicitacao(cod, sid, acao, f, request.files.getlist("arquivos"), autor)
             if acao == "anexar":
                 flash("Arquivos anexados.", "ok")
-            destino = url_for("meu.painel", cod=cod, secao=secao, status=request.args.get("status", ""))
+            elif acao == "editar":
+                flash("Solicitação atualizada.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao=secao, status=request.args.get("status", ""),
+                              abrir=sid if acao != "excluir" else None)
         elif secao == "questoes" and acao == "gerar":
             sit = (f.get("situacao") or "").strip()
             if len(sit) < 30:
@@ -662,11 +808,12 @@ def agenda_pdf(cod):
 
 @bp.route("/<int:cod>/anexo/<int:aid>")
 def baixar_anexo(cod, aid):
-    _exigir_acesso(cod)
     with engine.connect() as c:
-        a = c.execute(select(anexos, solicitacoes.c.codigo_deputado)
+        a = c.execute(select(anexos, solicitacoes.c.codigo_deputado, solicitacoes.c.responsavel)
                       .join(solicitacoes, solicitacoes.c.id == anexos.c.solicitacao_id)
                       .where(anexos.c.id == aid)).mappings().first()
+    if not _acesso_pleno(cod) and not (a and a["responsavel"] and a["responsavel"] == g.usuario.get("login")):
+        abort(403)
     if not a or a["codigo_deputado"] != cod:
         abort(404)
     resp = send_file(io.BytesIO(a["conteudo"]), mimetype=a["mime"] or "application/octet-stream",
