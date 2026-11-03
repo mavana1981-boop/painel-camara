@@ -8,7 +8,7 @@ import logging
 import re
 import threading
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from flask import (Blueprint, abort, flash, g, redirect, render_template, request, send_file,
                    url_for)
@@ -109,6 +109,49 @@ def _data(v):
 
 
 # ---------------- agenda ----------------
+
+BRT = timezone(timedelta(hours=-3))          # Brasília (sem horário de verão)
+DIAS_HISTORICO = 60                           # quanto do passado aparece no Histórico
+_SIT_FIM = ("encerrad", "cancelad", "finalizad", "realizad", "adiad", "transferid")
+
+
+def agora_brt():
+    """Data e hora de Brasília (o servidor do Railway roda em UTC)."""
+    return datetime.now(BRT).replace(tzinfo=None)
+
+
+def ja_passou(r, agora=None):
+    """Compromisso que já aconteceu: dia anterior, sessão encerrada/cancelada ou horário já passado.
+    Reuniões e sessões ganham 3 h de tolerância (podem estar em andamento); compromissos da equipe não."""
+    agora = agora or agora_brt()
+    dia, hoje = r.get("data") or "", agora.date().isoformat()
+    if dia != hoje:
+        return dia < hoje
+    sit = (r.get("situacao") or "").lower()
+    if "andamento" in sit:
+        return False
+    if sit.startswith(_SIT_FIM):
+        return True
+    try:
+        inicio = datetime.strptime(f"{dia} {(r.get('hora') or '')[:5]}", "%Y-%m-%d %H:%M")
+    except ValueError:                        # sem horário: fica em "próximos" até o fim do dia
+        return False
+    folga = timedelta(0) if r.get("origem") == "equipe" else timedelta(hours=3)
+    return inicio + folga <= agora
+
+
+def separar_agenda(dias, agora=None):
+    """Divide a agenda (agrupada por dia) em próximos (ordem cronológica) e histórico (mais recente primeiro)."""
+    agora = agora or agora_brt()
+    prox, hist = [], []
+    for d in dias:
+        fut = [e for e in d["itens"] if not ja_passou(e, agora)]
+        pas = [e for e in d["itens"] if ja_passou(e, agora)]
+        if fut:
+            prox.append({"data": d["data"], "itens": fut})
+        if pas:
+            hist.append({"data": d["data"], "itens": pas[::-1]})
+    return prox, hist[::-1]
 
 def agenda_deputado(cod, inicio, fim, so_dele=True):
     s = paineis.deputado(cod) or {}
@@ -423,8 +466,8 @@ def sugestoes(cod, r):
 # ---------------- visão geral ----------------
 
 def visao(cod):
-    hoje = date.today()
-    ag = agenda_deputado(cod, hoje, hoje + timedelta(days=7))
+    hoje = agora_brt().date()
+    ag, _ = separar_agenda(agenda_deputado(cod, hoje, hoje + timedelta(days=7)))
     return {
         "agenda": ag[:4],
         "notif": paineis.notificacoes(cod, limite=6),
@@ -490,7 +533,7 @@ def painel(cod):
     autor = g.usuario.get("login")
     if request.method == "POST":
         return _post(cod, secao, s, autor)
-    hoje = date.today()
+    hoje = agora_brt().date()
     ctx = {"aba": "meu", "s": s, "cod": cod, "secao": secao, "secoes": SECOES, "status": STATUS,
            "meus": [x for x in paineis.lista_deputados() if x["codigo"] in set(deputados_do_usuario())],
            "hoje": hoje}
@@ -498,7 +541,10 @@ def painel(cod):
         ctx["v"] = visao(cod)
     elif secao == "agenda":
         so_dele = request.args.get("todos") != "1"
-        ctx["agenda"] = agenda_deputado(cod, hoje - timedelta(days=7), hoje + timedelta(days=45), so_dele)
+        ctx["agenda"], ctx["historico"] = separar_agenda(
+            agenda_deputado(cod, hoje - timedelta(days=DIAS_HISTORICO), hoje + timedelta(days=45), so_dele))
+        ctx["n_historico"] = sum(len(d["itens"]) for d in ctx["historico"])
+        ctx["dias_historico"] = DIAS_HISTORICO
         ctx["so_dele"] = so_dele
     elif secao == "notificacoes":
         ctx["notif"] = paineis.notificacoes(cod, limite=150)

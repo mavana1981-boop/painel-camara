@@ -681,3 +681,15 @@ td.vinc details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(
   .abas a{padding:6px 9px;font-size:13px}
   .abas a.meu-link{margin-right:0}
 }
+
+/* agenda: histórico do que já passou */
+details.ag-hist{border-top:1px solid var(--linha);margin-top:6px}
+details.ag-hist summary{padding:10px 14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--suave);list-style:none;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+details.ag-hist summary::-webkit-details-marker{display:none}
+details.ag-hist summary::before{content:"▸";transition:transform .15s}
+details.ag-hist[open] summary::before{transform:rotate(90deg)}
+details.ag-hist summary small{font-weight:400}
+details.ag-hist[open] summary{background:#f4f8f5}
+.ag-item.passado{opacity:.62}
+.ag-item.passado .ag-hora{color:var(--suave)}
+.ag-item.passado:hover{opacity:1}

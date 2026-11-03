@@ -594,8 +594,17 @@ def test_agenda_pautas_e_relatorias():
     html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)
     assert "Reunião com prefeitos de SP" in html and "deputado na pauta" in html and "Finanças e Tributação" not in html
     assert "Reunião com prefeitos de SP" not in adm.get("/meu/102?secao=agenda").get_data(as_text=True)
-    aid = _q("SELECT id FROM agenda WHERE origem='equipe'")[0][0]
-    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "remover", "id": aid})
+    # compromisso que já passou vai para o histórico
+    ontem = (meu.agora_brt().date() - timedelta(days=1)).isoformat()
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "novo", "data": ontem, "hora": "09:00",
+                                           "titulo": "Café com a bancada"})
+    html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+    hist = html[html.index('class="ag-hist"'):]
+    assert "Café com a bancada" in hist and "Reunião com prefeitos de SP" not in hist
+    assert "Café com a bancada" not in \
+        adm.get("/meu/101?secao=visao").get_data(as_text=True)
+    for (aid,) in _q("SELECT id FROM agenda WHERE origem='equipe'"):
+        adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "remover", "id": aid})
     assert not _q("SELECT id FROM agenda WHERE origem='equipe'")
 
 
@@ -1050,3 +1059,26 @@ if __name__ == "__main__":
         if nome.startswith("test_"):
             fn()
             print("ok", nome)
+
+
+def test_agenda_historico():
+    """Compromissos que já passaram saem dos próximos e vão para o histórico (mais recente primeiro)."""
+    from datetime import datetime
+    import meu
+    agora = datetime(2026, 11, 3, 15, 0)
+    dias = [
+        {"data": "2026-11-01", "itens": [{"id": 1, "data": "2026-11-01", "hora": "10:00", "origem": "equipe"}]},
+        {"data": "2026-11-03", "itens": [
+            {"id": 2, "data": "2026-11-03", "hora": "09:00", "origem": "equipe"},           # passou
+            {"id": 3, "data": "2026-11-03", "hora": "13:00", "origem": "camara"},           # tolerância de 3 h
+            {"id": 4, "data": "2026-11-03", "hora": "10:00", "origem": "camara"},           # passou (+3 h)
+            {"id": 5, "data": "2026-11-03", "hora": "14:00", "origem": "camara", "situacao": "Encerrada"},
+            {"id": 6, "data": "2026-11-03", "hora": "09:00", "origem": "camara", "situacao": "Em Andamento"},
+            {"id": 7, "data": "2026-11-03", "hora": None, "origem": "equipe"},              # sem hora: fica até o fim do dia
+            {"id": 8, "data": "2026-11-03", "hora": "16:00", "origem": "equipe"}]},
+        {"data": "2026-11-05", "itens": [{"id": 9, "data": "2026-11-05", "hora": "09:00", "origem": "camara"}]},
+    ]
+    prox, hist = meu.separar_agenda(dias, agora)
+    assert [e["id"] for d in prox for e in d["itens"]] == [3, 6, 7, 8, 9]
+    assert [d["data"] for d in hist] == ["2026-11-03", "2026-11-01"]
+    assert sorted(e["id"] for e in hist[0]["itens"]) == [2, 4, 5]

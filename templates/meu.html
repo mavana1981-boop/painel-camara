@@ -8,8 +8,8 @@
 {% set dt = d|isodata %}{% if dt == hoje %}Hoje{% elif (dt - hoje).days == 1 %}Amanhã{% elif (hoje - dt).days == 1 %}Ontem{% else %}{{ dias_semana[dt.weekday()]|capitalize }}{% endif %}, {{ d|data }}
 {%- endmacro %}
 
-{% macro evento(e, compacto=False) -%}
-<div class="ag-item {{ 'equipe' if e.origem == 'equipe' }} {{ 'citado' if e.citado }}">
+{% macro evento(e, compacto=False, passado=False) -%}
+<div class="ag-item {{ 'equipe' if e.origem == 'equipe' }} {{ 'citado' if e.citado }} {{ 'passado' if passado }}">
   <span class="ag-hora">{{ e.hora or '—' }}</span>
   <div class="ag-txt">
     <b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.titulo }}</a>{% else %}{{ e.titulo }}{% endif %}</b>
@@ -119,9 +119,14 @@
     </div>
     <div class="rolagem" style="max-height:none">
     {% for d in agenda %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ evento(e) }}{% endfor %}
-    {% else %}<div class="vazio-msg">Nenhum compromisso entre {{ (hoje|string)|data }} e os próximos 45 dias. A agenda da Câmara é atualizada uma vez por dia.</div>{% endfor %}
+    {% else %}<div class="vazio-msg">Nenhum compromisso pendente entre {{ (hoje|string)|data }} e os próximos 45 dias. A agenda da Câmara é atualizada uma vez por dia.</div>{% endfor %}
     </div>
-    <p class="nota">Reuniões dos órgãos de que o deputado participa (comissões, CPIs, comissões especiais) e sessões do Plenário vêm da API de Dados Abertos da Câmara (7 dias para trás e 45 para a frente). “Deputado na pauta” = ele é relator de um item da pauta ou o nome dele aparece na descrição do evento. A Câmara costuma publicar a pauta completa perto da reunião.</p>
+    <details class="ag-hist"{% if not agenda and historico %} open{% endif %}>
+      <summary>Histórico <small>{{ n_historico }} compromisso{{ 's' if n_historico != 1 }} que já passaram · últimos {{ dias_historico }} dias</small></summary>
+      {% for d in historico %}<div class="ag-dia">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ evento(e, passado=True) }}{% endfor %}
+      {% else %}<div class="vazio-msg">Nenhum compromisso passado nos últimos {{ dias_historico }} dias.</div>{% endfor %}
+    </details>
+    <p class="nota">Reuniões dos órgãos de que o deputado participa (comissões, CPIs, comissões especiais) e sessões do Plenário vêm da API de Dados Abertos da Câmara (45 dias para a frente). O que já passou sai da lista e fica no Histórico. “Deputado na pauta” = ele é relator de um item da pauta ou o nome dele aparece na descrição do evento. A Câmara costuma publicar a pauta completa perto da reunião.</p>
   </div>
   <div class="card neu lado">
     <h2>Novo compromisso <small>lançado pela equipe</small></h2>
