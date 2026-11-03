@@ -386,6 +386,8 @@ def _agendador_diario():
 if os.environ.get("AUTO_CARGA") != "0" and (os.environ.get("RAILWAY_ENVIRONMENT")
                                              or os.environ.get("AUTO_CARGA") == "1"):
     _carga_inicial_em_segundo_plano()
+    import usuarios_mp  # noqa: E402
+    threading.Thread(target=usuarios_mp.importar_se_preciso, daemon=True).start()   # usuários do Minha Pauta (1x)
     if os.environ.get("AUTO_COLETA") != "0":
         threading.Thread(target=_agendador_diario, daemon=True).start()
 

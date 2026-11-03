@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block titulo %}Usuários{% endblock %}
 {% block conteudo %}
+<form method="post" class="card neu imp-mp" style="margin-bottom:14px"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="acao" value="importar_mp">
+  <div><b>Usuários do Minha Pauta</b><small>Cria quem falta com o mesmo login, nome, senha e foto do app de Plenário; atualiza nome e senha de quem já existe. Só {{ admins_painel|join(', ') }} fica como administrador.{% if importado_em %} Última importação: {{ importado_em|data }}.{% endif %}</small></div>
+  <button class="btn" onclick="return confirm('Importar os usuários do Minha Pauta agora?')">Importar do Minha Pauta</button>
+</form>
 <p class="nota" style="margin:0 0 10px">As fotos vêm do app Minha Pauta (mesmo usuário ou mesmo nome) a cada sincronização do Plenário. Uma foto enviada aqui prevalece; o “×” volta a usar a do Minha Pauta.</p>
 <div class="card neu" style="margin-bottom:14px">
   <h2>Novo usuário</h2>

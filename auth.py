@@ -11,7 +11,9 @@ from functools import wraps
 from flask import (Blueprint, abort, flash, g, redirect, render_template, request, session,
                    url_for)
 from sqlalchemy import delete, func, insert, select, update
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash  # noqa: F401
+
+import usuarios_mp
 
 from db import engine, usuarios
 
@@ -165,8 +167,10 @@ def login():
         else:
             with engine.connect() as c:
                 u = c.execute(select(usuarios).where(usuarios.c.login == login_)).mappings().first()
-            if u and u["ativo"] and check_password_hash(u["senha_hash"], senha):
+            if u and u["ativo"] and usuarios_mp.senha_confere(u["senha_hash"], senha):
                 _falhas.pop(chave, None)
+                u = dict(u)
+                u["senha_hash"] = usuarios_mp.rehash_se_preciso(u["id"], u["senha_hash"], senha)
                 session.clear()
                 session["uid"] = u["id"]
                 session["ver"] = _versao(u)
@@ -192,7 +196,7 @@ def conta():
     if request.method == "POST":
         u = g.usuario
         atual, nova, conf = (request.form.get(k) or "" for k in ("atual", "nova", "confirma"))
-        if not check_password_hash(u["senha_hash"], atual):
+        if not usuarios_mp.senha_confere(u["senha_hash"], atual):
             flash("Senha atual incorreta.", "erro")
         elif len(nova) < SENHA_MIN:
             flash(f"A nova senha precisa ter ao menos {SENHA_MIN} caracteres.", "erro")
@@ -249,6 +253,15 @@ def gerenciar():
                 c.execute(delete(fotos_usuarios).where(fotos_usuarios.c.usuario_id == uid))
                 c.execute(delete(usuarios).where(usuarios.c.id == uid))
                 flash("Usuário excluído.", "ok")
+        if acao == "importar_mp":
+            try:
+                r = usuarios_mp.importar()
+                flash(f"Minha Pauta: {len(r['criados'])} usuário(s) criado(s), {len(r['atualizados'])} atualizado(s)."
+                      + (f" Administrador: {', '.join(r['admins'])}." if r["admins"] else
+                         " Nenhum dos administradores previstos foi encontrado; administradores mantidos."), "ok")
+            except Exception as e:
+                import plenario
+                flash(plenario.explicar_erro(e) if not isinstance(e, ValueError) else str(e), "erro")
         if acao in ("foto", "foto_remover") and uid:
             import fotos
             try:
@@ -280,5 +293,9 @@ def gerenciar():
     from db import fotos_usuarios
     with engine.connect() as c:
         fotos_origem = {r[0]: r[1] for r in c.execute(select(fotos_usuarios.c.usuario_id, fotos_usuarios.c.origem))}
+    from db import meta
+    with engine.connect() as c:
+        importado_em = c.execute(select(meta.c.valor).where(meta.c.chave == usuarios_mp.MARCA)).scalar()
     return render_template("usuarios.html", aba=None, lista=lista, vinculos=meu.todos_vinculos(), fotos_origem=fotos_origem,
+                           admins_painel=usuarios_mp.admins_do_painel(), importado_em=importado_em,
                            deputados=paineis.lista_deputados())

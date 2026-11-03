@@ -151,3 +151,9 @@ Notas, orientações e ordem continuam sendo editadas no Minha Pauta.
 Copiadas do Minha Pauta (tabela `users`, campo `foto`) a cada sincronização do Plenário, casando pelo login
 ou pelo nome exibido; ficam reduzidas a 256 px em `fotos_usuarios`. Em **Usuários** o administrador pode enviar
 outra foto (prevalece sobre a do Minha Pauta) ou removê-la. Sem foto, aparece um círculo com as iniciais.
+
+## Usuários do Minha Pauta
+Na primeira subida com `MINHA_PAUTA_DATABASE_URL` configurada, o painel importa os usuários do app de Plenário
+(mesmo login em minúsculas, nome, senha e foto). As senhas vêm como hash bcrypt e continuam valendo; no primeiro
+login certo viram o hash do painel. Depois da importação só os logins de `ADMINS_PAINEL` (padrão `marcelo.uvara`)
+ficam como administradores — se nenhum deles existir, nada muda. Para repetir: Usuários → **Importar do Minha Pauta**.

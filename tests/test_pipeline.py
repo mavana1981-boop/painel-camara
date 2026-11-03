@@ -1361,11 +1361,6 @@ def test_atualizar_agora_e_etapa_diaria():
         time.sleep(0.05)
 
 
-if __name__ == "__main__":
-    for nome, fn in list(globals().items()):
-        if nome.startswith("test_"):
-            fn()
-            print("ok", nome)
 
 
 def test_agenda_historico():
@@ -1415,3 +1410,79 @@ def test_agenda_pdf():
     r = adm.get("/meu/101/agenda.pdf?periodo=intervalo&de=2026-01-01")
     assert r.status_code == 302
     assert "Imprimir agenda" in adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+
+
+def test_importa_usuarios_do_minha_pauta():
+    import base64
+    import sqlite3
+    import bcrypt
+    import usuarios_mp
+    from sqlalchemy import create_engine
+    caminho = os.path.join(_tmp, "minha_pauta_usuarios.db")
+    db = sqlite3.connect(caminho)
+    db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT, "
+               "categoria TEXT, foto TEXT, nome_display TEXT, responsavel_pauta INTEGER)")
+    h = lambda s: bcrypt.hashpw(s.encode(), bcrypt.gensalt(4)).decode()
+    foto = "data:image/png;base64," + base64.b64encode(_png((10, 80, 160))).decode()
+    db.executemany("INSERT INTO users (username, password, role, categoria, foto, nome_display) VALUES (?,?,?,?,?,?)", [
+        ("admin", h("senha-do-mp"), "Admin", "geral", None, "Admin"),
+        ("marcelo.uvara", h("marcelo123"), "Admin", "geral", foto, "Marcelo Uvara"),
+        ("Luisa.Marreco", h("luisa123"), "Assessor", "minoria", foto, "Luisa Marreco"),
+        ("PL", h("123"), "Assessor", "restrito", None, "Orientação"),
+    ])
+    db.commit()
+    adm = _cliente()
+    with create_engine(f"sqlite:///{caminho}").connect() as cf:
+        r = usuarios_mp.importar(cf)
+    assert {"marcelo.uvara", "luisa.marreco", "pl"} <= set(r["criados"]) and r["admins"] == ["marcelo.uvara"]
+    assert "admin" in r["atualizados"]
+    adms = {x[0] for x in _q("SELECT login FROM usuarios WHERE admin")}
+    assert adms == {"marcelo.uvara"}                                       # só Marcelo é administrador
+    nome, = _q("SELECT nome FROM usuarios WHERE login='luisa.marreco'")[0]
+    assert nome == "Luisa Marreco"
+    lid = _q("SELECT id FROM usuarios WHERE login='luisa.marreco'")[0][0]
+    assert _q("SELECT origem FROM fotos_usuarios WHERE usuario_id = :u", u=lid)[0][0] == "minha_pauta"
+    # login com a senha do Minha Pauta (bcrypt), que vira o hash do painel no 1º acesso
+    u = _cliente_usuario("Luisa.Marreco", "luisa123")
+    assert u.get("/orientacoes").status_code == 200
+    assert _q("SELECT senha_hash FROM usuarios WHERE id = :u", u=lid)[0][0].startswith(("scrypt:", "pbkdf2:"))
+    assert u.get("/orientacoes").status_code == 200                         # sessão continua após o rehash
+    assert _cliente_usuario("luisa.marreco", "luisa123").get("/usuarios").status_code == 403  # não é admin
+    m = _cliente_usuario("marcelo.uvara", "marcelo123")
+    html = m.get("/usuarios").get_data(as_text=True)
+    assert "Importar do Minha Pauta" in html and "Só marcelo.uvara fica como administrador" in html
+    c = _anonimo()
+    tok = re.search(r'name="_csrf" value="([^"]+)"', c.get("/login").get_data(as_text=True)).group(1)
+    assert c.post("/login", data={"_csrf": tok, "login": "luisa.marreco", "senha": "errada"}).status_code == 200
+    # reimportar não troca a senha que já foi convertida, a menos que mude no Minha Pauta
+    with create_engine(f"sqlite:///{caminho}").connect() as cf:
+        r2 = usuarios_mp.importar(cf)
+    assert "luisa.marreco" not in r2["atualizados"]
+    assert _cliente_usuario("luisa.marreco", "luisa123")
+    db.execute("UPDATE users SET password = ? WHERE username = 'Luisa.Marreco'", (h("nova-senha-1"),))
+    db.commit()
+    with create_engine(f"sqlite:///{caminho}").connect() as cf:
+        assert "luisa.marreco" in usuarios_mp.importar(cf)["atualizados"]
+    assert _cliente_usuario("luisa.marreco", "nova-senha-1")
+    assert usuarios_mp.ja_importou() and usuarios_mp.importar_se_preciso() is None
+    # sem nenhum dos administradores previstos, ninguém perde o acesso
+    os.environ["ADMINS_PAINEL"] = "fulano.inexistente"
+    try:
+        with create_engine(f"sqlite:///{caminho}").connect() as cf:
+            assert usuarios_mp.importar(cf)["admins"] == []
+        assert {x[0] for x in _q("SELECT login FROM usuarios WHERE admin")} == {"marcelo.uvara"}
+    finally:
+        os.environ.pop("ADMINS_PAINEL", None)
+    # devolve o admin dos testes
+    with engine.begin() as cx:
+        cx.execute(text("UPDATE usuarios SET admin = :t WHERE login = 'admin'"), {"t": True})
+        from werkzeug.security import generate_password_hash
+        cx.execute(text("UPDATE usuarios SET senha_hash = :h WHERE login = 'admin'"),
+                   {"h": generate_password_hash("senha-de-teste-123")})
+
+
+if __name__ == "__main__":
+    for nome, fn in list(globals().items()):
+        if nome.startswith("test_"):
+            fn()
+            print("ok", nome)
