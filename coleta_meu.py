@@ -13,6 +13,7 @@ Roda na atualização diária (depois das etapas principais) e também sob deman
   só para deputados com pelo menos um usuário vinculado.
 """
 import logging
+import json
 import os
 import re
 from datetime import date, datetime, timedelta
@@ -36,6 +37,13 @@ def _data_hora(v):
     if not m:
         return None, None
     return m[1], (f"{m[2]}:{m[3]}" if m[2] else None)
+
+
+def _int_ou_none(v):
+    try:
+        return int(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _ident(p):
@@ -77,12 +85,21 @@ def parse_evento(ev, pauta=None):
         titulo = " · ".join(x for x in (nome, tipo) if x) or "Evento"
     lc = ev.get("localCamara") or {}
     local = (lc.get("nome") if isinstance(lc, dict) else None) or ev.get("localExterno")
-    partes, relatores = [], set()
+    partes, relatores, estruturados = [], set(), []
     for it in pauta or []:
         ident = _ident(it.get("proposicao_")) or (it.get("titulo") or "").strip()
         if not ident:
             continue
         rel = it.get("relator") if isinstance(it.get("relator"), dict) else None
+        prop = it.get("proposicao_") if isinstance(it.get("proposicao_"), dict) else {}
+        relac = it.get("proposicaoRelacionada_") if isinstance(it.get("proposicaoRelacionada_"), dict) else {}
+        estruturados.append({
+            "ident": ident, "id": _int_ou_none(prop.get("id")),
+            "ementa": re.sub(r"\s+", " ", prop.get("ementa") or "").strip()[:500] or None,
+            "relator": (rel or {}).get("nome"), "relator_id": _int_ou_none((rel or {}).get("id")),
+            "situacao": (it.get("situacaoItem") or "").strip() or None,
+            "rel_ident": _ident(relac), "rel_id": _int_ou_none(relac.get("id")),
+            "rel_ementa": re.sub(r"\s+", " ", relac.get("ementa") or "").strip()[:500] or None})
         txt = ident
         if rel and rel.get("nome"):
             txt += f" (relator: {rel['nome']}" + (f", {rel.get('siglaPartido')}-{rel.get('siglaUf')}"
@@ -99,6 +116,7 @@ def parse_evento(ev, pauta=None):
         "situacao": ((ev.get("situacao") or "").strip() or None) and ev["situacao"].strip()[:80],
         "descricao": desc[:1800] or None,
         "relatores": ("," + ",".join(str(r) for r in sorted(relatores)) + ",") if relatores else None,
+        "itens_pauta": json.dumps(estruturados, ensure_ascii=False) if estruturados else None,
         "url": f"https://www.camara.leg.br/evento-legislativo/{ev['id']}",
     }
 

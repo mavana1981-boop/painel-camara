@@ -16,8 +16,15 @@
     <div class="ag-meta">
       {% if e.origem == 'equipe' %}<span class="ag-tag eq">equipe</span>{% elif e.colegiado == 'PLEN' %}<span class="ag-tag pl">Plenário</span>{% elif e.colegiado %}<span class="ag-tag">{{ e.colegiado }}</span>{% endif %}
       {% if e.citado %}<span class="ag-tag cit">deputado na pauta</span>{% endif %}
+      {% if e.alertas %}<span class="ag-tag alerta">⚠ tema sensível</span>{% endif %}
       {% if e.local %}{{ e.local }}{% endif %}{% if e.situacao %} · {{ e.situacao }}{% endif %}
     </div>
+    {% if e.na_pauta %}<div class="ag-aviso pauta">{% for p in e.na_pauta %}
+      <div><b>{{ 'Deputado é ' + p.papel if p.ident else ('Deputado na pauta' if p.papel != 'relator' else 'Deputado é relator de item da pauta') }}{% if p.ident %}: {{ p.ident }}{% endif %}</b>{% if p.situacao and not compacto %} <small>· {{ p.situacao }}</small>{% endif %}
+        {% if p.ementa and not compacto %}<span>{{ p.ementa }}</span>{% endif %}</div>{% endfor %}</div>{% endif %}
+    {% if e.alertas %}<div class="ag-aviso sensivel">{% for a in e.alertas %}
+      <div><b>⚠ {{ a.termos|join(', ') }}</b>{% if a.ident %} — {{ a.ident }}{% endif %}
+        {% if a.ementa and not compacto %}<span>{{ a.ementa }}</span>{% endif %}</div>{% endfor %}</div>{% endif %}
     {% if e.descricao and not compacto %}<div class="ag-desc">{{ e.descricao }}</div>{% endif %}
   </div>
   {% if e.origem == 'equipe' and not compacto %}
@@ -141,6 +148,12 @@
         <button class="mini">Salvar como padrão</button></form>
       {% else %}<small class="ag-padrao">✓ seu padrão</small>{% endif %}
     </div>
+    {% set fut = agenda|sum(attribute='itens', start=[]) %}
+    {% set n_pauta = fut|selectattr('na_pauta')|list|length %}{% set n_sens = fut|selectattr('alertas')|list|length %}
+    {% if n_pauta or n_sens %}<div class="ag-resumo-alertas">
+      {% if n_pauta %}<span class="cit">Deputado na pauta em <b>{{ n_pauta }}</b> evento{{ 's' if n_pauta != 1 }}</span>{% endif %}
+      {% if n_sens %}<span class="sens">⚠ Temas sensíveis em <b>{{ n_sens }}</b> evento{{ 's' if n_sens != 1 }}</span>{% endif %}
+      <small>nos próximos 45 dias</small></div>{% endif %}
     <div class="rolagem" style="max-height:none">
     {% for d in agenda %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ evento(e) }}{% endfor %}
     {% else %}<div class="vazio-msg">Nenhum compromisso pendente entre {{ (hoje|string)|data }} e os próximos 45 dias. A agenda da Câmara é atualizada uma vez por dia.</div>{% endfor %}
@@ -182,6 +195,15 @@
     </script>
     <form method="post" class="meu-form" style="border-top:1px solid var(--linha)"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="atualizar">
       <button class="btn sec com-ic">{{ ic("refresh") }} Atualizar agenda e radar agora</button></form>
+    <div class="termos-alerta">
+      <h3>⚠ Termos sensíveis <small>{{ termos_alerta|length }} · lista da equipe</small></h3>
+      <p>Procurados nas ementas das pautas. Casa pelo começo da palavra, sem acento (“misogin” pega misoginia e misógino).</p>
+      <details><summary>Ver e editar a lista</summary>
+        <div class="chips">{% for t in termos_alerta %}<form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="termo_del"><input type="hidden" name="termo" value="{{ t }}"><span class="chip">{{ t }}<button title="Remover {{ t }}">×</button></span></form>{% endfor %}</div>
+      </details>
+      <form method="post" class="termo-add"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="termo_add">
+        <input name="termo" maxlength="80" placeholder="Novo termo (ex.: vacinação obrigatória)" required><button class="mini">Incluir</button></form>
+    </div>
   </div>
 </section>
 {% endif %}

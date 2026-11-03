@@ -261,6 +261,7 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
         "tit": ParagraphStyle("tit", fontName="Helvetica-Bold", fontSize=13, leading=16.5, textColor=TEXTO),
         "meta": ParagraphStyle("meta", fontName="Helvetica", fontSize=11, leading=14.5, textColor=META),
         "desc": ParagraphStyle("desc", fontName="Helvetica", fontSize=10.5, leading=14, textColor=colors.HexColor("#333d45")),
+        "aviso": ParagraphStyle("aviso", fontName="Helvetica", fontSize=10.5, leading=14),
         "vazio": ParagraphStyle("vazio", fontName="Helvetica-Oblique", fontSize=11.5, leading=15, textColor=SUAVE),
         "resumo": ParagraphStyle("resumo", fontName="Helvetica", fontSize=11.5, leading=15, textColor=META),
     }
@@ -328,6 +329,17 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
             cel = [Paragraph(_p(e.get("titulo")), st["tit"])]
             if tags:
                 cel.append(Paragraph("  ·  ".join(tags), st["meta"]))
+            for p in e.get("na_pauta") or []:
+                txt = (f"Deputado é {p['papel']}: <b>{_p(p['ident'])}</b>" if p.get("ident")
+                       else ("Deputado é relator de item da pauta" if p.get("papel") == "relator" else "Deputado citado no evento"))
+                if p.get("ementa"):
+                    txt += f" — {_p(p['ementa'])}"
+                cel.append(Spacer(1, 1 * mm))
+                cel.append(Paragraph(f'<font color="#9b2c2c">▶ {txt}</font>', st["aviso"]))
+            for a in e.get("alertas") or []:
+                txt = f"<b>Tema sensível: {_p(', '.join(a['termos']))}</b>" + (f" — {_p(a['ident'])}" if a.get("ident") else "")
+                cel.append(Spacer(1, 1 * mm))
+                cel.append(Paragraph(f'<font color="#8a4b00">⚠ {txt}</font>', st["aviso"]))
             if com_descricao and e.get("descricao"):
                 d = " ".join(str(e["descricao"]).split())
                 d = d if len(d) <= 900 else d[:900].rsplit(" ", 1)[0] + "…"

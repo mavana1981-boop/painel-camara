@@ -886,6 +886,62 @@ def test_solicitacao_concluida_vai_para_clipping_e_relatorio():
     assert _anonimo().get(f"/meu/101/realizacoes.pdf").status_code == 302
 
 
+def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
+    import io
+    from datetime import date, timedelta
+    from pypdf import PdfReader
+    import alertas
+    import coleta_meu
+    from db import agenda, autorias, processos
+    from sqlalchemy import insert as ins, delete as dele
+    dia = (date.today() + timedelta(days=3)).isoformat()
+    with engine.begin() as c:
+        c.execute(ins(processos).values(id=7700001, identificacao="PL 900/2026", sigla="PL"))
+        c.execute(ins(autorias).values(processo_id=7700001, codigo_deputado=101, principal=True))
+    ev = coleta_meu.parse_evento(_evento(880001, dia, "10:00", "PLEN", "Sessão Deliberativa Extraordinária"), [
+        _item_pauta(1, 7700002, "PL", 321, 2026, relator=(101, "Ana Oposição", "PL", "SP"),
+                    ementa="Altera o Código de Trânsito."),
+        _item_pauta(2, 7700001, "PL", 900, 2026, ementa="Institui o programa de hortas comunitárias."),
+        _item_pauta(3, 7700003, "PL", 55, 2026, ementa="Dispõe sobre a igualdade de GÊNEROS nas escolas e combate à misoginia."),
+    ])
+    req = _item_pauta(4, 7700004, "REQ", 12, 2026, ementa="Requer urgência para o PL 77/2026.")
+    req["proposicaoRelacionada_"] = {"id": 7700005, "siglaTipo": "PL", "numero": 77, "ano": 2026,
+                                     "ementa": "Descriminaliza o porte de maconha para uso pessoal."}
+    ev2 = coleta_meu.parse_evento(_evento(880002, dia, "14:00", "CCJC", "Reunião Deliberativa"), [req])
+    with engine.begin() as c:
+        c.execute(dele(agenda).where(agenda.c.chave.in_(["E880001", "E880002"])))
+        for e in (ev, ev2):
+            c.execute(ins(agenda).values(**e, codigo_deputado=None))
+    assert len(json.loads(ev["itens_pauta"])) == 3
+
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=agenda&todos=1&solenes=mostrar").get_data(as_text=True)
+    assert "Deputado é relator: PL 321/2026" in html and "Deputado é autor: PL 900/2026" in html
+    assert "Institui o programa de hortas comunitárias." in html
+    assert "⚠ gênero, misoginia</b> — PL 55/2026" in html
+    assert "⚠ maconha</b> — REQ 12/2026 (sobre o PL 77/2026)" in html and "Descriminaliza o porte" in html
+    assert "Deputado na pauta em <b>" in html and "Temas sensíveis em <b>" in html
+    # lista de termos editável
+    tok = _tok(adm, "/meu/101?secao=agenda")
+    assert "Termos sensíveis" in html and "ideologia de gênero" in html
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "termo_add", "termo": "Código de Trânsito"})
+    assert "Código de Trânsito" in alertas.termos()
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "termo_add", "termo": "codigo de transito"})
+    assert "já está na lista" in adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+    html = adm.get("/meu/101?secao=agenda&todos=1").get_data(as_text=True)
+    assert "⚠ Código de Trânsito</b> — PL 321/2026" in html
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "termo_del", "termo": "Código de Trânsito"})
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "termo_del", "termo": "maconha"})
+    assert "maconha" not in alertas.termos()
+    regras = alertas.compilar(["misogin", "drogas"])
+    assert alertas.achar("Combate ao discurso misógino", regras) == ["misogin"]
+    assert alertas.achar("Fiscalização de drogarias", alertas.compilar(["drogas"])) == []
+    # PDF traz os avisos
+    pdf = adm.get(f"/meu/101/agenda.pdf?periodo=data&de={dia}&todos=1")
+    texto = " ".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.data)).pages)
+    assert "Deputado é relator" in texto and "PL 321/2026" in texto and "Tema sensível" in texto
+
+
 def _regimento_falso():
     linhas = []
     for n in range(1, 283):

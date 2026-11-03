@@ -822,3 +822,29 @@ details.nt-prop>summary{list-style:none;cursor:pointer;display:flex;gap:10px;ali
 .sol-realizado span{display:flex;gap:5px;align-items:center;font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;color:#8a6d22;margin-bottom:3px}
 .sol-realizado span .ic{width:13px;height:13px}
 .sol-realizado div{white-space:pre-wrap}
+
+/* agenda: alertas */
+.ag-tag.alerta{background:#fff1dc;color:#8a4b00}
+.ag-aviso{margin-top:6px;border-radius:7px;padding:6px 9px;font-size:12.5px;display:flex;flex-direction:column;gap:5px}
+.ag-aviso div b{font-weight:700}
+.ag-aviso span{display:block;color:var(--suave);font-size:12px;margin-top:1px}
+.ag-aviso small{color:var(--suave)}
+.ag-aviso.pauta{background:#fdf0ef;border-left:3px solid #b03021}.ag-aviso.pauta b{color:#9b2c2c}
+.ag-aviso.sensivel{background:#fff6e8;border-left:3px solid #e08a00}.ag-aviso.sensivel b{color:#8a4b00}
+.ag-item.citado,.ag-item:has(.ag-aviso.sensivel){background:#fffdf8}
+.ag-resumo-alertas{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:8px 14px;border-bottom:1px solid var(--linha);font-size:13px}
+.ag-resumo-alertas span{border-radius:20px;padding:3px 10px}
+.ag-resumo-alertas .cit{background:#fdf0ef;color:#9b2c2c}
+.ag-resumo-alertas .sens{background:#fff1dc;color:#8a4b00}
+.ag-resumo-alertas small{color:var(--suave)}
+.termos-alerta{border-top:1px solid var(--linha);padding:12px 14px;font-size:13px}
+.termos-alerta h3{margin:0 0 4px;font-size:14px;color:#8a4b00}
+.termos-alerta h3 small{font-weight:400;color:var(--suave);font-size:12px}
+.termos-alerta p{margin:0 0 6px;color:var(--suave);font-size:12px}
+.termos-alerta summary{cursor:pointer;color:var(--pri);font-weight:600;font-size:12px;margin-bottom:6px}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.chips form{margin:0}
+.chip{display:inline-flex;align-items:center;gap:3px;background:#fff6e8;border:1px solid #f1d9b0;color:#6b3d00;border-radius:14px;padding:2px 4px 2px 9px;font-size:12px}
+.chip button{border:0;background:none;color:#a0642a;cursor:pointer;font-size:14px;line-height:1;padding:0 3px}
+.termo-add{display:flex;gap:6px}
+.termo-add input{flex:1;font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--linha);border-radius:6px}

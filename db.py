@@ -161,6 +161,14 @@ usuarios = Table(
     Column("preferencias", Text),                # JSON: escolhas salvas como padrão (ex.: ocultar sessões solenes)
 )
 
+termos_alerta = Table(  # termos sensíveis para a Oposição procurados nas pautas da agenda (lista da equipe)
+    "termos_alerta", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("termo", String(80)),
+    Column("criado_por", String(60)),
+    Column("criado_em", DateTime),
+)
+
 fotos_usuarios = Table(  # fotos dos usuários (copiadas do Minha Pauta ou enviadas aqui); fora de `usuarios`
     "fotos_usuarios", metadata,  # para não carregar a imagem a cada requisição
     Column("usuario_id", Integer, primary_key=True),
@@ -192,6 +200,7 @@ agenda = Table(  # agenda pública da Câmara (codigo_deputado nulo) e compromis
     Column("situacao", String(80)),
     Column("descricao", Text),                   # pauta (texto) ou observação da equipe
     Column("relatores", Text),                   # ",101,204," — relatores de itens da pauta
+    Column("itens_pauta", Text),                 # JSON: itens da pauta (proposição, ementa, relator) p/ alertas
     Column("url", String(300)),
     Column("criado_por", String(60)),
     Column("criado_em", DateTime),

@@ -237,12 +237,13 @@ def agenda_deputado(cod, inicio, fim, so_dele=True, sem_solenes=False):
             agenda.c.data >= inicio.isoformat(), agenda.c.data <= fim.isoformat(),
             or_(and_(agenda.c.origem == "camara", agenda.c.codigo_deputado.is_(None)),
                 agenda.c.codigo_deputado == cod)).order_by(agenda.c.data, agenda.c.hora, agenda.c.id)).mappings()]
+    import alertas
     nome = norm_nome(s.get("nome") or "")
+    regras, autorias_cod = alertas.compilar(), alertas.autorias_do(cod)
     out = []
     for r in rows:
-        desc = norm_nome(r.get("descricao") or "")
-        # relator de item da pauta (pelo código) ou nome citado no texto do evento
-        r["citado"] = f",{cod}," in (r.get("relatores") or "") or (bool(nome) and f" {nome} " in f" {desc} ")
+        # deputado na pauta (relator ou autor do item, ou nome citado) e termos sensíveis
+        alertas.analisar(r, cod, nome, autorias_cod, regras)
         r["membro"] = r["origem"] == "equipe" or (r.get("colegiado") or "") in cols
         if so_dele and not (r["membro"] or r["citado"]):
             continue
@@ -828,6 +829,7 @@ def painel(cod):
             futuras = separar_agenda(agenda_deputado(cod, ini_ag, fim_ag, so_dele))[0]
             ctx["n_solenes"] = sum(1 for d in futuras for e in d["itens"] if e["origem"] != "equipe" and eh_solene(e))
         ctx["ocultar_solenes"] = ocultar
+        ctx["termos_alerta"] = __import__("alertas").termos()
         ctx["padrao_solenes"] = bool(pref("agenda_ocultar_solenes", False))
         ctx["n_historico"] = sum(len(d["itens"]) for d in ctx["historico"])
         ctx["dias_historico"] = DIAS_HISTORICO
@@ -901,6 +903,14 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "agenda" and acao == "novo":
             adicionar_compromisso(cod, f, autor)
             flash("Compromisso incluído na agenda.", "ok")
+        elif secao == "agenda" and acao in ("termo_add", "termo_del"):
+            import alertas
+            if acao == "termo_add":
+                alertas.adicionar(f.get("termo"), autor)
+                flash(f"Termo “{f.get('termo', '').strip()}” incluído nos alertas da agenda.", "ok")
+            else:
+                alertas.remover(f.get("termo"))
+                flash(f"Termo “{f.get('termo')}” removido.", "ok")
         elif secao == "agenda" and acao == "remover":
             remover_compromisso(cod, f.get("id", type=int))
         elif secao == "solicitacoes" and acao == "nova":
