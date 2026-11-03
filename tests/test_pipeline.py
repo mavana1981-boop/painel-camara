@@ -768,6 +768,75 @@ def test_solicitacao_com_datas_responsavel_e_aviso_na_tela_inicial():
     assert 'class="av av-ini' in adm.get("/usuarios").get_data(as_text=True)      # iniciais sem foto
 
 
+def test_agenda_oculta_solenes_e_notificacoes_agrupadas():
+    from datetime import date, datetime, timedelta
+    import meu
+    from db import agenda, notificacoes, processos
+    from sqlalchemy import insert as ins, delete as dele
+    hoje = date.today()
+    with engine.begin() as c:
+        c.execute(ins(agenda).values(origem="camara", chave="SOL1", data=(hoje + timedelta(days=1)).isoformat(), hora="10:00",
+                                     titulo="Plenário · Sessão Não Deliberativa Solene", colegiado="PLEN",
+                                     descricao="Homenagem aos 50 anos de X"))
+        c.execute(ins(agenda).values(origem="camara", chave="DEL1", data=(hoje + timedelta(days=1)).isoformat(), hora="14:00",
+                                     titulo="Plenário · Sessão Deliberativa Extraordinária", colegiado="PLEN"))
+        c.execute(ins(agenda).values(origem="equipe", codigo_deputado=101, data=(hoje + timedelta(days=2)).isoformat(),
+                                     titulo="Reunião sobre a sessão solene", criado_por="admin"))
+        c.execute(dele(notificacoes))
+        for pid, ident, sigla, tipo in ((9001, "REQ 10/2026", "REQ", "Requerimento de Urgência (Art. 155 do RICD)"),
+                                        (9002, "REQ 11/2026", "REQ", "Requerimento de Urgência (Art. 155 do RICD)"),
+                                        (9003, "RIC 5/2026", "RIC", "Requerimento de Informação"),
+                                        (9004, "PL 77/2026", "PL", None)):
+            c.execute(ins(processos).values(id=pid, identificacao=ident, sigla=sigla, tipo_documento=tipo,
+                                            ementa=f"Ementa de {ident}", url=f"https://camara.leg.br/{pid}"))
+        agora = datetime.now()
+        for pid, ident, ant, nova, dias in ((9001, "REQ 10/2026", "Aguardando Despacho", "Aguardando Deliberação", 1),
+                                            (9001, "REQ 10/2026", "Aguardando Deliberação", "Aprovado", 0),
+                                            (9002, "REQ 11/2026", "Aguardando Despacho", "Arquivado", 40),
+                                            (9003, "RIC 5/2026", "Aguardando Despacho", "Encaminhado ao Ministério", 3),
+                                            (9004, "PL 77/2026", None, "Aguardando Designação de Relator", 2)):
+            c.execute(ins(notificacoes).values(codigo_deputado=101, processo_id=pid, identificacao=ident,
+                                               tipo="situacao" if ant else "nova", situacao_anterior=ant, situacao_nova=nova,
+                                               data_situacao=(hoje - timedelta(days=dias)).isoformat(),
+                                               detectado_em=agora - timedelta(days=dias)))
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+    assert "Sessão Não Deliberativa Solene" in html and "Ocultar sessões solenes" in html and "seu padrão" in html
+    html = adm.get("/meu/101?secao=agenda&solenes=ocultar").get_data(as_text=True)
+    assert "Sessão Não Deliberativa Solene" not in html and "Sessão Deliberativa Extraordinária" in html
+    assert "Reunião sobre a sessão solene" in html                      # compromisso da equipe fica
+    assert "1 sessão solene oculta" in html and "Salvar como padrão" in html
+    tok = _tok(adm, "/meu/101?secao=agenda")
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "pref_solenes", "valor": "ocultar"})
+    html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)          # padrão salvo vale sem parâmetro
+    assert "Padrão salvo" in html and "Sessão Não Deliberativa Solene" not in html and "seu padrão" in html
+    assert "Sessão Não Deliberativa Solene" not in adm.get("/meu/101?secao=agenda&todos=1").get_data(as_text=True)
+    assert "Sessão Não Deliberativa Solene" in adm.get("/meu/101?secao=agenda&solenes=mostrar").get_data(as_text=True)
+    assert meu.eh_solene({"titulo": "Sessão Solene"}) and not meu.eh_solene({"titulo": "Solenidade de posse"})
+    adm.post("/meu/101?secao=agenda", data={"_csrf": tok, "acao": "pref_solenes", "valor": "mostrar"})
+    assert "Sessão Não Deliberativa Solene" in adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+
+    g = meu.notificacoes_agrupadas(101)
+    nomes = [t["nome"] for t in g["tipos"]]
+    urg = next(t for t in g["tipos"] if t["nome"].startswith("Requerimento de Urgência"))
+    assert urg["n_props"] == 2 and urg["mudancas"] == 3 and urg["sigla"] == "REQ"
+    req10 = urg["props"][0]
+    assert req10["identificacao"] == "REQ 10/2026" and req10["atual"] == "Aprovado" and len(req10["eventos"]) == 2
+    assert "Requerimento de Informação" in nomes and "Projeto de Lei" in nomes      # sem descrição: nome pela sigla
+    assert meu.notificacoes_agrupadas(101, 7)["total"] == 4                          # sem a de 40 dias
+    assert [d["data"] for d in g["datas"]][0] == hoje.isoformat()
+    html = adm.get("/meu/101?secao=notificacoes").get_data(as_text=True)
+    assert "Por tipo e proposição" in html and 'class="nt-tipo"' in html
+    assert "Requerimento de Urgência (Art. 155 do RICD)" in html and "2 proposições · 3 mudanças" in html
+    assert "REQ 10/2026" in html and "2 mudanças" in html
+    html = adm.get("/meu/101?secao=notificacoes&modo=data&periodo=7").get_data(as_text=True)
+    assert "Salvar como padrão" in html and "REQ 11/2026" not in html and "RIC 5/2026" in html
+    tok = _tok(adm, "/meu/101?secao=notificacoes")
+    adm.post("/meu/101?secao=notificacoes", data={"_csrf": tok, "acao": "pref_notif", "valor": "data"})
+    html = adm.get("/meu/101?secao=notificacoes").get_data(as_text=True)
+    assert 'class="sel" href="/meu/101?secao=notificacoes&amp;modo=data"' in html
+
+
 def _regimento_falso():
     linhas = []
     for n in range(1, 283):

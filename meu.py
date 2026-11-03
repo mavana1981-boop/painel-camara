@@ -154,6 +154,42 @@ DIAS_HISTORICO = 60                           # quanto do passado aparece no His
 _SIT_FIM = ("encerrad", "cancelad", "finalizad", "realizad", "adiad", "transferid")
 
 
+# ---------------- preferências do usuário ----------------
+
+def pref(chave, padrao=None):
+    import json
+    try:
+        return json.loads((g.get("usuario") or {}).get("preferencias") or "{}").get(chave, padrao)
+    except ValueError:
+        return padrao
+
+
+def salvar_pref(chave, valor):
+    import json
+    u = g.usuario
+    try:
+        prefs = json.loads(u.get("preferencias") or "{}")
+    except ValueError:
+        prefs = {}
+    prefs[chave] = valor
+    u["preferencias"] = json.dumps(prefs, ensure_ascii=False)
+    with engine.begin() as c:
+        c.execute(update(usuarios).where(usuarios.c.id == u["id"]).values(preferencias=u["preferencias"]))
+
+
+def eh_solene(e):
+    """Sessão solene (homenagens) do Plenário ou de outro órgão."""
+    return "solene" in norm_nome(e.get("titulo") or "").split()
+
+
+def ocultar_solenes():
+    """Escolha da página (?solenes=ocultar|mostrar) ou, sem ela, o padrão salvo pelo usuário."""
+    v = request.args.get("solenes")
+    if v in ("ocultar", "mostrar"):
+        return v == "ocultar"
+    return bool(pref("agenda_ocultar_solenes", False))
+
+
 def agora_brt():
     """Data e hora de Brasília (o servidor do Railway roda em UTC)."""
     return datetime.now(BRT).replace(tzinfo=None)
@@ -192,7 +228,7 @@ def separar_agenda(dias, agora=None):
             hist.append({"data": d["data"], "itens": pas[::-1]})
     return prox, hist[::-1]
 
-def agenda_deputado(cod, inicio, fim, so_dele=True):
+def agenda_deputado(cod, inicio, fim, so_dele=True, sem_solenes=False):
     s = paineis.deputado(cod) or {}
     import coleta_meu
     cols = coleta_meu.colegiados_do_deputado(cod) | {"PLEN"}
@@ -209,6 +245,8 @@ def agenda_deputado(cod, inicio, fim, so_dele=True):
         r["citado"] = f",{cod}," in (r.get("relatores") or "") or (bool(nome) and f" {nome} " in f" {desc} ")
         r["membro"] = r["origem"] == "equipe" or (r.get("colegiado") or "") in cols
         if so_dele and not (r["membro"] or r["citado"]):
+            continue
+        if sem_solenes and r["origem"] != "equipe" and eh_solene(r):
             continue
         out.append(r)
     dias = {}
@@ -564,11 +602,60 @@ def sugestoes(cod, r):
     return out
 
 
+# ---------------- notificações agrupadas ----------------
+
+SIGLAS_TIPO = {"REQ": "Requerimento", "RIC": "Requerimento de Informação", "INC": "Indicação", "PL": "Projeto de Lei",
+               "PLP": "Projeto de Lei Complementar", "PEC": "Proposta de Emenda à Constituição",
+               "PDL": "Projeto de Decreto Legislativo", "PRC": "Projeto de Resolução", "MPV": "Medida Provisória"}
+
+
+def _tipo_notif(n):
+    sigla = (n.get("sigla") or (n.get("identificacao") or "").split(" ")[0] or "").upper()
+    nome = (n.get("tipo_documento") or "").strip() or SIGLAS_TIPO.get(sigla) or sigla or "Outros"
+    return sigla, nome
+
+
+def notificacoes_agrupadas(cod, dias=0):
+    """Notificações por tipo de proposição (ex.: Requerimento de Urgência) > proposição > mudanças,
+    e também por data. `dias` = 0 traz os 180 dias guardados."""
+    base = paineis.notificacoes(cod, limite=3000)
+    itens = base["itens"]
+    if dias:
+        corte = datetime.now() - timedelta(days=dias)
+        itens = [n for n in itens if n["detectado_em"] and n["detectado_em"] >= corte]
+    tipos, props = {}, {}
+    for n in itens:                                   # vêm do mais recente para o mais antigo
+        sigla, nome = _tipo_notif(n)
+        t = tipos.setdefault(nome, {"nome": nome, "sigla": sigla, "props": [], "mudancas": 0, "recentes": 0,
+                                    "ultima": n["detectado_em"]})
+        t["mudancas"] += 1
+        t["recentes"] += n["recente"]
+        chave = n.get("processo_id") or n.get("identificacao")
+        p = props.get((nome, chave))
+        if not p:
+            p = props[(nome, chave)] = {"identificacao": n["identificacao"], "url": n.get("url"), "ementa": n.get("ementa"),
+                                        "atual": n.get("situacao_nova"), "ultima": n["detectado_em"],
+                                        "recente": n["recente"], "eventos": []}
+            t["props"].append(p)
+        p["eventos"].append(n)
+    for t in tipos.values():
+        t["n_props"] = len(t["props"])
+    ordem = sorted(tipos.values(), key=lambda t: (-(t["recentes"] > 0), -(t["ultima"] or datetime.min).timestamp()))
+    dias_l = {}
+    for n in itens:
+        d = n["detectado_em"].date().isoformat() if n["detectado_em"] else ""
+        dias_l.setdefault(d, []).append(n)
+    por_data = [{"data": d, "itens": v, "tipos": sorted({_tipo_notif(x)[0] for x in v if _tipo_notif(x)[0]})}
+                for d, v in sorted(dias_l.items(), reverse=True)]
+    return {"tipos": ordem, "datas": por_data, "total": len(itens),
+            "recentes": sum(1 for n in itens if n["recente"])}
+
+
 # ---------------- visão geral ----------------
 
 def visao(cod):
     hoje = agora_brt().date()
-    ag, _ = separar_agenda(agenda_deputado(cod, hoje, hoje + timedelta(days=7)))
+    ag, _ = separar_agenda(agenda_deputado(cod, hoje, hoje + timedelta(days=7), sem_solenes=ocultar_solenes()))
     return {
         "agenda": ag[:4],
         "notif": paineis.notificacoes(cod, limite=6),
@@ -671,15 +758,25 @@ def painel(cod):
         ctx["v"] = visao(cod)
     elif secao == "agenda":
         so_dele = request.args.get("todos") != "1"
-        ctx["agenda"], ctx["historico"] = separar_agenda(
-            agenda_deputado(cod, hoje - timedelta(days=DIAS_HISTORICO), hoje + timedelta(days=45), so_dele))
+        ocultar = ocultar_solenes()
+        ini_ag, fim_ag = hoje - timedelta(days=DIAS_HISTORICO), hoje + timedelta(days=45)
+        ctx["agenda"], ctx["historico"] = separar_agenda(agenda_deputado(cod, ini_ag, fim_ag, so_dele, ocultar))
+        if ocultar:   # quantas ficaram de fora (só as que ainda vão acontecer)
+            futuras = separar_agenda(agenda_deputado(cod, ini_ag, fim_ag, so_dele))[0]
+            ctx["n_solenes"] = sum(1 for d in futuras for e in d["itens"] if e["origem"] != "equipe" and eh_solene(e))
+        ctx["ocultar_solenes"] = ocultar
+        ctx["padrao_solenes"] = bool(pref("agenda_ocultar_solenes", False))
         ctx["n_historico"] = sum(len(d["itens"]) for d in ctx["historico"])
         ctx["dias_historico"] = DIAS_HISTORICO
         import agenda_pdf as ap
         ctx["periodos_impressao"] = ap.PERIODOS
         ctx["so_dele"] = so_dele
     elif secao == "notificacoes":
-        ctx["notif"] = paineis.notificacoes(cod, limite=150)
+        ctx["modo_notif"] = request.args.get("modo") if request.args.get("modo") in ("tipo", "data") \
+            else pref("notif_modo", "tipo")
+        ctx["periodo_notif"] = request.args.get("periodo", type=int) if request.args.get("periodo", type=int) in (7, 30) else 0
+        ctx["notif"] = notificacoes_agrupadas(cod, ctx["periodo_notif"])
+        ctx["padrao_notif"] = pref("notif_modo", "tipo")
     elif secao == "solicitacoes":
         ctx["filtro_status"] = request.args.get("status", "")
         ctx["sol"] = lista_solicitacoes(cod, ctx["filtro_status"], None if pleno else autor)
@@ -724,7 +821,16 @@ def _post(cod, secao, s, autor, pleno=True):
         f = f.copy()
         f.pop("responsavel", None)
     try:
-        if acao == "atualizar":
+        if acao == "pref_solenes":
+            ocultar = f.get("valor") == "ocultar"
+            salvar_pref("agenda_ocultar_solenes", ocultar)
+            flash("Padrão salvo: sessões solenes " + ("ocultas" if ocultar else "visíveis") + " na agenda.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="agenda", todos=request.args.get("todos") or None)
+        elif acao == "pref_notif" and f.get("valor") in ("tipo", "data"):
+            salvar_pref("notif_modo", f["valor"])
+            flash("Padrão salvo para as notificações.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="notificacoes", periodo=request.args.get("periodo") or None)
+        elif acao == "atualizar":
             ok = atualizar_em_segundo_plano(cod)
             flash("Atualização iniciada. Recarregue a página em alguns minutos." if ok else
                   "Já há uma atualização em andamento.", "ok" if ok else "erro")
@@ -796,7 +902,7 @@ def agenda_pdf(cod):
         flash(str(e), "erro")
         return redirect(url_for("meu.painel", cod=cod, secao="agenda"))
     so_dele = request.args.get("todos") != "1"
-    pdf = ap.gerar(s, agenda_deputado(cod, inicio, fim, so_dele), inicio, fim, rotulo, so_dele,
+    pdf = ap.gerar(s, agenda_deputado(cod, inicio, fim, so_dele, ocultar_solenes()), inicio, fim, rotulo, so_dele,
                    com_descricao=request.args.get("descricao") == "1", agora=agora)
     nome = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", s.get("nome") or "").encode("ascii", "ignore")
                   .decode().lower()).strip("-") or str(cod)

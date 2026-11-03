@@ -114,8 +114,21 @@
   <div class="card neu">
     <h2>Agenda <small>{{ 'órgãos do deputado, Plenário e equipe' if so_dele else 'toda a Câmara' }}</small></h2>
     <div class="pilulas">
-      <a class="{{ 'sel' if so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda') }}">Do deputado</a>
-      <a class="{{ 'sel' if not so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=1) }}">Toda a Câmara</a>
+      {% set sol_arg = 'ocultar' if ocultar_solenes else 'mostrar' %}
+      <a class="{{ 'sel' if so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', solenes=sol_arg) }}">Do deputado</a>
+      <a class="{{ 'sel' if not so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=1, solenes=sol_arg) }}">Toda a Câmara</a>
+    </div>
+    <div class="ag-opcoes">
+      <a class="ag-toggle {{ 'on' if ocultar_solenes }}" role="switch" aria-checked="{{ 'true' if ocultar_solenes else 'false' }}"
+         href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=None if so_dele else 1, solenes='mostrar' if ocultar_solenes else 'ocultar') }}">
+        <span class="tg"></span> Ocultar sessões solenes</a>
+      {% if ocultar_solenes and n_solenes %}<small class="ag-ocultas">{{ n_solenes }} sessão{{ 'ões' if n_solenes != 1 }} solene{{ 's' if n_solenes != 1 }} oculta{{ 's' if n_solenes != 1 }}</small>{% endif %}
+      {% if ocultar_solenes != padrao_solenes %}
+      <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=None if so_dele else 1) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="pref_solenes">
+        <input type="hidden" name="valor" value="{{ 'ocultar' if ocultar_solenes else 'mostrar' }}">
+        <button class="mini">Salvar como padrão</button></form>
+      {% else %}<small class="ag-padrao">✓ seu padrão</small>{% endif %}
     </div>
     <div class="rolagem" style="max-height:none">
     {% for d in agenda %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ evento(e) }}{% endfor %}
@@ -146,6 +159,7 @@
       <div class="lin imp-datas" hidden><label class="imp-de"><span>Data</span><input type="date" name="de" value="{{ hoje }}"></label><label class="imp-ate">Até<input type="date" name="ate" value="{{ hoje }}"></label></div>
       <label class="chk"><input type="checkbox" name="todos" value="1"{% if not so_dele %} checked{% endif %}> Incluir toda a agenda da Casa</label>
       <label class="chk"><input type="checkbox" name="descricao" value="1" checked> Incluir pautas e observações</label>
+      <label class="chk"><input type="checkbox" name="solenes" value="ocultar"{% if ocultar_solenes %} checked{% endif %} onchange="this.value=this.checked?'ocultar':'mostrar'"> Ocultar sessões solenes</label>
       <button class="btn com-ic">{{ ic("imprimir") }} Gerar PDF</button>
     </form>
     <script>
@@ -165,10 +179,67 @@
 {% if secao == 'notificacoes' %}
 <section class="card neu notif-quadro">
   <h2>Notificações <small>{% if notif.recentes %}<span class="notif-badge">{{ notif.recentes }} nos últimos 7 dias</span>{% else %}mudanças de status das proposições{% endif %}</small></h2>
-  <div class="rolagem" style="max-height:none">
-  {% for n in notif.itens %}{{ notif_item(n) }}{% else %}<div class="vazio-msg">Nenhuma mudança registrada ainda. O monitor confere as proposições uma vez por dia.</div>{% endfor %}
+  <div class="nt-barra">
+    <div class="pilulas" style="padding:0;border:0">
+      <a class="{{ 'sel' if modo_notif == 'tipo' }}" href="{{ url_for('meu.painel', cod=cod, secao='notificacoes', modo='tipo', periodo=periodo_notif or None) }}">Por tipo e proposição</a>
+      <a class="{{ 'sel' if modo_notif == 'data' }}" href="{{ url_for('meu.painel', cod=cod, secao='notificacoes', modo='data', periodo=periodo_notif or None) }}">Por data</a>
+    </div>
+    <div class="pilulas" style="padding:0;border:0">
+      {% for v, r in [(7, '7 dias'), (30, '30 dias'), (0, 'Tudo')] %}<a class="{{ 'sel' if periodo_notif == v }}" href="{{ url_for('meu.painel', cod=cod, secao='notificacoes', modo=modo_notif, periodo=v or None) }}">{{ r }}</a>{% endfor %}
+    </div>
+    {% if modo_notif != padrao_notif %}<form method="post" action="{{ url_for('meu.painel', cod=cod, secao='notificacoes', periodo=periodo_notif or None) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="acao" value="pref_notif"><input type="hidden" name="valor" value="{{ modo_notif }}"><button class="mini">Salvar como padrão</button></form>{% endif %}
+    <span class="nt-total">{{ notif.total }} mudança{{ 's' if notif.total != 1 }}</span>
   </div>
-  <p class="nota">Verificação diária, junto com a atualização automática (a partir das 6h). Ficam guardados os últimos 180 dias.</p>
+  {% if modo_notif == 'tipo' %}
+  <div class="nt-grupos">
+  {% for t in notif.tipos %}
+    <details class="nt-tipo">
+      <summary>
+        <span class="nt-sigla">{{ t.sigla or '—' }}</span>
+        <b>{{ t.nome }}</b>
+        <span class="nt-cont">{{ t.n_props }} proposiç{{ 'ões' if t.n_props != 1 else 'ão' }} · {{ t.mudancas }} mudança{{ 's' if t.mudancas != 1 }}</span>
+        {% if t.recentes %}<span class="notif-badge">{{ t.recentes }} em 7 dias</span>{% endif %}
+        <span class="nt-ult">última {{ t.ultima|data }}</span>
+      </summary>
+      <div class="nt-props">
+      {% for p in t.props %}
+        <details class="nt-prop {{ 'recente' if p.recente }}">
+          <summary>
+            <b>{{ p.identificacao }}</b>
+            <span class="nt-atual">{{ p.atual or '—' }}</span>
+            <span class="nt-q">{% if p.eventos|length > 1 %}{{ p.eventos|length }} mudanças · {% endif %}{{ p.ultima|data }}</span>
+          </summary>
+          <div class="nt-corpo">
+            {% if p.ementa %}<div class="notif-ementa">{{ p.ementa }}</div>{% endif %}
+            <ol class="nt-linha">
+            {% for n in p.eventos %}
+              <li><span class="nt-data">{{ (n.data_situacao or n.detectado_em)|data }}</span>
+                {% if n.tipo == 'nova' %}<span>proposição nova{% if n.situacao_nova %} · {{ n.situacao_nova }}{% endif %}</span>
+                {% else %}<span class="notif-de">{{ n.situacao_anterior or '—' }}</span> <span class="notif-seta">→</span> <span class="notif-para">{{ n.situacao_nova }}</span>{% endif %}</li>
+            {% endfor %}
+            </ol>
+            {% if p.url %}<a class="mc-link" href="{{ p.url }}" target="_blank" rel="noopener">ver na Câmara {{ ic("seta") }}</a>{% endif %}
+          </div>
+        </details>
+      {% endfor %}
+      </div>
+    </details>
+  {% else %}<div class="vazio-msg">Nenhuma mudança {{ 'no período' if periodo_notif else 'registrada ainda. O monitor confere as proposições uma vez por dia' }}.</div>{% endfor %}
+  </div>
+  {% else %}
+  <div class="nt-grupos">
+  {% for d in notif.datas %}
+    <details class="nt-tipo"{% if loop.first %} open{% endif %}>
+      <summary><b>{{ dia_rotulo(d.data) if d.data else 'Sem data' }}</b>
+        <span class="nt-cont">{{ d.itens|length }} mudança{{ 's' if d.itens|length != 1 }}</span>
+        <span class="nt-siglas">{% for sg in d.tipos[:6] %}<i>{{ sg }}</i>{% endfor %}</span></summary>
+      <div class="nt-props">{% for n in d.itens %}{{ notif_item(n) }}{% endfor %}</div>
+    </details>
+  {% else %}<div class="vazio-msg">Nenhuma mudança {{ 'no período' if periodo_notif else 'registrada ainda' }}.</div>{% endfor %}
+  </div>
+  {% endif %}
+  <p class="nota">Verificação diária, junto com a atualização automática (a partir das 6h). Ficam guardados os últimos 180 dias. O tipo vem da Câmara (ex.: Requerimento de Urgência, Requerimento de Informação).</p>
 </section>
 {% endif %}
 

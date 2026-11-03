@@ -210,7 +210,7 @@ def notificacoes(codigo, limite=40):
     """Mudanças de situação e proposições novas do deputado, mais recentes primeiro."""
     with engine.connect() as c:
         rows = c.execute(text("""
-            SELECT n.*, pr.url, pr.ementa FROM notificacoes n
+            SELECT n.*, pr.url, pr.ementa, pr.sigla, pr.tipo_documento FROM notificacoes n
             LEFT JOIN processos pr ON pr.id = n.processo_id
             WHERE n.codigo_deputado = :c
             ORDER BY n.detectado_em DESC, n.id DESC LIMIT :lim"""), {"c": codigo, "lim": limite}).mappings()

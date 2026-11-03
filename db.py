@@ -158,6 +158,7 @@ usuarios = Table(
     Column("ativo", Boolean, default=True),
     Column("criado", DateTime),
     Column("ultimo_acesso", DateTime),
+    Column("preferencias", Text),                # JSON: escolhas salvas como padrão (ex.: ocultar sessões solenes)
 )
 
 fotos_usuarios = Table(  # fotos dos usuários (copiadas do Minha Pauta ou enviadas aqui); fora de `usuarios`
