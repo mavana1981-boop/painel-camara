@@ -921,6 +921,15 @@ def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
     assert "⚠ gênero, misoginia</b> — PL 55/2026" in html
     assert "⚠ maconha</b> — REQ 12/2026 (sobre o PL 77/2026)" in html and "Descriminaliza o porte" in html
     assert "Deputado na pauta em <b>" in html and "Temas sensíveis em <b>" in html
+    import meu as _meu
+    from app import app as _app
+    with _app.test_request_context("/"):
+        from flask import g as _g
+        _g.usuario = {"id": 1, "login": "admin", "admin": True}
+        evs = {e["chave"]: e for d in _meu.agenda_deputado(101, date.today(), date.today() + timedelta(days=5), False)
+               for e in d["itens"]}
+    assert evs["E880002"]["sem_proposicao"] and not evs["E880001"]["sem_proposicao"]   # CCJC: nada dele
+    assert "SEM PROPOSIÇÃO DO DEPUTADO" in html
     # lista de termos editável
     tok = _tok(adm, "/meu/101?secao=agenda")
     assert "Termos sensíveis" in html and "ideologia de gênero" in html

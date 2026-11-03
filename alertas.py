@@ -127,4 +127,9 @@ def analisar(e, cod, nome_norm, autorias_cod, regras):
             alertas.append({"termos": resto, "ident": None, "ementa": None})
     e["na_pauta"], e["alertas"] = na_pauta, alertas
     e["citado"] = bool(na_pauta)
+    # pauta conhecida sem nada do deputado / pauta ainda não publicada (só eventos da Câmara)
+    camara = e.get("origem") != "equipe"
+    e["sem_proposicao"] = camara and bool(its) and not na_pauta
+    e["n_itens"] = len(its)
+    e["pauta_pendente"] = camara and not its and not na_pauta and not (e.get("descricao") or "").strip()
     return e

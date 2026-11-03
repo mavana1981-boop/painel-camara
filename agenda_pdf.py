@@ -323,6 +323,10 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
                 tags.append(f'<b>{_p(e["colegiado"])}</b>')
             if e.get("citado"):
                 tags.append(f'<font color="#9b2c2c"><b>{CASA["na_pauta"].upper()}</b></font>')
+            elif e.get("sem_proposicao"):
+                tags.append('<font color="#5f6b76"><b>SEM PROPOSIÇÃO DO DEPUTADO</b></font>')
+            elif e.get("pauta_pendente"):
+                tags.append('<font color="#5f6b76">pauta não publicada</font>')
             for k in ("local", "situacao"):
                 if e.get(k):
                     tags.append(_p(e[k]))

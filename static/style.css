@@ -852,3 +852,6 @@ details.nt-prop>summary{list-style:none;cursor:pointer;display:flex;gap:10px;ali
 .imp-mp{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:12px 14px;flex-wrap:wrap}
 .imp-mp b{display:block;color:var(--pri-esc)}
 .imp-mp small{color:var(--suave);font-size:12px}
+
+.ag-tag.semprop{background:#eef1f5;color:#4a5560;border:1px dashed #b9c2cd;font-weight:700;letter-spacing:.2px}
+.ag-tag.pendente{background:#f6f7f9;color:#7a8592;font-style:italic}

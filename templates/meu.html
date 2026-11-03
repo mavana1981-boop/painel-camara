@@ -17,6 +17,7 @@
       {% if e.origem == 'equipe' %}<span class="ag-tag eq">equipe</span>{% elif e.colegiado == 'PLEN' %}<span class="ag-tag pl">Plenário</span>{% elif e.colegiado %}<span class="ag-tag">{{ e.colegiado }}</span>{% endif %}
       {% if e.citado %}<span class="ag-tag cit">deputado na pauta</span>{% endif %}
       {% if e.alertas %}<span class="ag-tag alerta">⚠ tema sensível</span>{% endif %}
+      {% if e.sem_proposicao %}<span class="ag-tag semprop" title="{{ e.n_itens }} ite{{ 'ns' if e.n_itens != 1 else 'm' }} na pauta, nenhum de autoria ou relatoria do deputado">SEM PROPOSIÇÃO DO DEPUTADO</span>{% elif e.pauta_pendente %}<span class="ag-tag pendente">pauta não publicada</span>{% endif %}
       {% if e.local %}{{ e.local }}{% endif %}{% if e.situacao %} · {{ e.situacao }}{% endif %}
     </div>
     {% if e.na_pauta %}<div class="ag-aviso pauta">{% for p in e.na_pauta %}
