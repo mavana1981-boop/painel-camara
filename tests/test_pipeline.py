@@ -1624,12 +1624,24 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
                                        origem="google", publicado=agora - timedelta(days=30)))
     resposta = {"temas": [
         {"tema": "Bruno Governo", "topicos": [
-            {"topico": "Cobranças ao ministro da Justiça", "resumo": "Duas notícias.", "tipo": "comissao",
-             "acao_sugerida": "Requerimento de convocação na CSPCCO", "noticias": [ids[0], ids[1], 999999]},
-            {"topico": "Projeto sobre Pix", "resumo": "Uma notícia.", "tipo": "outros", "acao_sugerida": "Nota", "noticias": [ids[2]]}]},
+            {"topico": "Cobranças ao ministro da Justiça sobre presídios", "area": "segurança pública", "resumo": "Duas notícias.",
+             "instrumento": "Requerimento de convocação de ministro", "tipo": "outros",
+             "acao_sugerida": "Requerimento de convocação do ministro da Justiça na CSPCCO para explicar a crise nos presídios federais",
+             "noticias": [ids[0], ids[1], 999999]},
+            {"topico": "Projeto do deputado sobre o Pix", "area": "Economia", "resumo": "Uma notícia.", "instrumento": "Nota à imprensa",
+             "tipo": "outros", "acao_sugerida": "Nota à imprensa do Líder defendendo o projeto e rebatendo a taxação do Pix",
+             "noticias": [ids[2]]},
+            {"topico": "Lula", "area": "Política", "instrumento": "Nota à imprensa", "acao_sugerida": "Nota criticando o presidente pela fala",
+             "noticias": [ids[0]]},                                                   # título sem contexto: descartado
+            {"topico": "Fala do ministro em entrevista", "area": "Política", "instrumento": "Discurso em Plenário",
+             "acao_sugerida": "Avaliar as notícias", "noticias": [ids[1]]}]},       # providência genérica: descartada
         {"tema": "Segurança Pública", "topicos": [
-            {"topico": "Avanço das facções", "tipo": "outros", "noticias": [ids[3], ids[5]]},
-            {"topico": "Corte na PF", "tipo": "xyz", "noticias": [ids[4]]}]}]}
+            {"topico": "Avanço das facções no Nordeste", "area": "Segurança Pública", "instrumento": "RIC",
+             "acao_sugerida": "RIC ao Ministério da Justiça pedindo dados de presos ligados a facções por estado do Nordeste",
+             "tipo": "outros", "noticias": [ids[3], ids[5]]},
+            {"topico": "Corte de verbas da Polícia Federal", "area": "Inventada", "instrumento": "Projeto de Lei (PL)",
+             "acao_sugerida": "PL que proíbe contingenciamento das verbas de custeio da Polícia Federal", "tipo": "xyz",
+             "noticias": [ids[4]]}]}]}
     pedidos = []
     orig_cfg, orig_ia = questoes.configurado, questoes.chamar_ia
     questoes.configurado = lambda: True
@@ -1647,19 +1659,30 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
     sel = si.ultimo_lote(102)
     assert sel["total"] == 4 and set(sel["temas"]) == {"Bruno Governo", "segurança pública"}
     tops = {t["topico"]: t for ts in sel["temas"].values() for t in ts}
-    assert tops["Cobranças ao ministro da Justiça"]["responsavel"] == "lianna.souza"          # comissão → Lianna
-    outros = [tops[k]["responsavel"] for k in ("Projeto sobre Pix", "Avanço das facções", "Corte na PF")]
+    assert "Lula" not in tops and "Fala do ministro em entrevista" not in tops
+    cob = tops["Cobranças ao ministro da Justiça sobre presídios"]
+    assert cob["tipo"] == "comissao" and cob["responsavel"] == "lianna.souza"                 # convocação → comissão → Lianna
+    assert cob["area"] == "Segurança Pública" and len(cob["noticias_l"]) == 2
+    outros = [tops[k]["responsavel"] for k in ("Projeto do deputado sobre o Pix", "Avanço das facções no Nordeste",
+                                                "Corte de verbas da Polícia Federal")]
     assert len(set(outros)) == 3 and set(outros) <= set(eq["outros"])                        # sorteio sem repetir
-    assert tops["Corte na PF"]["tipo"] == "outros" and len(tops["Cobranças ao ministro da Justiça"]["noticias_l"]) == 2
-    sols = _q("SELECT titulo, responsavel, solicitante, prazo FROM solicitacoes WHERE titulo LIKE 'Seleção da IA:%' AND codigo_deputado = 102")
-    assert len(sols) == 4 and all(s[2] == "Seleção da IA (radar)" and s[3] for s in sols)
+    pf = tops["Corte de verbas da Polícia Federal"]
+    assert pf["tipo"] == "outros" and pf["area"] == "Outros" and pf["instrumento"] == "Projeto de Lei (PL)"
+    assert tops["Avanço das facções no Nordeste"]["instrumento"] == "Requerimento de Informação (RIC)"
+    sols = _q("SELECT titulo, responsavel, solicitante, prazo, area, descricao FROM solicitacoes "
+              "WHERE titulo LIKE 'Seleção da IA:%' AND codigo_deputado = 102")
+    assert len(sols) == 4 and all(s[2] == "Seleção da IA (radar)" and s[3] and s[4] for s in sols)
+    assert any("Providência sugerida (Requerimento de convocação de ministro)" in s[5] for s in sols)
+    html = adm.get("/meu/102?secao=solicitacoes").get_data(as_text=True)
+    assert '<span class="area-chip">Segurança Pública</span>' in html
     assert _q("SELECT solicitacao_id IS NOT NULL FROM noticias WHERE id = :n", n=ids[0])[0][0]
     html = adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
-    assert "Cobranças ao ministro da Justiça" in html and "Requerimento de convocação na CSPCCO" in html
+    assert "Cobranças ao ministro da Justiça sobre presídios" in html and "CSPCCO para explicar" in html
+    assert 'class="sel-inst">Requerimento de convocação de ministro' in html and 'class="area-chip">Economia' in html
     assert "Comissão" in html and "Outros assuntos" in html and "ver solicitação" in html
     # a Lianna recebe o aviso de tarefa
     li = _cliente_usuario("lianna.souza", "senha-segura-1")
-    assert "Seleção da IA: Cobranças ao ministro da Justiça" in li.get("/orientacoes").get_data(as_text=True)
+    assert "Seleção da IA: Cobranças ao ministro da Justiça sobre presídios" in li.get("/orientacoes").get_data(as_text=True)
     # equipes editáveis
     adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_equipes",
                                                           "comissao": ["lianna.souza", "vinicius.melo"], "outros": ["andre.alencar"]})
@@ -1667,9 +1690,33 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
     assert not si.precisa_gerar(102, datetime.now().replace(hour=12))                        # já gerou hoje
     assert not si.precisa_gerar(102, datetime.now().replace(hour=6) + timedelta(days=1))     # antes das 7h
     assert si.precisa_gerar(102, datetime.now().replace(hour=8) + timedelta(days=1))
-    # sem IA: usa as palavras mais frequentes, sem quebrar
-    r = si.gerar(102)
-    assert r["sem_ia"] and len(r["topicos"]) >= 2
+    # sem IA: não gera nada (nada de palavras soltas)
+    antes = _q("SELECT COUNT(*) FROM solicitacoes")[0][0]
+    try:
+        si.gerar(102)
+        assert False, "deveria exigir a chave"
+    except ValueError as e:
+        assert "ANTHROPIC_API_KEY" in str(e)
+    # IA respondendo só coisas genéricas duas vezes: erro, sem criar solicitações
+    questoes.configurado = lambda: True
+    questoes.chamar_ia = lambda *a, **k: json.dumps({"temas": [{"tema": "Bruno Governo", "topicos": [
+        {"topico": "Lula", "instrumento": "Nota", "acao_sugerida": "Avaliar notícias"}]}]})
+    try:
+        si.gerar(102)
+        assert False
+    except ValueError as e:
+        assert "não devolveu uma seleção utilizável" in str(e)
+    finally:
+        questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
+    assert _q("SELECT COUNT(*) FROM solicitacoes")[0][0] == antes
+    # limpeza do que a versão por palavras gerou
+    from db import selecao_ia as tab, solicitacoes as tsol
+    with engine.begin() as c:
+        sid_lixo = c.execute(ins(tsol).values(codigo_deputado=102, titulo="Seleção da IA: Flavio", status="aberta")).inserted_primary_key[0]
+        c.execute(ins(tab).values(codigo_deputado=102, lote="2026-01-01T08:00:00", tema="x", topico="Flavio",
+                                  acao_sugerida="Avaliar as notícias e propor a providência cabível.", solicitacao_id=sid_lixo))
+    assert si.limpar_selecao_por_palavras() == 1
+    assert not _q("SELECT id FROM solicitacoes WHERE id = :s", s=sid_lixo)
     with engine.begin() as c:
         c.execute(text("UPDATE usuarios SET ativo = :t WHERE login = 'marcelo.uvara'"), {"t": True})
 

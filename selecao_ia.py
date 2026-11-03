@@ -34,17 +34,44 @@ TIPOS = {"comissao": "Comissão", "outros": "Outros assuntos"}
 EQUIPES_PADRAO = {"comissao": ["Lianna"], "outros": ["Marcelo", "Elyezer", "Vinicius", "Garibaldi", "André Alencar"]}
 CHAVE_EQUIPES = "selecao_ia:equipes"
 
-SISTEMA = """Você assessora a Liderança da Oposição na Câmara dos Deputados. Recebe as manchetes recentes que o radar
-de notícias coletou para um deputado, separadas por tema acompanhado. Para CADA tema, identifique pelo contexto os
-assuntos (tópicos) que mais aparecem nas notícias — agrupe manchetes que tratam do mesmo fato ou discussão — e
-escolha pelo menos 2 (no máximo 3) tópicos por tema, priorizando os mais recorrentes e com mais potencial de ação
-parlamentar da Oposição. Para cada tópico indique o tipo:
-- "comissao": quando a providência natural é em comissão (requerimento de audiência pública, convocação ou convite
-  de ministro/autoridade, fiscalização e controle, requerimento de informação a ser votado na comissão);
-- "outros": demais providências (discurso, projeto, nota, requerimento de informação direto, articulação, imprensa).
-Responda APENAS com JSON puro, sem texto antes ou depois, no formato:
-{"temas": [{"tema": "<igual ao recebido>", "topicos": [{"topico": "<título curto>", "resumo": "<1-2 frases>",
-"tipo": "comissao|outros", "acao_sugerida": "<ação concreta>", "noticias": [<ids das notícias do tópico>]}]}]}"""
+AREAS = ["Saúde", "Segurança Pública", "Educação", "Economia", "Tributação", "Previdência", "Trabalho",
+         "Política Externa", "Defesa", "Agropecuária", "Meio Ambiente", "Infraestrutura", "Energia",
+         "Justiça e Direitos", "Família e Costumes", "Liberdade de Expressão", "Comunicação e Redes",
+         "Corrupção e Transparência", "Política e Eleições", "Administração Pública", "Assistência Social",
+         "Ciência e Tecnologia", "Cultura e Esporte", "Outros"]
+INSTRUMENTOS = ["Requerimento de Informação (RIC)", "Requerimento de convocação de ministro",
+                "Requerimento de convite de autoridade", "Requerimento de audiência pública",
+                "Requerimento de fiscalização e controle (PFC)", "Projeto de Lei (PL)", "Projeto de Decreto Legislativo (PDL)",
+                "Proposta de Emenda à Constituição (PEC)", "Emenda a proposição em tramitação", "Indicação ao Executivo",
+                "Representação ao MPF/TCU/PGR", "Nota à imprensa", "Discurso em Plenário", "Post para redes sociais",
+                "Ofício a órgão público", "Pedido de CPI (coleta de assinaturas)"]
+GENERICAS = re.compile(r"\b(avaliar|analisar|acompanhar|monitorar|verificar|estudar|observar|levantar informa)", re.I)
+
+SISTEMA = f"""Você assessora a Liderança da Oposição na Câmara dos Deputados. Recebe as manchetes recentes que o radar
+coletou para um deputado, separadas por tema acompanhado. Para CADA tema, identifique pelo contexto os ASSUNTOS que
+mais aparecem — agrupe as manchetes que tratam do mesmo fato, decisão, crise ou debate — e escolha pelo menos 2 (no
+máximo 3) tópicos por tema, priorizando os mais recorrentes e com mais potencial de ação da Oposição.
+
+Regras do tópico:
+- O título descreve o fato ou a discussão em poucas palavras, com contexto: "Corte de verbas da Polícia Federal",
+  "Alta do preço dos alimentos", "Acordo do governo com a Venezuela". NUNCA use só um nome de pessoa, partido ou
+  palavra solta ("Lula", "Flávio", "Governo", "Ministério").
+- Indique a área temática, escolhendo uma desta lista: {", ".join(AREAS)}.
+
+Regras da providência (o mais importante):
+- Proponha UMA providência concreta e pronta para a equipe executar, escolhendo o instrumento desta lista:
+  {"; ".join(INSTRUMENTOS)}.
+- Em "acao_sugerida", diga exatamente o que fazer: a quem se dirige, o que se pede ou se propõe e por quê. Ex.:
+  "RIC ao Ministério da Justiça pedindo o valor cortado do orçamento da PF em 2026 e os efeitos nas operações de
+  fronteira" ou "Nota à imprensa do Líder criticando o acordo, com os números de comércio citados na Folha".
+- É PROIBIDO sugerir "avaliar", "analisar", "acompanhar", "monitorar" ou "verificar as notícias".
+- tipo = "comissao" quando o instrumento é requerimento de convocação, convite, audiência pública ou fiscalização
+  (PFC), ou outro pedido votado em comissão; caso contrário, tipo = "outros".
+
+Responda APENAS com JSON puro, sem texto antes ou depois:
+{{"temas": [{{"tema": "<igual ao recebido>", "topicos": [{{"topico": "<título com contexto>", "area": "<da lista>",
+"resumo": "<1-2 frases com o fato>", "instrumento": "<da lista>", "acao_sugerida": "<providência concreta>",
+"tipo": "comissao|outros", "noticias": [<ids das notícias do tópico>]}}]}}]}}"""
 
 
 # ---------------- equipes ----------------
@@ -169,29 +196,49 @@ def montar_mensagem(nome_deputado, temas, abertos):
     return "\n".join(partes)
 
 
-def _fallback(temas):
-    """Sem resposta utilizável da IA: as palavras mais frequentes das manchetes de cada tema (aviso na tela)."""
-    pare = set("a o as os de da do das dos e em no na nos nas para por com que se um uma ao aos sobre diz apos após "
-               "contra mais como sem ser foi é tem vai pelo pela entre ate até ja já não nao deve após".split())
-    out = []
-    for tema, itens in temas.items():
-        cont = {}
-        for n in itens:
-            for t in set(norm_nome(n["titulo"]).split()):
-                if len(t) > 3 and t not in pare and t not in norm_nome(tema).split():
-                    cont[t] = cont.get(t, 0) + 1
-        top = sorted(cont, key=lambda t: -cont[t])[:MIN_TOPICOS]
-        tops = []
-        for t in top:
-            ids = [n["id"] for n in itens if t in norm_nome(n["titulo"]).split()][:8]
-            tops.append({"topico": t.capitalize(), "resumo": f"{len(ids)} notícia(s) citam “{t}”.", "tipo": "outros",
-                         "acao_sugerida": "Avaliar as notícias e propor a providência cabível.", "noticias": ids})
-        out.append({"tema": tema, "topicos": tops})
-    return {"temas": out}
+MODELO_PADRAO = "claude-sonnet-5-5"      # agrupar por contexto pede um modelo melhor que o da triagem
+
+
+def _area(v):
+    v = str(v or "").strip()
+    return next((a for a in AREAS if norm_nome(a) == norm_nome(v)), None) or ("Outros" if v else None)
+
+
+def _instrumento(v):
+    """Instrumento da lista a partir do que a IA escreveu ("RIC", "PL", "Nota à imprensa"...)."""
+    n = norm_nome(str(v or ""))
+    if not n:
+        return None
+    for i in INSTRUMENTOS:
+        base = norm_nome(i.split(" (")[0])
+        sigla = norm_nome(i[i.index("(") + 1:i.index(")")]) if "(" in i else None
+        if n in (norm_nome(i), base, sigla) or (sigla and n.split()[0] == sigla):
+            return i
+    return next((i for i in INSTRUMENTOS if norm_nome(i.split(" (")[0]) in n or n in norm_nome(i)), None)
+
+
+def _topico_ok(p):
+    """Tópico com contexto (não um nome solto) e providência concreta; devolve os campos limpos ou None."""
+    titulo = re.sub(r"\s+", " ", str(p.get("topico") or "")).strip()[:200]
+    acao = re.sub(r"\s+", " ", str(p.get("acao_sugerida") or "")).strip()[:1500]
+    inst = _instrumento(p.get("instrumento"))
+    if len(titulo.split()) < 3 or not acao or not inst:
+        return None
+    if GENERICAS.match(acao) or (GENERICAS.search(acao) and len(acao.split()) < 12):
+        return None
+    tipo = p.get("tipo") if p.get("tipo") in TIPOS else "outros"
+    if any(x in norm_nome(inst) for x in ("convocacao", "convite", "audiencia", "fiscalizacao")):
+        tipo = "comissao"
+    return {"topico": titulo, "area": _area(p.get("area")) or "Outros", "instrumento": inst,
+            "resumo": str(p.get("resumo") or "").strip()[:1500] or None, "acao_sugerida": acao, "tipo": tipo}
+
+
+def _topicos_validos(d, temas):
+    return sum(1 for t in d.get("temas") or [] for p in (t.get("topicos") or []) if _topico_ok(p)) >= min(2, 2 * len(temas))
 
 
 def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
-    """Gera um lote de tópicos para o deputado e cria as solicitações. Devolve {lote, topicos, sem_ia}."""
+    """Gera um lote de tópicos para o deputado e cria as solicitações. Devolve {lote, topicos}."""
     import paineis
     import questoes
     import meu
@@ -202,18 +249,26 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     temas = _noticias_por_tema(cod, DIAS)
     if not temas:
         raise ValueError(f"Não há notícias dos últimos {DIAS} dias para selecionar tópicos.")
-    sem_ia = False
-    dados = None
-    if questoes.configurado():
+    if not questoes.configurado():
+        raise ValueError("A Seleção da IA precisa da chave da Anthropic: configure ANTHROPIC_API_KEY no Railway.")
+    msg = montar_mensagem(s.get("nome") or str(cod), temas, _abertos(cod))
+    dados, erro = None, None
+    for tentativa in range(2):                      # uma nova tentativa se a resposta vier quebrada ou genérica
         try:
-            texto = questoes.chamar_ia(montar_mensagem(s.get("nome") or str(cod), temas, _abertos(cod)), sessao,
-                                       sistema=SISTEMA, modelo_=os.environ.get("SELECAO_MODEL") or rd.modelo(),
-                                       max_tokens=4000, timeout=120)
-            dados = rd.extrair_json(texto)
+            texto = questoes.chamar_ia(msg if not tentativa else msg + "\n\nATENÇÃO: a resposta anterior veio inválida "
+                                       "ou com providências genéricas. Siga o formato e as regras à risca.", sessao,
+                                       sistema=SISTEMA, modelo_=os.environ.get("SELECAO_MODEL") or MODELO_PADRAO,
+                                       max_tokens=5000, timeout=150)
+            d = rd.extrair_json(texto)
+            if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
+                dados = d
+                break
+            erro = "a resposta não trouxe tópicos com providências concretas"
         except Exception as e:
+            erro = str(e)
             log.warning("seleção da IA: %s", e)
-    if not dados or not isinstance(dados.get("temas"), list):
-        dados, sem_ia = _fallback(temas), True
+    if not dados:
+        raise ValueError(f"A IA não devolveu uma seleção utilizável ({erro}). Tente de novo em alguns minutos.")
     validos = {n["id"]: (tema, n) for tema, itens in temas.items() for n in itens}
     topicos = []
     for t in dados["temas"]:
@@ -223,13 +278,11 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
         if not tema:
             continue
         for p in (t.get("topicos") or [])[:3]:
-            ids = [int(i) for i in (p.get("noticias") or []) if str(i).isdigit() and int(i) in validos][:12]
-            titulo = str(p.get("topico") or "").strip()[:200]
-            if not titulo:
+            ok = _topico_ok(p)
+            if not ok:
                 continue
-            topicos.append({"tema": tema, "topico": titulo, "resumo": str(p.get("resumo") or "").strip()[:1500] or None,
-                            "tipo": p.get("tipo") if p.get("tipo") in TIPOS else "outros",
-                            "acao_sugerida": str(p.get("acao_sugerida") or "").strip()[:1500] or None, "noticias": ids})
+            ids = [int(i) for i in (p.get("noticias") or []) if str(i).isdigit() and int(i) in validos][:12]
+            topicos.append({"tema": tema, **ok, "noticias": ids})
     if not topicos:
         raise ValueError("A IA não devolveu tópicos utilizáveis. Tente de novo em alguns minutos.")
     resps = sortear([t["tipo"] for t in topicos], equipes(), rnd)
@@ -240,26 +293,52 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
         links = {r[0]: (r[1], r[2]) for r in c.execute(select(noticias.c.id, noticias.c.titulo, noticias.c.link)
                                                          .where(noticias.c.id.in_([i for t in topicos for i in t["noticias"]] or [0])))}
         for t, resp in zip(topicos, resps):
-            linhas = [f"Tema: {t['tema']} · {TIPOS[t['tipo']]}", t["resumo"],
-                      f"Ação sugerida pela IA: {t['acao_sugerida']}" if t["acao_sugerida"] else None]
+            linhas = [f"Tema acompanhado: {t['tema']} · Área: {t['area']} · {TIPOS[t['tipo']]}", t["resumo"],
+                      f"Providência sugerida ({t['instrumento']}): {t['acao_sugerida']}"]
             if t["noticias"]:
                 linhas.append("Notícias:\n" + "\n".join(f"- {links[i][0]} — {links[i][1]}" for i in t["noticias"] if i in links))
             sid = c.execute(insert(solicitacoes).values(
                 codigo_deputado=cod, titulo=("Seleção da IA: " + t["topico"])[:200],
                 descricao="\n\n".join(x for x in linhas if x), solicitante="Seleção da IA (radar)", status="aberta",
-                data_solicitacao=hoje.isoformat(), prazo=prazo, responsavel=resp,
+                data_solicitacao=hoje.isoformat(), prazo=prazo, responsavel=resp, area=t["area"],
                 atribuido_por=autor if resp else None, atribuido_em=marca if resp else None,
                 criado_por=autor, criado_em=marca, atualizado_em=marca)).inserted_primary_key[0]
             c.execute(insert(selecao_ia).values(codigo_deputado=cod, lote=lote, tema=t["tema"], topico=t["topico"],
                                                 resumo=t["resumo"], tipo=t["tipo"], acao_sugerida=t["acao_sugerida"],
+                                                area=t["area"], instrumento=t["instrumento"],
                                                 noticias=json.dumps(t["noticias"]), responsavel=resp,
                                                 solicitacao_id=sid, criado_em=marca))
             if t["noticias"]:          # as notícias passam a seguir a solicitação (se ainda não tinham uma)
                 c.execute(update(noticias).where(noticias.c.id.in_(t["noticias"]), noticias.c.solicitacao_id.is_(None))
                           .values(solicitacao_id=sid))
             t["responsavel"], t["solicitacao_id"] = resp, sid
-    log.info("seleção da IA do deputado %s: %d tópico(s)%s", cod, len(topicos), " (sem IA)" if sem_ia else "")
-    return {"lote": lote, "topicos": topicos, "sem_ia": sem_ia}
+    log.info("seleção da IA do deputado %s: %d tópico(s)", cod, len(topicos))
+    return {"lote": lote, "topicos": topicos}
+
+
+def limpar_selecao_por_palavras():
+    """Apaga o que a versão anterior gerou sem IA (tópicos de uma palavra só, providência genérica), desde que a
+    solicitação ainda esteja aberta, sem anexos e sem resumo. Roda na subida do app; não mexe em nada trabalhado."""
+    from db import anexos
+    from sqlalchemy import delete
+    with engine.begin() as c:
+        rows = c.execute(select(selecao_ia.c.id, selecao_ia.c.solicitacao_id).where(
+            selecao_ia.c.acao_sugerida == "Avaliar as notícias e propor a providência cabível.")).all()
+        n = 0
+        for rid, sid in rows:
+            if sid:
+                st = c.execute(select(solicitacoes.c.status, solicitacoes.c.resumo_realizado)
+                               .where(solicitacoes.c.id == sid)).first()
+                tem_anexo = c.execute(select(anexos.c.id).where(anexos.c.solicitacao_id == sid).limit(1)).first()
+                if st and (st[0] != "aberta" or st[1] or tem_anexo):
+                    continue
+                c.execute(update(noticias).where(noticias.c.solicitacao_id == sid).values(solicitacao_id=None))
+                c.execute(delete(solicitacoes).where(solicitacoes.c.id == sid))
+            c.execute(delete(selecao_ia).where(selecao_ia.c.id == rid))
+            n += 1
+    if n:
+        log.info("seleção da IA: %d tópico(s) gerados por palavras soltas foram removidos", n)
+    return n
 
 
 # ---------------- leitura ----------------

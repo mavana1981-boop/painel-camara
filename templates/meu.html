@@ -304,6 +304,7 @@
         <summary>
           <span class="sol-st {{ x.status }}">{{ status|selectattr(0, 'equalto', x.status)|map(attribute=1)|first }}</span>
           <b>{{ x.titulo }}</b>
+          {% if x.area %}<span class="area-chip">{{ x.area }}</span>{% endif %}
           {% if x.responsavel %}<span class="sol-resp" title="Responsável: {{ x.responsavel }}">{{ avatar(x.responsavel, 26) }}</span>{% endif %}
           <span class="sol-meta">{{ (x.data_solicitacao or x.criado_em)|data }}{% if x.solicitante %} · {{ x.solicitante }}{% endif %}{% if x.prazo %} · prazo {{ x.prazo|data }}{% endif %}{% if x.data_solucao %} · solucionada {{ x.data_solucao|data }}{% endif %}{% if x.atrasada %} <span class="sol-atraso">atrasada</span>{% endif %}{% if x.no_prazo == False %} <span class="sol-atraso">fora do prazo</span>{% endif %}{% if x.anexos %} · 📎 {{ x.anexos|length }}{% endif %}</span>
         </summary>
@@ -357,6 +358,7 @@
                 <label>Data da solução<input type="date" name="data_solucao" value="{{ x.data_solucao or '' }}"></label>
               </div>
               {% if pleno %}{{ campo_responsavel(x.responsavel) }}{% endif %}
+              <label>Área temática<select name="area"><option value="">—</option>{% for a in areas %}<option {{ 'selected' if x.area == a }}>{{ a }}</option>{% endfor %}</select></label>
               {% if x.status == 'concluida' %}
               <label>O que foi feito<textarea name="resumo_realizado" rows="3">{{ x.resumo_realizado or '' }}</textarea></label>
               <label class="chk"><input type="checkbox" name="no_clipping" value="1"{% if x.no_clipping != False %} checked{% endif %}> Registrar no clipping do parlamentar</label>
@@ -379,6 +381,7 @@
       <div class="lin"><label>Solicitante<input name="solicitante" maxlength="120" placeholder="Ex.: o deputado"></label><label>Data da solicitação<input type="date" name="data_solicitacao" value="{{ hoje.isoformat() }}"></label></div>
       <div class="lin"><label>Prazo final<input type="date" name="prazo"></label><label>Data da solução<input type="date" disabled title="Preenchida quando a solicitação for concluída"></label></div>
       {{ campo_responsavel(None) }}
+      <label>Área temática<select name="area"><option value="">—</option>{% for a in areas %}<option>{{ a }}</option>{% endfor %}</select></label>
       <label>Anexos<input type="file" name="arquivos" multiple></label>
       <small style="color:var(--suave)">PDF, Word, Excel, PowerPoint, imagens, TXT, CSV, ZIP ou e-mail · até 10 MB cada.</small>
       <button class="btn com-ic">{{ ic("mais") }} Registrar solicitação</button>
@@ -458,12 +461,12 @@
     <div class="sel-cab">
       <div>{% if selecao %}<b>Seleção de {{ selecao.gerado_em.strftime('%d/%m/%Y às %H:%M') }}</b> · {{ selecao.total }} tópico{{ 's' if selecao.total != 1 }} de {{ selecao.temas|length }} tema{{ 's' if selecao.temas|length != 1 }}
         {% else %}<b>Nenhuma seleção ainda.</b>{% endif %}
-        <small>A IA lê as notícias dos últimos {{ sel_dias }} dias de cada tema acompanhado e escolhe, pelo contexto, os assuntos que mais aparecem (pelo menos 2 por tema). Cada tópico já vira uma solicitação com responsável sorteado. Roda sozinha uma vez por dia, a partir das 7h.</small></div>
+        <small>A IA lê as notícias dos últimos {{ sel_dias }} dias de cada tema acompanhado, agrupa as que tratam do mesmo fato e escolhe os assuntos mais recorrentes (pelo menos 2 por tema), cada um com área e uma providência concreta (RIC, PL, nota, requerimento…). Cada tópico já vira uma solicitação com responsável sorteado. Roda sozinha uma vez por dia, a partir das 7h.</small></div>
       <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Gerando…'">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_gerar">
         <button class="btn">✨ Gerar nova seleção</button></form>
     </div>
-    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">Sem a chave da IA (ANTHROPIC_API_KEY), a seleção usa só as palavras mais frequentes das manchetes e não roda sozinha.</div>{% endif %}
+    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">A Seleção da IA precisa da chave da Anthropic: configure <b>ANTHROPIC_API_KEY</b> no Railway. Sem ela, nenhum tópico é gerado.</div>{% endif %}
     {% if selecao %}
     {% for tema, tops in selecao.temas.items() %}
       <div class="sel-tema"><span>Tema</span> {{ tema }} <small>{{ tops|length }} tópico{{ 's' if tops|length != 1 }}</small></div>
@@ -471,11 +474,12 @@
       <article class="sel-top {{ t.tipo }}">
         <div class="sel-l1">
           <span class="sel-tipo {{ t.tipo }}">{{ sel_tipos[t.tipo] }}</span>
+          {% if t.area %}<span class="area-chip">{{ t.area }}</span>{% endif %}
           <b>{{ t.topico }}</b>
           {% if t.status %}<span class="sol-st {{ t.status }}">{{ status|selectattr(0, 'equalto', t.status)|map(attribute=1)|first }}</span>{% endif %}
         </div>
         {% if t.resumo %}<p class="sel-res">{{ t.resumo }}</p>{% endif %}
-        {% if t.acao_sugerida %}<p class="sel-acao"><b>Ação sugerida:</b> {{ t.acao_sugerida }}</p>{% endif %}
+        {% if t.acao_sugerida %}<p class="sel-acao">{% if t.instrumento %}<span class="sel-inst">{{ t.instrumento }}</span> {% endif %}{{ t.acao_sugerida }}</p>{% endif %}
         {% if t.noticias_l %}<details class="sel-nots"><summary>{{ t.noticias_l|length }} notícia{{ 's' if t.noticias_l|length != 1 }}</summary>
           <ul>{% for n in t.noticias_l %}<li><a href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.titulo }}</a> <small>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</small></li>{% endfor %}</ul></details>{% endif %}
         <div class="sel-rodape">

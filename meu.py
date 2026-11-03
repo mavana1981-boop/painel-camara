@@ -340,6 +340,7 @@ def criar_solicitacao(cod, f, arquivos, autor):
             codigo_deputado=cod, titulo=titulo[:200], descricao=(f.get("descricao") or "").strip() or None,
             solicitante=(f.get("solicitante") or "").strip()[:120] or None, status="aberta",
             prazo=datas["prazo"], data_solicitacao=datas["data_solicitacao"],
+            area=__import__("selecao_ia")._area(f.get("area")) if f.get("area") else None,
             responsavel=resp, atribuido_por=autor if resp else None, atribuido_em=agora if resp else None,
             visto_em=agora if resp and resp == autor else None,
             criado_por=autor, criado_em=agora, atualizado_em=agora)).inserted_primary_key[0]
@@ -409,6 +410,9 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
         elif acao == "editar":
             datas = _datas_solicitacao(f)
             valores = {"atualizado_em": datetime.now(), **datas}
+            if "area" in f:
+                import selecao_ia as si
+                valores["area"] = si._area(f.get("area")) if f.get("area") else None
             if "resumo_realizado" in f:
                 valores["resumo_realizado"] = (f.get("resumo_realizado") or "").strip() or None
                 valores["no_clipping"] = f.get("no_clipping") == "1"
@@ -924,6 +928,7 @@ def painel(cod):
         ctx["filtro_status"] = request.args.get("status", "")
         ctx["sol"] = lista_solicitacoes(cod, ctx["filtro_status"], None if pleno else autor)
         ctx["usuarios_resp"] = __import__("fotos").usuarios_ativos()
+        ctx["areas"] = __import__("selecao_ia").AREAS
         ctx["abrir"] = request.args.get("abrir", type=int)
         with engine.begin() as c:     # o responsável abriu a lista: as tarefas dele deixam de ser "novas"
             c.execute(update(solicitacoes).where(solicitacoes.c.codigo_deputado == cod,
@@ -1041,8 +1046,7 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "radar" and acao == "selecao_gerar":
             import selecao_ia as si
             r = si.gerar(cod, autor=autor)
-            flash(f"Seleção gerada: {len(r['topicos'])} tópico(s), já distribuídos e registrados em Solicitações."
-                  + (" A IA não respondeu; usei as palavras mais frequentes das manchetes." if r["sem_ia"] else ""), "ok")
+            flash(f"Seleção gerada: {len(r['topicos'])} tópico(s), já distribuídos e registrados em Solicitações.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao")
         elif secao == "radar" and acao == "selecao_equipes":
             import selecao_ia as si

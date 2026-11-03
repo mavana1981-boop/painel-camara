@@ -223,6 +223,7 @@ solicitacoes = Table(
     Column("atribuido_por", String(60)),
     Column("atribuido_em", DateTime),
     Column("visto_em", DateTime),                # quando o responsável abriu a tarefa (tira o "nova")
+    Column("area", String(40)),                  # área temática (ex.: Saúde) — preenchida pela Seleção da IA
     Column("resumo_realizado", Text),            # o que foi feito (vai para o clipping e o relatório)
     Column("no_clipping", Boolean),              # concluída entra no clipping/relatório (nulo = sim)
     Column("criado_por", String(60)),
@@ -302,6 +303,8 @@ selecao_ia = Table(  # radar: tópicos escolhidos pela IA (≥2 por tema acompan
     Column("topico", String(200)),
     Column("resumo", Text),
     Column("tipo", String(20)),                  # comissao ou outros
+    Column("area", String(40)),                  # área temática (Saúde, Segurança Pública...)
+    Column("instrumento", String(80)),           # RIC, PL, nota à imprensa...
     Column("acao_sugerida", Text),
     Column("noticias", Text),                    # JSON: ids das notícias do tópico
     Column("responsavel", String(60)),

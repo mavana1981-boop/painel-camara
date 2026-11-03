@@ -60,6 +60,11 @@ app.register_blueprint(meu.bp)
 app.register_blueprint(fotos.bp)
 import ajuda  # noqa: E402
 app.register_blueprint(ajuda.bp)
+try:
+    import selecao_ia  # noqa: E402
+    selecao_ia.limpar_selecao_por_palavras()
+except Exception:
+    logging.getLogger(__name__).exception("limpeza da seleção da IA")
 
 ABAS = [("perfil", "Perfil"), ("proposicoes", "Proposições"), ("cota", "Cota"),
         ("votacoes", "Votações"), ("orientacoes", "Orientações"), ("rankings", "Rankings"),
