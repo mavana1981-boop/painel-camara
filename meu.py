@@ -545,6 +545,8 @@ def painel(cod):
             agenda_deputado(cod, hoje - timedelta(days=DIAS_HISTORICO), hoje + timedelta(days=45), so_dele))
         ctx["n_historico"] = sum(len(d["itens"]) for d in ctx["historico"])
         ctx["dias_historico"] = DIAS_HISTORICO
+        import agenda_pdf as ap
+        ctx["periodos_impressao"] = ap.PERIODOS
         ctx["so_dele"] = so_dele
     elif secao == "notificacoes":
         ctx["notif"] = paineis.notificacoes(cod, limite=150)
@@ -631,6 +633,31 @@ def _post(cod, secao, s, autor):
     except ValueError as e:
         flash(str(e), "erro")
     return redirect(destino)
+
+
+@bp.route("/<int:cod>/agenda.pdf")
+def agenda_pdf(cod):
+    """Agenda do período escolhido em PDF (abre no navegador, pronto para imprimir ou salvar)."""
+    import agenda_pdf as ap
+    _exigir_acesso(cod)
+    s = paineis.deputado(cod)
+    if not s:
+        abort(404)
+    agora = agora_brt()
+    try:
+        inicio, fim, rotulo = ap.periodo(request.args, agora.date())
+    except ValueError as e:
+        flash(str(e), "erro")
+        return redirect(url_for("meu.painel", cod=cod, secao="agenda"))
+    so_dele = request.args.get("todos") != "1"
+    pdf = ap.gerar(s, agenda_deputado(cod, inicio, fim, so_dele), inicio, fim, rotulo, so_dele,
+                   com_descricao=request.args.get("descricao") == "1", agora=agora)
+    nome = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", s.get("nome") or "").encode("ascii", "ignore")
+                  .decode().lower()).strip("-") or str(cod)
+    resp = send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=False,
+                     download_name=f"agenda-{nome}-{inicio:%Y%m%d}{'' if fim == inicio else f'-{fim:%Y%m%d}'}.pdf")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @bp.route("/<int:cod>/anexo/<int:aid>")

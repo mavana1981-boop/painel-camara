@@ -1082,3 +1082,29 @@ def test_agenda_historico():
     assert [e["id"] for d in prox for e in d["itens"]] == [3, 6, 7, 8, 9]
     assert [d["data"] for d in hist] == ["2026-11-03", "2026-11-01"]
     assert sorted(e["id"] for e in hist[0]["itens"]) == [2, 4, 5]
+
+
+def test_agenda_pdf():
+    """Impressão da agenda: período escolhido, PDF válido e período inválido volta com aviso."""
+    from datetime import date
+    import agenda_pdf as ap
+    ap.foto_redonda = lambda url, lado=360: None          # sem rede nos testes
+    hoje = date(2026, 11, 4)                               # quarta-feira
+    assert ap.periodo({"periodo": "semana"}, hoje)[:2] == (date(2026, 11, 2), date(2026, 11, 8))
+    assert ap.periodo({"periodo": "proxima_semana"}, hoje)[:2] == (date(2026, 11, 9), date(2026, 11, 15))
+    assert ap.periodo({"periodo": "mes"}, hoje)[:2] == (date(2026, 11, 1), date(2026, 11, 30))
+    assert ap.periodo({"periodo": "data", "de": "2026-12-01"}, hoje)[:2] == (date(2026, 12, 1),) * 2
+    assert ap.periodo({"periodo": "intervalo", "de": "2026-11-20", "ate": "2026-11-10"}, hoje)[:2] == \
+        (date(2026, 11, 10), date(2026, 11, 20))
+    for ruim in ({"periodo": "data"}, {"periodo": "intervalo", "de": "2026-01-01", "ate": "2026-12-31"}):
+        try:
+            ap.periodo(ruim, hoje)
+            assert False, ruim
+        except ValueError:
+            pass
+    adm = _cliente()
+    r = adm.get("/meu/101/agenda.pdf?periodo=semana&descricao=1")
+    assert r.status_code == 200 and r.mimetype == "application/pdf" and r.data[:5] == b"%PDF-"
+    r = adm.get("/meu/101/agenda.pdf?periodo=intervalo&de=2026-01-01")
+    assert r.status_code == 302
+    assert "Imprimir agenda" in adm.get("/meu/101?secao=agenda").get_data(as_text=True)

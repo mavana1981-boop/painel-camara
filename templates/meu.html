@@ -51,7 +51,7 @@
 {%- endmacro %}
 
 {% macro ic(n) -%}
-<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{% if n == 'visao' %}<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>{% elif n == 'agenda' %}<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>{% elif n == 'notificacoes' %}<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/>{% elif n == 'solicitacoes' %}<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>{% elif n == 'questoes' %}<path d="M12 3v18M5 7h14M5 7l-3 7a4 4 0 0 0 6 0zM19 7l-3 7a4 4 0 0 0 6 0zM8 21h8"/>{% elif n == 'radar' %}<path d="M4 4h13v15a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2zM17 8h3v11a2 2 0 0 1-2 2"/><path d="M8 8h5M8 12h5M8 16h3"/>{% elif n == 'rankings' %}<path d="M8 21V11M12 21V4M16 21v-7M4 21h16"/>{% elif n == 'clipping' %}<path d="M20 6 9 17l-5-5"/>{% elif n == 'refresh' %}<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/>{% elif n == 'mais' %}<path d="M12 5v14M5 12h14"/>{% elif n == 'seta' %}<path d="M5 12h14M13 6l6 6-6 6"/>{% endif %}</svg>
+<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{% if n == 'visao' %}<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>{% elif n == 'agenda' %}<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>{% elif n == 'notificacoes' %}<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/>{% elif n == 'solicitacoes' %}<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>{% elif n == 'questoes' %}<path d="M12 3v18M5 7h14M5 7l-3 7a4 4 0 0 0 6 0zM19 7l-3 7a4 4 0 0 0 6 0zM8 21h8"/>{% elif n == 'radar' %}<path d="M4 4h13v15a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2zM17 8h3v11a2 2 0 0 1-2 2"/><path d="M8 8h5M8 12h5M8 16h3"/>{% elif n == 'rankings' %}<path d="M8 21V11M12 21V4M16 21v-7M4 21h16"/>{% elif n == 'clipping' %}<path d="M20 6 9 17l-5-5"/>{% elif n == 'refresh' %}<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/>{% elif n == 'imprimir' %}<path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/>{% elif n == 'mais' %}<path d="M12 5v14M5 12h14"/>{% elif n == 'seta' %}<path d="M5 12h14M13 6l6 6-6 6"/>{% endif %}</svg>
 {%- endmacro %}
 
 {% set pn = (s.nome or '?').split() %}
@@ -138,6 +138,23 @@
       <label>Observações<textarea name="descricao" rows="3"></textarea></label>
       <button class="btn com-ic">{{ ic("mais") }} Incluir na agenda</button>
     </form>
+    <form method="get" class="meu-form imp-form" action="{{ url_for('meu.agenda_pdf', cod=cod) }}" target="_blank" style="border-top:1px solid var(--linha)">
+      <h3 class="imp-tit">{{ ic("imprimir") }} Imprimir agenda</h3>
+      <label>Período<select name="periodo" id="imp-periodo">
+        {% for v, r in periodos_impressao %}<option value="{{ v }}"{% if v == 'semana' %} selected{% endif %}>{{ r }}</option>{% endfor %}
+      </select></label>
+      <div class="lin imp-datas" hidden><label class="imp-de"><span>Data</span><input type="date" name="de" value="{{ hoje }}"></label><label class="imp-ate">Até<input type="date" name="ate" value="{{ hoje }}"></label></div>
+      <label class="chk"><input type="checkbox" name="todos" value="1"{% if not so_dele %} checked{% endif %}> Incluir toda a agenda da Casa</label>
+      <label class="chk"><input type="checkbox" name="descricao" value="1" checked> Incluir pautas e observações</label>
+      <button class="btn com-ic">{{ ic("imprimir") }} Gerar PDF</button>
+    </form>
+    <script>
+    (function(){var s=document.getElementById('imp-periodo');if(!s)return;var f=s.form,b=f.querySelector('.imp-datas'),
+      de=f.querySelector('.imp-de span'),ate=f.querySelector('.imp-ate');
+      function at(){var v=s.value;b.hidden=!(v==='data'||v==='intervalo');ate.hidden=v!=='intervalo';
+        de.textContent=v==='intervalo'?'De':'Data';}
+      s.addEventListener('change',at);at();})();
+    </script>
     <form method="post" class="meu-form" style="border-top:1px solid var(--linha)"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="atualizar">
       <button class="btn sec com-ic">{{ ic("refresh") }} Atualizar agenda e radar agora</button></form>
   </div>

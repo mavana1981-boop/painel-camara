@@ -693,3 +693,10 @@ details.ag-hist[open] summary{background:#f4f8f5}
 .ag-item.passado{opacity:.62}
 .ag-item.passado .ag-hora{color:var(--suave)}
 .ag-item.passado:hover{opacity:1}
+
+/* impressão da agenda */
+.imp-tit{display:flex;align-items:center;gap:6px;margin:0 0 2px;font-size:13.5px;color:var(--pri-esc)}
+.imp-tit .ic{width:16px;height:16px}
+.meu-form label.chk{flex-direction:row;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;font-size:13px;color:var(--tinta)}
+.meu-form label.chk input{width:auto;margin:0}
+.meu-form [hidden]{display:none!important}
