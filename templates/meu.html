@@ -41,6 +41,16 @@
 {%- endmacro %}
 
 {% macro clip_item(e) -%}
+{% if e.tipo == 'realizacao' %}
+<div class="clip-item realizacao">
+  <span class="clip-tipo">{{ e.rotulo }}</span>
+  <div class="clip-txt"><b><a href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', abrir=e.id) }}#s{{ e.id }}">{{ e.titulo }}</a></b>
+    {% if e.responsavel %}<span class="clip-resp">{{ avatar(e.responsavel, 20) }}</span>{% endif %}
+    {% if e.resumo_realizado %}<div class="clip-resumo">{{ e.resumo_realizado }}</div>{% elif e.descricao %}<div class="notif-ementa">{{ e.descricao }}</div>{% endif %}
+    {% if e.anexos %}<div class="clip-anexos">{% for a in e.anexos %}<a class="anexo" href="{{ url_for('meu.baixar_anexo', cod=cod, aid=a.id) }}">📎 {{ a.nome }}</a>{% endfor %}</div>{% endif %}
+  </div>
+</div>
+{% else %}
 <div class="clip-item {{ e.tipo }}">
   <span class="clip-tipo">{{ e.rotulo }}</span>
   <div class="clip-txt"><b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.identificacao }}</a>{% else %}{{ e.identificacao }}{% endif %}</b>
@@ -48,6 +58,7 @@
     <span class="clip-sit">{{ e.situacao }}</span>
     {% if e.ementa %}<div class="notif-ementa">{{ e.ementa }}</div>{% endif %}</div>
 </div>
+{% endif %}
 {%- endmacro %}
 
 {% macro ic(n) -%}
@@ -292,12 +303,28 @@
           {% endfor %}</div>{% endif %}
           <div class="sol-acoes">
             <form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="status"><input type="hidden" name="id" value="{{ x.id }}">
-              <select name="status" class="mini" onchange="this.form.submit()">{% for k, nome in status %}<option value="{{ k }}" {{ 'selected' if x.status == k }}>{{ nome }}</option>{% endfor %}</select></form>
+              <select name="status" class="mini" onchange="if(this.value=='concluida'&&'{{ x.status }}'!='concluida'){var p=document.getElementById('conc-{{ x.id }}');p.hidden=false;p.querySelector('textarea').focus();this.value='{{ x.status }}';}else{this.form.submit();}">{% for k, nome in status %}<option value="{{ k }}" {{ 'selected' if x.status == k }}>{{ nome }}</option>{% endfor %}</select></form>
             <form method="post" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="anexar"><input type="hidden" name="id" value="{{ x.id }}">
               <input type="file" name="arquivos" multiple class="mini" required><button class="mini">Anexar</button></form>
             {% if pleno %}<form method="post" onsubmit="return confirm('Excluir esta solicitação e os anexos?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="{{ x.id }}">
               <button class="mini perigo">Excluir</button></form>{% endif %}
           </div>
+          {% if x.status == 'concluida' and x.no_clipping != False %}
+          <div class="sol-realizado"><span>{{ ic("clipping") }} No clipping do parlamentar</span>
+            {% if x.resumo_realizado %}<div>{{ x.resumo_realizado }}</div>{% else %}<div style="color:var(--suave)">Sem resumo do que foi feito — inclua em “Editar”.</div>{% endif %}</div>
+          {% endif %}
+          {% if x.status != 'concluida' %}
+          <form method="post" enctype="multipart/form-data" class="meu-form sol-concluir" id="conc-{{ x.id }}" hidden>
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="concluir"><input type="hidden" name="id" value="{{ x.id }}">
+            <h3>Concluir solicitação</h3>
+            <label>O que foi feito <small>(resumo que vai para o clipping e o relatório de realizações)</small>
+              <textarea name="resumo" rows="4" placeholder="Ex.: Elaborada a minuta do PDL 412/2026, protocolada em 05/11; nota enviada à imprensa.">{{ x.resumo_realizado or '' }}</textarea></label>
+            <div class="lin"><label>Data da solução<input type="date" name="data_solucao" value="{{ hoje.isoformat() }}"></label>
+              <label>Anexar o resultado<input type="file" name="arquivos" multiple></label></div>
+            <label class="chk"><input type="checkbox" name="no_clipping" value="1" checked> Registrar no clipping do parlamentar (entra no relatório anual)</label>
+            <div style="display:flex;gap:8px"><button class="btn">Concluir</button><button type="button" class="btn sec" onclick="this.closest('form').hidden=true">Cancelar</button></div>
+          </form>
+          {% endif %}
           <details class="sol-editar">
             <summary>Editar datas{{ ' e responsável' if pleno }}</summary>
             <form method="post" class="meu-form sol-ed-form"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="editar"><input type="hidden" name="id" value="{{ x.id }}">
@@ -307,6 +334,10 @@
                 <label>Data da solução<input type="date" name="data_solucao" value="{{ x.data_solucao or '' }}"></label>
               </div>
               {% if pleno %}{{ campo_responsavel(x.responsavel) }}{% endif %}
+              {% if x.status == 'concluida' %}
+              <label>O que foi feito<textarea name="resumo_realizado" rows="3">{{ x.resumo_realizado or '' }}</textarea></label>
+              <label class="chk"><input type="checkbox" name="no_clipping" value="1"{% if x.no_clipping != False %} checked{% endif %}> Registrar no clipping do parlamentar</label>
+              {% endif %}
               <button class="mini">Salvar</button>
             </form>
           </details>
@@ -499,13 +530,19 @@
   <label>De<input type="date" name="inicio" value="{{ ini }}"></label>
   <label>Até<input type="date" name="fim" value="{{ fim }}"></label>
   <button class="btn">Filtrar</button>
-  <span style="font-size:13px;color:var(--suave);padding-bottom:7px">{{ clip.total }} aprovação(ões): {{ clip.autoria }} de autoria · {{ clip.relatoria }} de relatoria</span>
+  <span style="font-size:13px;color:var(--suave);padding-bottom:7px">{{ clip.total }} registro(s): {{ clip.realizacao }} solicitação(ões) atendida(s) · {{ clip.autoria }} de autoria · {{ clip.relatoria }} de relatoria</span>
+</form>
+<form class="filtros rel-form" method="get" action="{{ url_for('meu.realizacoes_pdf', cod=cod) }}" target="_blank">
+  <span class="rel-tit">{{ ic("imprimir") }} Relatório de realizações</span>
+  <label>Ano<select name="ano">{% for a in anos_relatorio %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+  <label>Conteúdo<select name="aprovacoes"><option value="1">Solicitações atendidas e aprovações legislativas</option><option value="0">Só solicitações atendidas</option></select></label>
+  <button class="btn">Gerar PDF</button>
 </form>
 <section class="card neu">
-  <h2>Clipping diário <small>projetos aprovados e relatorias aprovadas, por data</small></h2>
+  <h2>Clipping diário <small>solicitações atendidas, projetos aprovados e relatorias aprovadas, por data</small></h2>
   {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
-  {% else %}<div class="vazio-msg">Nenhuma aprovação no período.</div>{% endfor %}
-  <p class="nota">Autoria: a situação atual da proposição indica aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião.</p>
+  {% else %}<div class="vazio-msg">Nenhum registro no período.</div>{% endfor %}
+  <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação atual da proposição indica aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião.</p>
 </section>
 <section class="card neu" style="margin-top:14px">
   <h2>Relatorias do deputado <small>{{ rels|length }}</small></h2>

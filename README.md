@@ -125,7 +125,7 @@ O administrador vê todos os deputados em exercício.
 | Questões de ordem | IA (Claude, API da Anthropic) com base no Regimento Interno da Câmara enviado pelo admin (PDF/TXT) |
 | Radar de notícias | No modelo do Monitor Legislativo: os mesmos portais (RSS, editáveis pelo admin) a cada 2 horas, mais o Google Notícias; entram as notícias que citam o deputado ou um tema cadastrado, e a IA indica relevância, categoria, tipo de ação e ação sugerida. A equipe marca Pendente / Em análise / Ação efetuada |
 | Rankings | Posição entre os deputados em exercício e quanto falta para subir |
-| Clipping | Proposições do deputado com situação de aprovação e relatorias com parecer aprovado, por data |
+| Clipping | Solicitações concluídas pela equipe (resumo do que foi feito + anexos), proposições do deputado com situação de aprovação e relatorias com parecer aprovado, por data. Botão **Relatório de realizações** gera o PDF do ano |
 
 A Câmara não tem serviço de “relatorias do deputado”: elas são montadas a partir das pautas das reuniões
 deliberativas (`/eventos/{id}/pauta`, que traz o relator de cada item e o resultado). Na primeira coleta, o app

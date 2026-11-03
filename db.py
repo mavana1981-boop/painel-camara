@@ -212,6 +212,8 @@ solicitacoes = Table(
     Column("atribuido_por", String(60)),
     Column("atribuido_em", DateTime),
     Column("visto_em", DateTime),                # quando o responsável abriu a tarefa (tira o "nova")
+    Column("resumo_realizado", Text),            # o que foi feito (vai para o clipping e o relatório)
+    Column("no_clipping", Boolean),              # concluída entra no clipping/relatório (nulo = sim)
     Column("criado_por", String(60)),
     Column("criado_em", DateTime),
     Column("atualizado_em", DateTime),

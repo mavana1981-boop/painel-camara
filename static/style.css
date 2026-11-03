@@ -802,3 +802,23 @@ details.nt-prop>summary{list-style:none;cursor:pointer;display:flex;gap:10px;ali
 .nt-data{font-weight:600;color:var(--suave);margin-right:6px}
 .nt-props .notif{background:#fff;border:1px solid var(--linha);border-radius:8px;margin-top:6px}
 @media (max-width:600px){.nt-props{padding-left:14px}.nt-ult,.nt-siglas{margin-left:0;width:100%}.nt-total{margin-left:0}}
+
+/* realizações no clipping */
+.clip-item.realizacao .clip-tipo{background:#fbf1d9;color:#8a6d22}
+.clip-item.realizacao{border-left:3px solid var(--ouro)}
+.clip-resumo{white-space:pre-wrap;font-size:13px;margin-top:4px;color:var(--tinta)}
+.clip-anexos{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.clip-anexos .anexo{font-size:12px;text-decoration:none}
+.clip-resp{display:inline-flex;vertical-align:middle}
+.rel-form{align-items:center}
+.rel-tit{display:flex;gap:6px;align-items:center;font-weight:700;color:var(--pri-esc);font-size:13px;margin-right:6px}
+.rel-tit .ic{width:18px;height:18px}
+.sol-concluir{margin-top:10px;border:1px solid var(--pri-med);border-radius:10px;background:var(--pri-cl);padding:12px}
+.sol-concluir h3{margin:0;font-size:14px;color:var(--pri-esc)}
+.sol-concluir label small{text-transform:none;letter-spacing:0;font-weight:400}
+.sol-concluir .chk,.sol-ed-form .chk{flex-direction:row;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--tinta);font-weight:500}
+.sol-concluir .chk input,.sol-ed-form .chk input{width:auto}
+.sol-realizado{margin:4px 0 8px;border:1px solid #ecdcae;background:#fffaf0;border-radius:8px;padding:8px 10px;font-size:13px}
+.sol-realizado span{display:flex;gap:5px;align-items:center;font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;color:#8a6d22;margin-bottom:3px}
+.sol-realizado span .ic{width:13px;height:13px}
+.sol-realizado div{white-space:pre-wrap}

@@ -837,6 +837,55 @@ def test_agenda_oculta_solenes_e_notificacoes_agrupadas():
     assert 'class="sel" href="/meu/101?secao=notificacoes&amp;modo=data"' in html
 
 
+def test_solicitacao_concluida_vai_para_clipping_e_relatorio():
+    import io
+    from datetime import date, timedelta
+    from pypdf import PdfReader
+    import meu
+    adm = _cliente()
+    hoje = date.today()
+    tok = _tok(adm, "/meu/101?secao=solicitacoes")
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "nova", "titulo": "PDL para sustar a portaria 2272",
+                                                  "solicitante": "o líder", "data_solicitacao": (hoje - timedelta(days=2)).isoformat()})
+    sid = _q("SELECT id FROM solicitacoes WHERE titulo = 'PDL para sustar a portaria 2272'")[0][0]
+    html = adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    assert f'id="conc-{sid}" hidden' in html and "O que foi feito" in html
+    r = adm.post("/meu/101?secao=solicitacoes", content_type="multipart/form-data", data={
+        "_csrf": tok, "acao": "concluir", "id": sid, "no_clipping": "1",
+        "resumo": "Minuta do PDL elaborada e protocolada; nota enviada à imprensa.",
+        "arquivos": [(io.BytesIO(b"PK conteudo"), "04_PDL_Susta_Portaria_2272.docx")]})
+    assert r.status_code == 302
+    st, sol, resumo, clip = _q("SELECT status, data_solucao, resumo_realizado, no_clipping FROM solicitacoes WHERE id = :s", s=sid)[0]
+    assert st == "concluida" and sol == hoje.isoformat() and resumo.startswith("Minuta do PDL") and clip
+    html = adm.get("/meu/101?secao=solicitacoes").get_data(as_text=True)
+    assert "registrada no clipping" in html and "No clipping do parlamentar" in html
+
+    html = adm.get("/meu/101?secao=clipping").get_data(as_text=True)
+    assert "Solicitação atendida" in html and "PDL para sustar a portaria 2272" in html
+    assert "Minuta do PDL elaborada e protocolada" in html and "04_PDL_Susta_Portaria_2272.docx" in html
+    assert "Relatório de realizações" in html and re.search(r"\d+ solicitação\(ões\) atendida\(s\)", html)
+    assert meu.clipping(101, hoje - timedelta(days=1), hoje)["realizacao"] >= 1
+
+    pdf = adm.get(f"/meu/101/realizacoes.pdf?ano={hoje.year}")
+    assert pdf.status_code == 200 and pdf.mimetype == "application/pdf"
+    texto = " ".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.data)).pages)
+    assert "PDL para sustar a portaria 2272" in texto and "Minuta do PDL elaborada" in texto
+    assert "04_PDL_Susta_Portaria_2272.docx" in texto and f"Ano de {hoje.year}" in texto
+    pdf0 = adm.get(f"/meu/101/realizacoes.pdf?ano={hoje.year}&aprovacoes=0")
+    texto0 = " ".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf0.data)).pages)
+    assert "PDL para sustar" in texto0 and "Proposição aprovada".upper() not in texto0.upper()
+    vazio = adm.get("/meu/101/realizacoes.pdf?ano=2023")
+    assert "Nenhuma realização" in " ".join(p.extract_text() for p in PdfReader(io.BytesIO(vazio.data)).pages)
+
+    # tirar do clipping pela edição
+    adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "editar", "id": sid,
+                                                  "data_solicitacao": (hoje - timedelta(days=2)).isoformat(),
+                                                  "data_solucao": hoje.isoformat(), "resumo_realizado": "Novo resumo"})
+    assert _q("SELECT resumo_realizado, no_clipping FROM solicitacoes WHERE id = :s", s=sid)[0] == ("Novo resumo", False)
+    assert "PDL para sustar a portaria 2272" not in adm.get("/meu/101?secao=clipping").get_data(as_text=True)
+    assert _anonimo().get(f"/meu/101/realizacoes.pdf").status_code == 302
+
+
 def _regimento_falso():
     linhas = []
     for n in range(1, 283):

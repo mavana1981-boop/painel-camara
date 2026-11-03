@@ -395,9 +395,22 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
             elif novo in ("aberta", "andamento"):
                 valores["data_solucao"] = None          # reaberta: ainda sem solução
             c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(**valores))
+        elif acao == "concluir":
+            atual = c.execute(select(solicitacoes.c.data_solicitacao).where(solicitacoes.c.id == sid)).scalar()
+            hoje = agora_brt().date().isoformat()
+            sol = _iso(f.get("data_solucao")) or max(hoje, atual or hoje)
+            if atual and sol < atual:
+                raise ValueError("A data da solução não pode ser anterior à data da solicitação.")
+            _guardar_anexos(c, sid, arquivos, autor)
+            c.execute(update(solicitacoes).where(solicitacoes.c.id == sid).values(
+                status="concluida", data_solucao=sol, resumo_realizado=(f.get("resumo") or "").strip() or None,
+                no_clipping=f.get("no_clipping") == "1", atualizado_em=datetime.now()))
         elif acao == "editar":
             datas = _datas_solicitacao(f)
             valores = {"atualizado_em": datetime.now(), **datas}
+            if "resumo_realizado" in f:
+                valores["resumo_realizado"] = (f.get("resumo_realizado") or "").strip() or None
+                valores["no_clipping"] = f.get("no_clipping") == "1"
             if "responsavel" in f:
                 resp = _responsavel_valido(f.get("responsavel"))
                 antes = c.execute(select(solicitacoes.c.responsavel).where(solicitacoes.c.id == sid)).scalar()
@@ -476,13 +489,63 @@ def clipping(cod, inicio, fim):
     for x in rels:
         if eh_aprovacao(x["situacao"]):
             eventos.append({**x, "tipo": "relatoria", "rotulo": "Relatoria aprovada"})
+    for x in realizacoes(cod, inicio, fim):
+        eventos.append({**x, "tipo": "realizacao", "rotulo": "Solicitação atendida", "data_situacao": x["data_solucao"],
+                        "identificacao": x["titulo"]})
     dias = {}
     for e in eventos:
         dias.setdefault(e["data_situacao"], []).append(e)
-    return {"dias": [{"data": d, "itens": sorted(dias[d], key=lambda e: e["tipo"])}
+    ordem = {"realizacao": 0, "autoria": 1, "relatoria": 2}
+    return {"dias": [{"data": d, "itens": sorted(dias[d], key=lambda e: ordem[e["tipo"]])}
                      for d in sorted(dias, reverse=True)],
             "total": len(eventos), "autoria": sum(e["tipo"] == "autoria" for e in eventos),
-            "relatoria": sum(e["tipo"] == "relatoria" for e in eventos)}
+            "relatoria": sum(e["tipo"] == "relatoria" for e in eventos),
+            "realizacao": sum(e["tipo"] == "realizacao" for e in eventos)}
+
+
+def realizacoes(cod, inicio, fim):
+    """Solicitações concluídas no período (pela data da solução) que entram no clipping, com os anexos."""
+    with engine.connect() as c:
+        itens = [dict(r) for r in c.execute(
+            select(solicitacoes.c.id, solicitacoes.c.titulo, solicitacoes.c.descricao, solicitacoes.c.resumo_realizado,
+                   solicitacoes.c.solicitante, solicitacoes.c.responsavel, solicitacoes.c.data_solicitacao,
+                   solicitacoes.c.data_solucao)
+            .where(solicitacoes.c.codigo_deputado == cod, solicitacoes.c.status == "concluida",
+                   or_(solicitacoes.c.no_clipping.is_(None), solicitacoes.c.no_clipping.is_(True)),
+                   solicitacoes.c.data_solucao >= inicio.isoformat(), solicitacoes.c.data_solucao <= fim.isoformat())
+            .order_by(solicitacoes.c.data_solucao.desc(), solicitacoes.c.id.desc())).mappings()]
+        ids = [i["id"] for i in itens]
+        anx = {}
+        if ids:
+            for r in c.execute(select(anexos.c.id, anexos.c.solicitacao_id, anexos.c.nome, anexos.c.tamanho)
+                               .where(anexos.c.solicitacao_id.in_(ids)).order_by(anexos.c.id)).mappings():
+                anx.setdefault(r["solicitacao_id"], []).append(dict(r))
+    for i in itens:
+        i["anexos"] = anx.get(i["id"], [])
+    return itens
+
+
+def eventos_relatorio(cod, inicio, fim, com_aprovacoes=True):
+    """Lista plana para o relatório de realizações em PDF."""
+    import fotos
+    clip = clipping(cod, inicio, fim)
+    out = []
+    for d in clip["dias"]:
+        for e in d["itens"]:
+            if e["tipo"] != "realizacao" and not com_aprovacoes:
+                continue
+            if e["tipo"] == "realizacao":
+                resp = fotos.por_login(e.get("responsavel")) if e.get("responsavel") else None
+                out.append({"tipo": "realizacao", "data": e["data_solucao"], "titulo": e["titulo"],
+                            "resumo": e.get("resumo_realizado") or e.get("descricao"),
+                            "solicitante": e.get("solicitante"),
+                            "responsavel": (resp or {}).get("nome") or e.get("responsavel"),
+                            "anexos": [a["nome"] for a in e["anexos"]]})
+            else:
+                titulo = e["identificacao"] + (f" ({e['colegiado']})" if e.get("colegiado") else "")
+                out.append({"tipo": e["tipo"], "data": e["data_situacao"], "titulo": titulo, "rotulo": e["rotulo"],
+                            "resumo": e.get("situacao"), "ementa": e.get("ementa")})
+    return out
 
 
 def lista_relatorias(cod):
@@ -807,7 +870,8 @@ def painel(cod):
     elif secao == "clipping":
         ini = _data(request.args.get("inicio")) or hoje - timedelta(days=30)
         fim = _data(request.args.get("fim")) or hoje
-        ctx.update(clip=clipping(cod, ini, fim), ini=ini, fim=fim, rels=lista_relatorias(cod))
+        ctx.update(clip=clipping(cod, ini, fim), ini=ini, fim=fim, rels=lista_relatorias(cod),
+                   anos_relatorio=list(range(hoje.year, 2022, -1)))
     return render_template("meu.html", **ctx)
 
 
@@ -815,7 +879,7 @@ def _post(cod, secao, s, autor, pleno=True):
     f, destino = request.form, url_for("meu.painel", cod=cod, secao=secao)
     acao = f.get("acao", "")
     if not pleno:   # responsável sem vínculo: só mexe nas próprias tarefas (status, datas, anexos)
-        if secao != "solicitacoes" or acao not in ("status", "anexar", "editar", "excluir_anexo") \
+        if secao != "solicitacoes" or acao not in ("status", "anexar", "editar", "concluir", "excluir_anexo") \
                 or not _tem_tarefa(cod, f.get("id", type=int)):
             abort(403)
         f = f.copy()
@@ -842,13 +906,16 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "solicitacoes" and acao == "nova":
             criar_solicitacao(cod, f, request.files.getlist("arquivos"), autor)
             flash("Solicitação registrada.", "ok")
-        elif secao == "solicitacoes" and acao in ("status", "anexar", "editar", "excluir", "excluir_anexo"):
+        elif secao == "solicitacoes" and acao in ("status", "anexar", "editar", "concluir", "excluir", "excluir_anexo"):
             sid = f.get("id", type=int)
             alterar_solicitacao(cod, sid, acao, f, request.files.getlist("arquivos"), autor)
             if acao == "anexar":
                 flash("Arquivos anexados.", "ok")
             elif acao == "editar":
                 flash("Solicitação atualizada.", "ok")
+            elif acao == "concluir":
+                flash("Solicitação concluída" + (" e registrada no clipping do parlamentar." if f.get("no_clipping") == "1"
+                                                 else ".") , "ok")
             destino = url_for("meu.painel", cod=cod, secao=secao, status=request.args.get("status", ""),
                               abrir=sid if acao != "excluir" else None)
         elif secao == "questoes" and acao == "gerar":
@@ -925,6 +992,34 @@ def baixar_anexo(cod, aid):
     resp = send_file(io.BytesIO(a["conteudo"]), mimetype=a["mime"] or "application/octet-stream",
                      as_attachment=True, download_name=a["nome"])
     resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+@bp.route("/<int:cod>/realizacoes.pdf")
+def realizacoes_pdf(cod):
+    """Relatório de realizações do ano (ou do período) em PDF."""
+    import relatorio_pdf as rp
+    _exigir_acesso(cod)
+    s = paineis.deputado(cod)
+    if not s:
+        abort(404)
+    agora = agora_brt()
+    ano = request.args.get("ano", type=int) or agora.year
+    inicio = _data(request.args.get("de")) or date(ano, 1, 1)
+    fim = _data(request.args.get("ate")) or min(date(ano, 12, 31), agora.date())
+    if fim < inicio:
+        inicio, fim = fim, inicio
+    if request.args.get("de") or request.args.get("ate"):
+        rotulo = f"Período de {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}"
+    else:
+        rotulo = f"Ano de {ano}" + (f" · até {fim:%d/%m/%Y}" if fim < date(ano, 12, 31) else "")
+    evs = eventos_relatorio(cod, inicio, fim, request.args.get("aprovacoes", "1") == "1")
+    pdf = rp.gerar(s, evs, inicio, fim, rotulo, agora=agora)
+    nome = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", s.get("nome") or "").encode("ascii", "ignore")
+                  .decode().lower()).strip("-") or str(cod)
+    resp = send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=False,
+                     download_name=f"realizacoes-{nome}-{inicio:%Y%m%d}-{fim:%Y%m%d}.pdf")
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 

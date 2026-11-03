@@ -170,25 +170,9 @@ class _Numerado(rl_canvas.Canvas):
         super().save()
 
 
-def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, agora=None):
-    """parl: dict com nome, partido, uf, foto. dias: [{"data": "AAAA-MM-DD", "itens": [...]}]. Devolve bytes."""
-    agora = agora or datetime.now()
+def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R L A M E N T A R"):
+    """Função onPage do reportlab: faixa com foto e nome na 1ª página, barra fina nas demais, rodapé."""
     cor, cor_esc, cor_cl = (colors.HexColor(CASA[k]) for k in ("cor", "cor_esc", "cor_cl"))
-    nome = parl.get("nome") or ""
-    sub = " · ".join(x for x in (parl.get("partido"), parl.get("uf"), CASA["nome"]) if x)
-    foto = foto_redonda(parl.get("foto"))
-    n_itens = sum(len(d["itens"]) for d in dias)
-
-    st = {
-        "dia": ParagraphStyle("dia", fontName="Helvetica-Bold", fontSize=15.5, leading=19, textColor=cor_esc),
-        "diasub": ParagraphStyle("diasub", fontName="Helvetica", fontSize=11.5, leading=15, textColor=SUAVE),
-        "hora": ParagraphStyle("hora", fontName="Helvetica-Bold", fontSize=13.5, leading=16.5, textColor=cor),
-        "tit": ParagraphStyle("tit", fontName="Helvetica-Bold", fontSize=13, leading=16.5, textColor=TEXTO),
-        "meta": ParagraphStyle("meta", fontName="Helvetica", fontSize=11, leading=14.5, textColor=META),
-        "desc": ParagraphStyle("desc", fontName="Helvetica", fontSize=10.5, leading=14, textColor=colors.HexColor("#333d45")),
-        "vazio": ParagraphStyle("vazio", fontName="Helvetica-Oblique", fontSize=11.5, leading=15, textColor=SUAVE),
-        "resumo": ParagraphStyle("resumo", fontName="Helvetica", fontSize=11.5, leading=15, textColor=META),
-    }
 
     def cabecalho(c, doc):
         larg, alt = A4
@@ -227,7 +211,7 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
             x = cx + r + 9 * mm
             c.setFillColor(OURO)
             c.setFont("Helvetica-Bold", 9.5)
-            c.drawString(x, alt - 15 * mm, "A G E N D A   P A R L A M E N T A R")
+            c.drawString(x, alt - 15 * mm, kicker)
             c.setFillColor(colors.white)
             tam = 24 if len(nome) <= 26 else 19
             c.setFont("Helvetica-Bold", tam)
@@ -257,6 +241,31 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
         c.drawString(16 * mm, 10 * mm, f"Meu Parlamentar · {CASA['painel']} · gerado em "
                                        f"{agora:%d/%m/%Y} às {agora:%H:%M}")
         c.restoreState()
+
+    return cabecalho
+
+
+def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, agora=None):
+    """parl: dict com nome, partido, uf, foto. dias: [{"data": "AAAA-MM-DD", "itens": [...]}]. Devolve bytes."""
+    agora = agora or datetime.now()
+    cor, cor_esc, cor_cl = (colors.HexColor(CASA[k]) for k in ("cor", "cor_esc", "cor_cl"))
+    nome = parl.get("nome") or ""
+    sub = " · ".join(x for x in (parl.get("partido"), parl.get("uf"), CASA["nome"]) if x)
+    foto = foto_redonda(parl.get("foto"))
+    n_itens = sum(len(d["itens"]) for d in dias)
+
+    st = {
+        "dia": ParagraphStyle("dia", fontName="Helvetica-Bold", fontSize=15.5, leading=19, textColor=cor_esc),
+        "diasub": ParagraphStyle("diasub", fontName="Helvetica", fontSize=11.5, leading=15, textColor=SUAVE),
+        "hora": ParagraphStyle("hora", fontName="Helvetica-Bold", fontSize=13.5, leading=16.5, textColor=cor),
+        "tit": ParagraphStyle("tit", fontName="Helvetica-Bold", fontSize=13, leading=16.5, textColor=TEXTO),
+        "meta": ParagraphStyle("meta", fontName="Helvetica", fontSize=11, leading=14.5, textColor=META),
+        "desc": ParagraphStyle("desc", fontName="Helvetica", fontSize=10.5, leading=14, textColor=colors.HexColor("#333d45")),
+        "vazio": ParagraphStyle("vazio", fontName="Helvetica-Oblique", fontSize=11.5, leading=15, textColor=SUAVE),
+        "resumo": ParagraphStyle("resumo", fontName="Helvetica", fontSize=11.5, leading=15, textColor=META),
+    }
+
+    cabecalho = fazer_cabecalho(nome, sub, foto, rotulo, agora)
 
     buf = io.BytesIO()
     doc = BaseDocTemplate(buf, pagesize=A4, title=f"Agenda – {nome} – {rotulo}", author=CASA["painel"],
