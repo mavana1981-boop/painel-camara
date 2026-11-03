@@ -33,6 +33,7 @@ CASA = {
 OURO = colors.HexColor("#c9a24a")
 TEXTO = colors.HexColor("#1f2933")
 SUAVE = colors.HexColor("#5f6b76")
+META = colors.HexColor("#4a5560")      # texto secundário um pouco mais escuro, para a impressão
 LINHA = colors.HexColor("#dfe5e1")
 MAX_DIAS = 92
 
@@ -162,7 +163,7 @@ class _Numerado(rl_canvas.Canvas):
         total = len(self._paginas)
         for est in self._paginas:
             self.__dict__.update(est)
-            self.setFont("Helvetica", 7.5)
+            self.setFont("Helvetica", 9)
             self.setFillColor(SUAVE)
             self.drawRightString(A4[0] - 16 * mm, 10 * mm, f"Página {self._pageNumber} de {total}")
             super().showPage()
@@ -179,14 +180,14 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
     n_itens = sum(len(d["itens"]) for d in dias)
 
     st = {
-        "dia": ParagraphStyle("dia", fontName="Helvetica-Bold", fontSize=12.5, leading=15, textColor=cor_esc),
-        "diasub": ParagraphStyle("diasub", fontName="Helvetica", fontSize=9, leading=12, textColor=SUAVE),
-        "hora": ParagraphStyle("hora", fontName="Helvetica-Bold", fontSize=11, leading=13, textColor=cor),
-        "tit": ParagraphStyle("tit", fontName="Helvetica-Bold", fontSize=10.5, leading=13.5, textColor=TEXTO),
-        "meta": ParagraphStyle("meta", fontName="Helvetica", fontSize=8.5, leading=11.5, textColor=SUAVE),
-        "desc": ParagraphStyle("desc", fontName="Helvetica", fontSize=8.3, leading=11, textColor=colors.HexColor("#46525c")),
-        "vazio": ParagraphStyle("vazio", fontName="Helvetica-Oblique", fontSize=9, leading=12, textColor=SUAVE),
-        "resumo": ParagraphStyle("resumo", fontName="Helvetica", fontSize=9, leading=12, textColor=SUAVE),
+        "dia": ParagraphStyle("dia", fontName="Helvetica-Bold", fontSize=15.5, leading=19, textColor=cor_esc),
+        "diasub": ParagraphStyle("diasub", fontName="Helvetica", fontSize=11.5, leading=15, textColor=SUAVE),
+        "hora": ParagraphStyle("hora", fontName="Helvetica-Bold", fontSize=13.5, leading=16.5, textColor=cor),
+        "tit": ParagraphStyle("tit", fontName="Helvetica-Bold", fontSize=13, leading=16.5, textColor=TEXTO),
+        "meta": ParagraphStyle("meta", fontName="Helvetica", fontSize=11, leading=14.5, textColor=META),
+        "desc": ParagraphStyle("desc", fontName="Helvetica", fontSize=10.5, leading=14, textColor=colors.HexColor("#333d45")),
+        "vazio": ParagraphStyle("vazio", fontName="Helvetica-Oblique", fontSize=11.5, leading=15, textColor=SUAVE),
+        "resumo": ParagraphStyle("resumo", fontName="Helvetica", fontSize=11.5, leading=15, textColor=META),
     }
 
     def cabecalho(c, doc):
@@ -225,33 +226,33 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
             # textos
             x = cx + r + 9 * mm
             c.setFillColor(OURO)
-            c.setFont("Helvetica-Bold", 8.5)
+            c.setFont("Helvetica-Bold", 9.5)
             c.drawString(x, alt - 15 * mm, "A G E N D A   P A R L A M E N T A R")
             c.setFillColor(colors.white)
             tam = 24 if len(nome) <= 26 else 19
             c.setFont("Helvetica-Bold", tam)
             c.drawString(x, alt - 26 * mm, nome)
-            c.setFont("Helvetica", 10.5)
-            c.setFillColor(colors.HexColor("#d9e6df"))
+            c.setFont("Helvetica", 12)
+            c.setFillColor(colors.HexColor("#e3eee8"))
             c.drawString(x, alt - 33 * mm, sub)
             c.setFillColor(colors.white)
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(x, alt - 42 * mm, rotulo)
+            c.setFont("Helvetica-Bold", 13)
+            c.drawString(x, alt - 43 * mm, rotulo)
         else:
             c.setFillColor(cor_esc)
             c.rect(0, alt - 13 * mm, larg, 13 * mm, stroke=0, fill=1)
             c.setFillColor(OURO)
             c.rect(0, alt - 13.8 * mm, larg, 0.8 * mm, stroke=0, fill=1)
             c.setFillColor(colors.white)
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(16 * mm, alt - 8.3 * mm, nome)
-            c.setFont("Helvetica", 9)
-            c.drawRightString(larg - 16 * mm, alt - 8.3 * mm, rotulo)
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(16 * mm, alt - 8.6 * mm, nome)
+            c.setFont("Helvetica", 11)
+            c.drawRightString(larg - 16 * mm, alt - 8.6 * mm, rotulo)
         # rodapé
         c.setStrokeColor(LINHA)
         c.setLineWidth(0.5)
         c.line(16 * mm, 14 * mm, larg - 16 * mm, 14 * mm)
-        c.setFont("Helvetica", 7.5)
+        c.setFont("Helvetica", 9)
         c.setFillColor(SUAVE)
         c.drawString(16 * mm, 10 * mm, f"Meu Parlamentar · {CASA['painel']} · gerado em "
                                        f"{agora:%d/%m/%Y} às {agora:%H:%M}")
@@ -290,7 +291,7 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
         marca = "  ·  hoje" if dia.isoformat() == hoje_txt else ""
         cab = Table([[Paragraph(f"{DIAS_SEM[dia.weekday()].capitalize()}", st["dia"]),
                       Paragraph(f"{_extenso(dia)}{marca}", st["diasub"])]],
-                    colWidths=[48 * mm, larg_util - 48 * mm])
+                    colWidths=[55 * mm, larg_util - 55 * mm])
         cab.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
             ("LINEBELOW", (0, 0), (-1, 0), 1.2, cor),
@@ -324,12 +325,12 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
                 cel.append(Spacer(1, 1.2 * mm))
                 cel.append(Paragraph(_p(d), st["desc"]))
             linhas.append([Paragraph(_p((e.get("hora") or "")[:5]) or "—", st["hora"]), cel])
-        t = Table(linhas, colWidths=[20 * mm, larg_util - 20 * mm])
+        t = Table(linhas, colWidths=[22 * mm, larg_util - 22 * mm])
         estilo = [
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (0, -1), 0), ("LEFTPADDING", (1, 0), (1, -1), 2),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
             ("LINEBELOW", (0, 0), (-1, -2), 0.5, LINHA),
         ]
         for j, e in enumerate(itens):
