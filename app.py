@@ -399,11 +399,19 @@ def _agendador_diario():
             plenario_se_preciso()
         except Exception:
             logging.exception("Plenário")
+        time.sleep(10 * 60)
+
+
+def _agendador_agenda():
+    """Laço próprio para a agenda dos próximos dias: a coleta diária (horas) não a segura."""
+    import time
+    time.sleep(90)
+    while True:
         try:
             agenda_proxima_se_preciso()
         except Exception:
             logging.exception("agenda dos próximos dias")
-        time.sleep(10 * 60)
+        time.sleep(5 * 60)
 
 
 # Só roda no Railway (ou com AUTO_CARGA=1 local). Desligue com AUTO_CARGA=0 / AUTO_COLETA=0.
@@ -414,6 +422,7 @@ if os.environ.get("AUTO_CARGA") != "0" and (os.environ.get("RAILWAY_ENVIRONMENT"
     threading.Thread(target=usuarios_mp.importar_se_preciso, daemon=True).start()   # usuários do Minha Pauta (1x)
     if os.environ.get("AUTO_COLETA") != "0":
         threading.Thread(target=_agendador_diario, daemon=True).start()
+        threading.Thread(target=_agendador_agenda, daemon=True).start()
 
 
 @app.get("/saude")
