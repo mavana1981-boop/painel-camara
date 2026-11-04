@@ -1977,3 +1977,20 @@ def test_agenda_relida_ao_acessar():
     finally:
         coleta_meu.atualizar_agenda_proxima = orig
         os.environ["AGENDA_AO_ACESSAR"] = "0"
+
+
+def test_alerta_8_de_janeiro_retirado():
+    import alertas
+    from datetime import datetime
+    from db import termos_alerta
+    from sqlalchemy import insert as ins
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM meta WHERE chave = 'alertas:retirado_8_de_janeiro'"))
+        c.execute(text("DELETE FROM termos_alerta WHERE termo = '8 de janeiro'"))
+        c.execute(ins(termos_alerta).values(termo="8 de janeiro", criado_por="padrão", criado_em=datetime.now()))
+    assert "8 de janeiro" not in alertas.TERMOS_PADRAO
+    assert "8 de janeiro" not in alertas.termos()                  # banco já existente: sai da lista salva
+    assert "anistia" in alertas.termos()
+    alertas.adicionar("8 de janeiro", "admin")                     # se a equipe quiser de volta, fica
+    assert "8 de janeiro" in alertas.termos()
+    alertas.remover("8 de janeiro")

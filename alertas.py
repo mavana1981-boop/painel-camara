@@ -23,7 +23,7 @@ TERMOS_PADRAO = [
     "aborto", "interrupção da gravidez", "interrupção voluntária", "LGBT", "homofobia", "transfobia",
     "homoafetivo", "pessoas trans", "educação sexual", "drogas", "descriminalização", "maconha", "cannabis",
     "desarmamento", "armas de fogo", "fake news", "desinformação", "discurso de ódio", "regulação das redes",
-    "plataformas digitais", "censura", "anistia", "8 de janeiro", "racismo estrutural", "cotas raciais",
+    "plataformas digitais", "censura", "anistia", "racismo estrutural", "cotas raciais",
     "reforma agrária", "invasão de terras", "MST", "liberdade religiosa", "escola sem partido", "homeschooling",
     "eutanásia", "imposto sobre grandes fortunas", "taxação",
 ]
@@ -37,7 +37,25 @@ def norm_termo(t):
     return re.sub(r"\s+", " ", s).strip()
 
 
+# Termos que saíram da lista padrão: são apagados uma única vez da lista salva (se a equipe
+# incluir de novo depois, o termo fica).
+TERMOS_RETIRADOS = {"8 de janeiro": "alertas:retirado_8_de_janeiro"}   # confundia mais do que ajudava
+
+
+def _retirar():
+    from db import meta
+    with engine.begin() as c:
+        for termo, chave in TERMOS_RETIRADOS.items():
+            if c.execute(select(meta.c.valor).where(meta.c.chave == chave)).first():
+                continue
+            for t in [r[0] for r in c.execute(select(termos_alerta.c.termo))]:
+                if norm_termo(t) == norm_termo(termo):
+                    c.execute(delete(termos_alerta).where(termos_alerta.c.termo == t))
+            c.execute(insert(meta).values(chave=chave, valor=datetime.now().isoformat(timespec="seconds")))
+
+
 def _semear():
+    _retirar()
     with engine.begin() as c:
         if c.execute(select(termos_alerta.c.id).limit(1)).first() is None:
             agora = datetime.now()
