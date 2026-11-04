@@ -132,7 +132,9 @@ deliberativas (`/eventos/{id}/pauta`, que traz o relator de cada item e o result
 lê as pautas dos últimos 180 dias (`MEU_DIAS_HISTORICO`) e depois acompanha dia a dia.
 A agenda completa (7 dias atrás e 45 à frente) vem na coleta diária; além disso, de hoje até 7 dias à frente ela é
 relida a cada 30 minutos (`AGENDA_MINUTOS`, `AGENDA_DIAS_PROXIMOS`; `AUTO_AGENDA=0` desliga), dia a dia, para trazer sessões
-do Plenário convocadas depois da coleta e pautas que mudam. Dia em que a API falha fica como estava. Nos itens da pauta, o
+do Plenário convocadas depois da coleta e pautas que mudam. Dia em que a API falha fica como estava. A mesma releitura roda em segundo plano
+sempre que alguém abre a agenda (no máximo uma vez por minuto, `AGENDA_SEGUNDOS_ACESSO`; `AGENDA_AO_ACESSAR=0` desliga), e a
+página se recarrega sozinha quando ela termina. Nos itens da pauta, o
 painel diz se o deputado é relator, autor (1º signatário) ou coautor.
 O radar roda a cada 2 horas (`RADAR_HORAS`; `AUTO_RADAR=0` desliga) só para deputados com usuário vinculado; o botão
 **Atualizar agora** busca na hora. A IA do radar e das questões de ordem usa `ANTHROPIC_API_KEY`; o modelo do radar

@@ -966,3 +966,10 @@ details.rn-acomp .rn-form{margin-top:6px}
 /* agenda: autoria do deputado nos itens da pauta */
 .ag-tag.autor{background:#1f6f4a;color:#fff;border-color:#1f6f4a}
 .ag-tag.coautor{background:#e6f2ec;color:#1f6f4a;border-color:#b9dcc9}
+/* agenda: releitura com a Câmara ao abrir */
+.ag-sync{margin:10px 16px 0;font-size:12.5px;color:var(--suave)}
+.ag-sync:empty{display:none}
+.ag-sync.on{color:var(--pri-esc);background:var(--pri-cl);border-radius:8px;padding:7px 12px;display:flex;align-items:center;gap:8px}
+.ag-sync-pt{width:9px;height:9px;border-radius:50%;background:var(--pri);flex:none;animation:agpulso 1s ease-in-out infinite}
+@keyframes agpulso{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.ag-sync-pt{animation:none}}

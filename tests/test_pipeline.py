@@ -19,6 +19,7 @@ os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_t
 os.environ["ADMIN_USER"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "senha-de-teste-123"
 os.environ["SECRET_KEY"] = "teste"
+os.environ["AGENDA_AO_ACESSAR"] = "0"     # a tela da agenda não chama a API da Câmara nos testes
 os.environ.pop("RAILWAY_ENVIRONMENT", None)
 os.environ.pop("CEAP_REAJUSTES", None)
 sys.path.insert(0, str(RAIZ))
@@ -1934,3 +1935,45 @@ def test_agenda_proxima_traz_sessao_do_plenario_convocada_depois():
         assert painel.agenda_proxima_se_preciso() is False
     finally:
         os.environ.pop("AUTO_AGENDA", None)
+
+
+def test_agenda_relida_ao_acessar():
+    import time
+    from datetime import datetime, timedelta
+    import coleta_meu
+    chamadas = []
+    orig = coleta_meu.atualizar_agenda_proxima
+
+    def falso(*a, **k):
+        chamadas.append(1)
+        time.sleep(0.3)
+        coleta_meu._gravar_meta(coleta_meu.CHAVE_AGENDA_PROXIMA, datetime.now().isoformat(timespec="seconds"))
+    coleta_meu.atualizar_agenda_proxima = falso
+    os.environ["AGENDA_AO_ACESSAR"] = "1"
+    try:
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM meta WHERE chave = :k"), {"k": coleta_meu.CHAVE_AGENDA_PROXIMA})
+        adm = _cliente()
+        html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+        assert "Conferindo a agenda com a Câmara" in html and 'data-rodando="1"' in html
+        st = adm.get("/meu/101/agenda/status").get_json()
+        assert st["rodando"] is True
+        adm.get("/meu/101?secao=agenda")                      # segunda abertura durante a leitura: não duplica
+        for _ in range(50):
+            if not coleta_meu.status_agenda_proxima()["rodando"]:
+                break
+            time.sleep(0.05)
+        st = adm.get("/meu/101/agenda/status").get_json()
+        assert st["rodando"] is False and st["atualizado"] and chamadas == [1]
+        html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)   # acabou de ler: não relê de novo
+        assert chamadas == [1] and "conferida com a Câmara agora há pouco" in html and 'data-rodando="0"' in html
+        assert coleta_meu.reler_agenda_ao_acessar(datetime.now() + timedelta(seconds=61))   # passado 1 min, relê
+        for _ in range(50):
+            if not coleta_meu.status_agenda_proxima()["rodando"]:
+                break
+            time.sleep(0.05)
+        assert chamadas == [1, 1]
+        assert _anonimo().get("/meu/101/agenda/status").status_code in (302, 401, 403)
+    finally:
+        coleta_meu.atualizar_agenda_proxima = orig
+        os.environ["AGENDA_AO_ACESSAR"] = "0"

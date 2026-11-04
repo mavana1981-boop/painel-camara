@@ -941,6 +941,11 @@ def painel(cod):
     if secao == "visao":
         ctx["v"] = visao(cod)
     elif secao == "agenda":
+        import coleta_meu
+        ctx["releitura"] = coleta_meu.reler_agenda_ao_acessar()      # sempre que a agenda é aberta
+        ult = coleta_meu.ultima_agenda_proxima()
+        ctx["agenda_lida_em"] = ult.isoformat(timespec="seconds") if ult else ""
+        ctx["agenda_lida_min"] = int((datetime.now() - ult).total_seconds() // 60) if ult else None
         so_dele = request.args.get("todos") != "1"
         ocultar = ocultar_solenes()
         ini_ag, fim_ag = hoje - timedelta(days=DIAS_HISTORICO), hoje + timedelta(days=45)
@@ -1129,6 +1134,14 @@ def _post(cod, secao, s, autor, pleno=True):
     except ValueError as e:
         flash(str(e), "erro")
     return redirect(destino)
+
+
+@bp.route("/<int:cod>/agenda/status")
+def agenda_status(cod):
+    """A tela da agenda consulta isto enquanto a releitura roda, para se recarregar quando terminar."""
+    import coleta_meu
+    _exigir_acesso(cod)
+    return coleta_meu.status_agenda_proxima()
 
 
 @bp.route("/<int:cod>/agenda.pdf")

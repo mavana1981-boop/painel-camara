@@ -135,6 +135,12 @@
 <section class="grade larga">
   <div class="card neu">
     <h2>Agenda <small>{{ 'órgãos do deputado, Plenário e equipe' if so_dele else 'toda a Câmara' }}</small></h2>
+    <div class="ag-sync {{ 'on' if releitura }}" id="ag-sync" data-status="{{ url_for('meu.agenda_status', cod=cod) }}"
+         data-lida="{{ agenda_lida_em }}" data-rodando="{{ '1' if releitura else '0' }}">
+      {% if releitura %}<span class="ag-sync-pt"></span> Conferindo a agenda com a Câmara (hoje e próximos 7 dias)… a página se atualiza sozinha.
+      {% elif agenda_lida_min is not none %}Agenda conferida com a Câmara {{ 'agora há pouco' if agenda_lida_min < 2 else 'há ' ~ agenda_lida_min ~ ' min' }}.
+      {% endif %}
+    </div>
     <div class="pilulas">
       {% set sol_arg = 'ocultar' if ocultar_solenes else 'mostrar' %}
       <a class="{{ 'sel' if so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', solenes=sol_arg) }}">Do deputado</a>
@@ -210,6 +216,23 @@
     </div>
   </div>
 </section>
+<script>
+(function () {
+  var el = document.getElementById("ag-sync");
+  if (!el || el.dataset.rodando !== "1") return;
+  var inicial = el.dataset.lida, tentativas = 0;
+  function checar() {
+    if (++tentativas > 60) { el.classList.remove("on"); el.textContent = "A Câmara está demorando a responder; a agenda mostrada é a última conferida."; return; }
+    fetch(el.dataset.status, {credentials: "same-origin"}).then(function (r) { return r.json(); }).then(function (st) {
+      if (!st.rodando) {
+        if (st.atualizado && st.atualizado !== inicial) { location.reload(); }
+        else { el.classList.remove("on"); el.textContent = "Não consegui falar com a Câmara agora; a agenda mostrada é a última conferida."; }
+      } else { setTimeout(checar, 3000); }
+    }).catch(function () { setTimeout(checar, 5000); });
+  }
+  setTimeout(checar, 2500);
+})();
+</script>
 {% endif %}
 
 {# =================== NOTIFICAÇÕES =================== #}

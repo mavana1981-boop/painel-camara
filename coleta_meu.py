@@ -228,6 +228,49 @@ def atualizar_agenda_proxima(hoje=None, dias=None, ler_dia=None):
     return total
 
 
+_releitura = threading.Event()        # releitura disparada pela tela da agenda em andamento
+INTERVALO_MIN_ACESSO = int(os.environ.get("AGENDA_SEGUNDOS_ACESSO", "60"))
+
+
+def ultima_agenda_proxima():
+    v = _meta(CHAVE_AGENDA_PROXIMA)
+    try:
+        return datetime.fromisoformat(v) if v else None
+    except ValueError:
+        return None
+
+
+def reler_agenda_ao_acessar(agora=None):
+    """Chamado quando alguém abre a agenda: relê hoje até 7 dias à frente em segundo plano.
+
+    Para não repetir a leitura a cada recarga (nem com várias pessoas na tela), espera pelo menos
+    AGENDA_SEGUNDOS_ACESSO (60 s) desde a última. Devolve True se a releitura está rodando."""
+    if os.environ.get("AGENDA_AO_ACESSAR") == "0":
+        return False
+    if _releitura.is_set():
+        return True
+    ult = ultima_agenda_proxima()
+    if ult and (agora or datetime.now()) - ult < timedelta(seconds=INTERVALO_MIN_ACESSO):
+        return False
+    _releitura.set()
+
+    def rodar():
+        try:
+            atualizar_agenda_proxima()
+        except Exception:
+            log.exception("releitura da agenda ao acessar")
+        finally:
+            _releitura.clear()
+    threading.Thread(target=rodar, daemon=True).start()
+    return True
+
+
+def status_agenda_proxima():
+    ult = ultima_agenda_proxima()
+    return {"rodando": _releitura.is_set() or _agenda_lock.locked(),
+            "atualizado": ult.isoformat(timespec="seconds") if ult else None}
+
+
 def precisa_agenda_proxima(agora=None):
     v = _meta(CHAVE_AGENDA_PROXIMA)
     if not v:
