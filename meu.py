@@ -463,9 +463,9 @@ def alterar_solicitacao(cod, sid, acao, f, arquivos, autor):
 
 # ---------------- radar ----------------
 
-def radar(cod, termo="", filtro=""):
+def radar(cod, termo="", filtro="", busca=""):
     import radar as rd
-    itens = rd.lista(cod, termo, filtro)
+    itens = rd.lista(cod, termo, filtro, busca=busca)
     with engine.connect() as c:
         temas = [r[0] for r in c.execute(select(temas_radar.c.termo).where(temas_radar.c.codigo_deputado == cod)
                                          .order_by(temas_radar.c.termo))]
@@ -476,10 +476,11 @@ def radar(cod, termo="", filtro=""):
             "SUM(CASE WHEN analisado_em IS NULL THEN 1 ELSE 0 END) pend, "
             "SUM(CASE WHEN origem = 'portal' THEN 1 ELSE 0 END) portal, "
             "SUM(CASE WHEN origem = 'google' OR origem IS NULL THEN 1 ELSE 0 END) google, "
+            "SUM(CASE WHEN origem = 'manual' THEN 1 ELSE 0 END) manual, "
             "SUM(CASE WHEN relevante AND COALESCE(status, 'Pendente') = 'Pendente' THEN 1 ELSE 0 END) pendentes "
             "FROM noticias WHERE codigo_deputado = :c"), {"c": cod}).mappings().first()
     return {"itens": itens, "temas": temas, "termos": termos,
-            "cont": {k: (cont[k] or 0) for k in ("n", "rel", "pend", "portal", "google", "pendentes")}}
+            "cont": {k: (cont[k] or 0) for k in ("n", "rel", "pend", "portal", "google", "manual", "pendentes")}}
 
 
 def alterar_temas(cod, acao, termo):
@@ -982,7 +983,16 @@ def painel(cod):
         import radar as rd
         ctx["termo"] = request.args.get("termo", "")
         ctx["filtro"] = request.args.get("filtro", "")
-        ctx["radar"] = radar(cod, ctx["termo"], ctx["filtro"])
+        ctx["busca"] = (request.args.get("q") or "").strip()[:200]
+        ctx["radar"] = radar(cod, ctx["termo"], ctx["filtro"], ctx["busca"])
+        ctx["web"] = None
+        if ctx["busca"] and request.args.get("web") == "1":      # mesma busca, na hora, no Google Notícias
+            try:
+                ctx["web"] = rd.buscar_google(cod, ctx["busca"])
+            except Exception as e:
+                logging.getLogger("radar").warning("busca avulsa no Google Notícias: %s", e)
+                ctx["web_erro"] = True
+                ctx["web"] = []
         ctx["fontes"] = rd.lista_fontes()
         ctx["ia_ok"] = questoes.configurado()
         ctx["status_radar"] = rd.STATUS
@@ -1087,6 +1097,18 @@ def _post(cod, secao, s, autor, pleno=True):
                       "na Seleção da IA)") + ("" if f.get("responsavel") else " (sorteado pelos critérios)"), "ok")
             destino = url_for("meu.painel", cod=cod, secao=secao, filtro=request.args.get("filtro", ""),
                               termo=request.args.get("termo", "")) + f"#n{f.get('id', type=int)}"
+        elif secao == "radar" and acao == "manual":
+            import radar as rd
+            nid, nova = rd.incluir_manual(cod, f, autor)
+            if nova:
+                ia = rd.analisar_em_segundo_plano(cod, nid)
+                flash("Notícia incluída no radar." + (" A IA está analisando — recarregue em instantes." if ia else ""), "ok")
+            else:
+                flash("Essa notícia já está no radar deste deputado.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", q=f.get("q") or None,
+                              web="1" if f.get("q") else None) + f"#n{nid}"
+            if not f.get("q"):
+                destino = url_for("meu.painel", cod=cod, secao="radar") + f"#n{nid}"
         elif secao == "radar" and acao == "selecao_gerar":
             import selecao_ia as si
             r = si.gerar(cod, autor=autor)

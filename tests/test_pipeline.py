@@ -1,3 +1,4 @@
+import pytest
 """Testes do pipeline com fixtures no layout exato dos arquivos em lote da Câmara
 (CSV UTF-8 com BOM, separador ';', aspas em todos os campos). Os dados são fictícios.
 
@@ -1801,3 +1802,75 @@ if __name__ == "__main__":
         if nome.startswith("test_"):
             fn()
             print("ok", nome)
+
+
+PAGINA_NOTICIA = """<html><head><title>Ignorado</title>
+<meta property="og:title" content="Hospital do DF fecha UTI por falta de m&eacute;dicos - Correio Braziliense">
+<meta property="og:site_name" content="Correio Braziliense">
+<meta name="description" content="Pacientes foram transferidos às pressas.">
+<meta property="article:published_time" content="2026-11-02T14:30:00-03:00">
+</head><body>...</body></html>"""
+
+
+def test_radar_pesquisa_e_inclusao_manual():
+    from datetime import datetime
+    import radar
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM noticias"))
+        radar.gravar_noticias(c, 101, "saúde", [
+            {"titulo": "Obras paradas em São Paulo", "link": "https://a.exemplo/1", "fonte": "G1", "resumo": "Saúde e educação"},
+            {"titulo": "Campeonato termina", "link": "https://a.exemplo/2", "fonte": "Poder360"}], origem="portal")
+    # pesquisa: sem acento, várias palavras, em qualquer campo
+    assert [n["link"] for n in radar.lista(101, busca="sao paulo")] == ["https://a.exemplo/1"]
+    assert [n["link"] for n in radar.lista(101, busca="SAUDE obras")] == ["https://a.exemplo/1"]
+    assert [n["link"] for n in radar.lista(101, busca="poder360")] == ["https://a.exemplo/2"]
+    assert radar.lista(101, busca="inexistente") == []
+
+    # inclusão manual: lê os metadados da página
+    pag = lambda u: (PAGINA_NOTICIA, u)
+    nid, nova = radar.incluir_manual(101, {"link": "https://correio.exemplo/uti", "termo": ""}, "admin", baixar_=pag)
+    assert nova
+    n = next(x for x in radar.lista(101, filtro="manual"))
+    assert n["id"] == nid and n["titulo"] == "Hospital do DF fecha UTI por falta de médicos"
+    assert n["fonte"] == "Correio Braziliense" and n["resumo"] == "Pacientes foram transferidos às pressas."
+    assert n["publicado"] == datetime(2026, 11, 2, 14, 30) and n["termo"] == "Inclusão manual" and n["status"] == "Pendente"
+    assert radar.incluir_manual(101, {"link": "https://correio.exemplo/uti"}, baixar_=pag) == (nid, False)   # repetida
+    with pytest.raises(ValueError):
+        radar.incluir_manual(101, {"link": "correio sem http"})
+
+    def falha(u):
+        raise ValueError("HTTP 403")
+    with pytest.raises(ValueError, match="título manualmente"):
+        radar.incluir_manual(101, {"link": "https://bloqueado.exemplo/x"}, baixar_=falha)
+    nid2, _ = radar.incluir_manual(101, {"link": "https://bloqueado.exemplo/x", "titulo": "Matéria fechada",
+                                         "termo": "saúde", "publicado": "2026-11-03"}, baixar_=falha)
+    n2 = next(x for x in radar.lista(101) if x["id"] == nid2)
+    assert n2["fonte"] == "bloqueado.exemplo" and n2["termo"] == "saúde" and n2["publicado"] == datetime(2026, 11, 3)
+
+    # busca avulsa no Google Notícias marca o que já está no radar
+    web = radar.buscar_google(101, "Ana Oposição", buscar=_buscar_fake)
+    assert web and web[0]["ja_id"] is None and web[0]["fonte"] == "Folha de S.Paulo"
+
+    # tela: pesquisa, botão do Google, resultados com "Incluir" e inclusão pelo formulário
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=radar&q=obras").get_data(as_text=True)
+    assert "Obras paradas em São Paulo" in html and "Campeonato termina" not in html
+    assert "Buscar “obras” no Google Notícias" in html and "Incluir notícia pelo link" in html
+    assert "Incluídas manualmente (2)" in html
+    assert "Incluída manualmente" in adm.get("/meu/101?secao=radar&filtro=manual").get_data(as_text=True)
+    import radar as rd
+    orig = rd.baixar
+    rd.baixar = _buscar_fake
+    try:
+        html = adm.get("/meu/101?secao=radar&q=Ana%20Oposi%C3%A7%C3%A3o&web=1").get_data(as_text=True)
+    finally:
+        rd.baixar = orig
+    assert "Deputada Ana Oposição visita hospital em SP" in html and "＋ Incluir" in html
+    tok = _tok(adm, "/meu/101?secao=radar")
+    r = adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "manual", "link": web[0]["link"],
+                                               "titulo": web[0]["titulo"], "fonte": web[0]["fonte"], "q": "Ana Oposição"})
+    assert r.status_code == 302 and "web=1" in r.headers["Location"]
+    assert any(x["link"] == web[0]["link"] and x["origem"] == "manual" for x in radar.lista(101))
+    assert radar.buscar_google(101, "Ana Oposição", buscar=_buscar_fake)[0]["ja_id"]
+    r = adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "manual", "link": "nada"})
+    assert "link completo" in adm.get("/meu/101?secao=radar").get_data(as_text=True)

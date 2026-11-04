@@ -454,14 +454,15 @@
   <div class="card neu">
     <h2>Radar de notícias <small>portais do Monitor Legislativo + Google Notícias · 60 dias</small></h2>
     {% set q = {'termo': termo} if termo else {} %}
+    {% if busca %}{% set q = dict(q, q=busca) %}{% endif %}
     <div class="pilulas">
-      {% for k, nome, n in [('', 'Tudo', rc.n), ('selecao', '✨ Seleção da IA', None), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] %}
+      {% for k, nome, n in [('', 'Tudo', rc.n), ('selecao', '✨ Seleção da IA', None), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] + ([('manual', 'Incluídas manualmente', rc.manual)] if rc.manual else []) %}
       <a class="{{ 'sel' if filtro == k }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=k or None, **q) }}">{{ nome }}{% if n is not none %} ({{ n }}){% endif %}</a>
       {% endfor %}
     </div>
     {% if radar.termos|length > 1 %}<div class="pilulas sec">
-      <a class="{{ 'sel' if not termo }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None) }}">Todos os termos</a>
-      {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t, filtro=filtro or None) }}">{{ t }}</a>{% endfor %}
+      <a class="{{ 'sel' if not termo }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None, q=busca or None) }}">Todos os termos</a>
+      {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t, filtro=filtro or None, q=busca or None) }}">{{ t }}</a>{% endfor %}
     </div>{% endif %}
     {% if not ia_ok and filtro != 'selecao' %}<div class="aviso erro" style="margin:12px 16px 0">A análise por IA está desligada: falta a variável <b>ANTHROPIC_API_KEY</b> no Railway. As notícias continuam sendo coletadas.</div>
     {% elif rc.pend %}<div class="rn-fila">{{ rc.pend }} notícia(s) aguardando análise da IA — saem no próximo ciclo (a cada 2 horas).</div>{% endif %}
@@ -501,11 +502,44 @@
     {% endfor %}
     {% else %}<div class="vazio-msg">Clique em “Gerar nova seleção” para a IA escolher os tópicos das notícias dos últimos dias.</div>{% endif %}
     {% else %}
+    <form method="get" class="rn-busca" action="{{ url_for('meu.painel', cod=cod) }}">
+      <input type="hidden" name="secao" value="radar">
+      {% if filtro %}<input type="hidden" name="filtro" value="{{ filtro }}">{% endif %}
+      {% if termo %}<input type="hidden" name="termo" value="{{ termo }}">{% endif %}
+      <input type="search" name="q" value="{{ busca }}" maxlength="200" placeholder="Pesquisar notícia por palavra, veículo, link…" aria-label="Pesquisar notícia">
+      <button class="btn">Pesquisar</button>
+      {% if busca %}<a class="rn-limpar" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None, termo=termo or None) }}">limpar</a>{% endif %}
+      <a class="rn-ir-incluir" href="#incluir">＋ Incluir pelo link</a>
+    </form>
+    {% if busca %}<div class="rn-busca-res">
+      <span>{{ radar.itens|length }} notícia{{ 's' if radar.itens|length != 1 }} no radar com “{{ busca }}”</span>
+      {% if web is none %}<a class="btn sec mini-btn" href="{{ url_for('meu.painel', cod=cod, secao='radar', q=busca, web='1') }}#web">Buscar “{{ busca }}” no Google Notícias</a>{% endif %}
+    </div>{% endif %}
+    {% if web is not none %}
+    <div class="rn-web" id="web">
+      <h3>Google Notícias · “{{ busca }}” <small>últimos 30 dias</small></h3>
+      {% if web_erro %}<div class="aviso erro">Não consegui consultar o Google Notícias agora. Tente de novo em instantes ou inclua pelo link.</div>{% endif %}
+      {% for w in web %}
+      <div class="rn-web-it">
+        <div><a href="{{ w.link }}" target="_blank" rel="noopener noreferrer">{{ w.titulo }}</a>
+          <small>{{ w.fonte or 'Google Notícias' }}{% if w.publicado %} · {{ w.publicado|data }}{% endif %}</small></div>
+        {% if w.ja_id %}<a class="rn-ja" href="#n{{ w.ja_id }}">já está no radar</a>
+        {% else %}<form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="manual">
+          <input type="hidden" name="link" value="{{ w.link }}"><input type="hidden" name="titulo" value="{{ w.titulo }}">
+          <input type="hidden" name="fonte" value="{{ w.fonte or '' }}"><input type="hidden" name="resumo" value="{{ w.resumo or '' }}">
+          <input type="hidden" name="publicado" value="{{ w.publicado.isoformat() if w.publicado else '' }}">
+          <input type="hidden" name="termo" value="{{ busca }}"><input type="hidden" name="q" value="{{ busca }}">
+          <button class="mini">＋ Incluir</button></form>{% endif %}
+      </div>
+      {% else %}{% if not web_erro %}<div class="vazio-msg">Nada encontrado no Google Notícias para “{{ busca }}”.</div>{% endif %}{% endfor %}
+    </div>
+    {% endif %}
     <div class="rolagem" style="max-height:none">
     {% for n in radar.itens %}
       <article class="rn {{ 'rel' if n.relevante }} {{ 'desc' if n.relevante == false }}" id="n{{ n.id }}">
         <div class="rn-top">
-          {% if n.origem == 'portal' %}<span class="rn-orig portal">{{ n.fonte }}</span>{% else %}<span class="rn-orig google">Google Notícias</span>{% if n.fonte %}<span class="rn-fonte">{{ n.fonte }}</span>{% endif %}{% endif %}
+          {% if n.origem == 'portal' %}<span class="rn-orig portal">{{ n.fonte }}</span>{% elif n.origem == 'manual' %}<span class="rn-orig manual">Incluída manualmente</span>{% if n.fonte %}<span class="rn-fonte">{{ n.fonte }}</span>{% endif %}{% else %}<span class="rn-orig google">Google Notícias</span>{% if n.fonte %}<span class="rn-fonte">{{ n.fonte }}</span>{% endif %}{% endif %}
           {% if n.publicado %}<span class="rn-data">{{ n.publicado|data }}</span>{% endif %}
           <span class="rn-termo">{{ n.termo }}</span>
         </div>
@@ -529,7 +563,7 @@
             {% else %}<span class="rn-atr">Atribuir responsável / gerar ação</span>{% endif %}
           </summary>
           {% if n.acao_efetuada %}<p class="rn-feita"><b>Ação registrada:</b> {{ n.acao_efetuada }}</p>{% endif %}
-          <form method="post" class="rn-form" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None, termo=termo or None) }}">
+          <form method="post" class="rn-form" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None, termo=termo or None, q=busca or None) }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="item"><input type="hidden" name="id" value="{{ n.id }}">
             {% set resp_atual = (usuarios_resp|selectattr('nome', 'equalto', n.assessor)|map(attribute='login')|first) or (usuarios_resp|selectattr('login', 'equalto', n.assessor)|map(attribute='login')|first) %}
             <select name="responsavel" class="mini" title="Responsável — recebe o aviso de tarefa e a solicitação">
@@ -546,7 +580,7 @@
           </form>
         </details>
       </article>
-    {% else %}<div class="vazio-msg">Nenhuma notícia {{ 'neste filtro' if filtro or termo else 'coletada ainda' }}. O radar roda a cada 2 horas; use “Atualizar agora” para buscar já.</div>{% endfor %}
+    {% else %}<div class="vazio-msg">{% if busca %}Nenhuma notícia do radar com “{{ busca }}”{{ ' neste filtro' if filtro or termo }}. Busque no Google Notícias acima ou inclua a notícia pelo link ao lado.{% else %}Nenhuma notícia {{ 'neste filtro' if filtro or termo else 'coletada ainda' }}. O radar roda a cada 2 horas; use “Atualizar agora” para buscar já.{% endif %}</div>{% endfor %}
     </div>
     {% endif %}
     <p class="nota">Como no Monitor Legislativo: os portais são lidos a cada 2 horas e cada notícia nova passa pela IA, que diz se cabe ação parlamentar, de que tipo e por quê. Daqui entram só as notícias que citam o nome do deputado ou um tema acompanhado; o Google Notícias complementa com outros veículos.</p>
@@ -567,6 +601,26 @@
       {% endfor %}
       <small style="color:var(--suave)">Aparecem os servidores da Oposição (e quem já estiver marcado). A equipe vem de Usuários.</small>
       <button class="btn">Salvar equipes</button>
+    </form>
+  </div>
+  {% endif %}
+  {% if filtro != 'selecao' %}
+  <div class="card neu lado" id="incluir">
+    <h2>Incluir notícia pelo link</h2>
+    <form method="post" class="meu-form" action="{{ url_for('meu.painel', cod=cod, secao='radar') }}"
+          onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Incluindo…'">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="manual">
+      <label>Link da notícia<input name="link" type="url" maxlength="1000" required placeholder="https://…"></label>
+      <label>Tema <span class="rn-opc">(opcional)</span><input name="termo" maxlength="120" list="rn-temas" placeholder="Ex.: segurança pública"></label>
+      <datalist id="rn-temas">{% for t in radar.temas %}<option value="{{ t }}">{% endfor %}</datalist>
+      <details class="rn-man-mais"><summary>Título, veículo e data (se a página não informar)</summary>
+        <label>Título<input name="titulo" maxlength="500"></label>
+        <label>Veículo<input name="fonte" maxlength="200" placeholder="Ex.: Correio Braziliense"></label>
+        <label>Data<input name="publicado" type="date"></label>
+        <label>Resumo<textarea name="resumo" rows="2" maxlength="2000"></textarea></label>
+      </details>
+      <small style="color:var(--suave)">O painel lê título, resumo, veículo e data da própria página; a IA analisa a notícia em seguida.</small>
+      <button class="btn">＋ Incluir no radar</button>
     </form>
   </div>
   {% endif %}

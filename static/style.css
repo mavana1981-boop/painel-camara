@@ -939,3 +939,27 @@ details.rn-acomp .rn-form{margin-top:6px}
 .resp-rapido{margin:4px 0 0}
 .resp-rapido select{font-size:12px;max-width:100%}
 .rn-criar{background:var(--pri);color:#fff;border-color:var(--pri)}
+
+/* radar: pesquisa, busca no Google Notícias e inclusão manual */
+.rn-orig.manual{background:var(--mp-ouro-cl,#fff6dc);color:var(--mp-ouro-esc,#8a6512)}
+.rn-busca{display:flex;gap:8px;align-items:center;padding:12px 16px 0;flex-wrap:wrap}
+.rn-busca input[type=search]{flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--linha);border-radius:8px;font:inherit;font-size:14px}
+.rn-limpar{font-size:13px;color:var(--suave)}
+.rn-busca-res{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:10px 16px 0;font-size:13px;color:var(--suave)}
+.rn-busca-res .mini-btn{padding:6px 12px;font-size:12.5px;text-decoration:none}
+.rn-web{margin:12px 16px 4px;border:1px solid var(--linha);border-radius:10px;background:#fafbfd}
+.rn-web h3{margin:0;padding:10px 14px;font-size:14px;border-bottom:1px solid var(--linha)}
+.rn-web h3 small{font-weight:400;color:var(--suave)}
+.rn-web .aviso{margin:10px 14px}
+.rn-web-it{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--linha)}
+.rn-web-it:last-child{border-bottom:0}
+.rn-web-it a{color:inherit;font-weight:600;font-size:13.5px;text-decoration:none}
+.rn-web-it a:hover{text-decoration:underline}
+.rn-web-it small{display:block;color:var(--suave);font-size:12px;margin-top:2px}
+.rn-web-it form{flex:none}
+.rn-ja{flex:none;font-size:12px!important;font-weight:500!important;color:var(--suave)!important;white-space:nowrap}
+.rn-man-mais summary{cursor:pointer;font-size:13px;color:var(--pri);margin:2px 0 6px}
+@media (max-width:600px){.rn-web-it{flex-direction:column;align-items:stretch}.rn-web-it form{align-self:flex-end}}
+.rn-opc{text-transform:none;font-weight:400;letter-spacing:0;color:var(--suave)}
+.rn-ir-incluir{display:none;font-size:13px;color:var(--pri);text-decoration:none;font-weight:600}
+@media (max-width:1100px){.rn-ir-incluir{display:inline}}

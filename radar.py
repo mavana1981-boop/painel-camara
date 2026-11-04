@@ -6,7 +6,9 @@ Como o Monitor:
 - ignora notícias já vistas;
 - passa cada notícia nova por uma IA que responde se ela é relevante, a categoria, o tipo de
   ação parlamentar e a ação sugerida, com justificativa;
-- a equipe acompanha cada item (Pendente → Em análise → Ação efetuada, com assessor e o que foi feito).
+- a equipe acompanha cada item (Pendente → Em análise → Ação efetuada, com assessor e o que foi feito);
+- a equipe pode pesquisar um termo no que já foi coletado, buscar o termo na hora no Google Notícias
+  e incluir manualmente uma notícia pelo link (origem "manual"; a IA analisa em seguida).
 
 Diferenças: aqui o radar é por parlamentar — dos portais entram só as notícias que citam o nome
 dele ou um dos temas cadastrados — e o Google Notícias complementa a busca. A IA é o Claude
@@ -19,7 +21,7 @@ import logging
 import os
 import re
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 
 from sqlalchemy import and_, delete, func, insert, or_, select, update
@@ -296,15 +298,18 @@ def _txt(v, limite):
     return str(v).strip()[:limite] if v not in (None, "", "null") else None
 
 
-def analisar(codigo, limite=MAX_ANALISES, sessao=None):
-    """Analisa as notícias ainda não analisadas do parlamentar. Devolve quantas analisou."""
+def analisar(codigo, limite=MAX_ANALISES, sessao=None, ids=None):
+    """Analisa as notícias ainda não analisadas do parlamentar (ou só as de `ids`). Devolve quantas analisou."""
     import questoes
     if not questoes.configurado():
         return 0
     col = getattr(noticias.c, COL)
     with engine.connect() as c:
         p = c.execute(select(parlamentares).where(parlamentares.c.codigo == codigo)).mappings().first()
-        pend = [dict(r) for r in c.execute(select(noticias).where(col == codigo, noticias.c.analisado_em.is_(None))
+        qp = select(noticias).where(col == codigo, noticias.c.analisado_em.is_(None))
+        if ids:
+            qp = qp.where(noticias.c.id.in_(list(ids)))
+        pend = [dict(r) for r in c.execute(qp
                                            .order_by(noticias.c.publicado.desc().nullslast(), noticias.c.id.desc())
                                            .limit(limite)).mappings()]
     if not p:
@@ -314,7 +319,8 @@ def analisar(codigo, limite=MAX_ANALISES, sessao=None):
     for it in pend:
         msg = (f"Parlamentar acompanhado(a): {CARGO} {quem}\n"
                f"Termo que trouxe a notícia: {it['termo']}\n"
-               f"Fonte: {it.get('fonte') or ('Google Notícias' if it.get('origem') == 'google' else '—')}\n"
+               f"Fonte: {it.get('fonte') or ('Google Notícias' if it.get('origem') == 'google' else '—')}"
+               f"{' (incluída manualmente pela equipe)' if it.get('origem') == 'manual' else ''}\n"
                f"Título: {it['titulo']}\n"
                f"Resumo: {it.get('resumo') or 'Sem resumo'}\n\n"
                f"Responda APENAS com JSON puro conforme o formato solicitado.")
@@ -346,23 +352,168 @@ def atualizar_item(codigo, nid, f):
             acao_efetuada=(f.get("acao_efetuada") or "").strip()[:4000] or None))
 
 
-def lista(codigo, termo="", filtro="", limite=200):
+def lista(codigo, termo="", filtro="", limite=200, busca=""):
     col = getattr(noticias.c, COL)
     q = select(noticias).where(col == codigo)
     if termo:
         q = q.where(noticias.c.termo == termo)
     if filtro == "relevantes":
         q = q.where(noticias.c.relevante.is_(True))
-    elif filtro in ("portal", "google"):
+    elif filtro in ("portal", "google", "manual"):
         q = q.where(noticias.c.origem == filtro)
     elif filtro == "Pendente":   # relevantes ainda sem andamento + qualquer notícia atribuída e pendente
         q = q.where(or_(and_(noticias.c.relevante.is_(True), func.coalesce(noticias.c.status, "Pendente") == "Pendente"),
                         and_(noticias.c.solicitacao_id.isnot(None), noticias.c.status == "Pendente")))
     elif filtro in STATUS:
         q = q.where(noticias.c.status == filtro)
+    q = q.order_by(noticias.c.publicado.desc().nullslast(), noticias.c.id.desc())
     with engine.connect() as c:
-        return [dict(r) for r in c.execute(q.order_by(noticias.c.publicado.desc().nullslast(), noticias.c.id.desc())
-                                           .limit(limite)).mappings()]
+        if not busca:
+            return [dict(r) for r in c.execute(q.limit(limite)).mappings()]
+        linhas = [dict(r) for r in c.execute(q).mappings()]
+    return [n for n in linhas if casa_busca(n, busca)][:limite]
+
+
+_CAMPOS_BUSCA = ("titulo", "resumo", "fonte", "termo", "link", "categoria", "tipo_acao", "acao_sugerida",
+                 "justificativa", "assessor", "acao_efetuada")
+
+
+def casa_busca(n, busca):
+    """Todas as palavras da busca aparecem na notícia (sem diferenciar acento nem maiúsculas)."""
+    palavras = norm_nome(busca).split()
+    if not palavras:
+        return True
+    alvo = norm_nome(" ".join(str(n.get(k) or "") for k in _CAMPOS_BUSCA))
+    return all(p in alvo for p in palavras)
+
+
+# ---------------- busca avulsa no Google Notícias e inclusão manual ----------------
+
+def buscar_google(codigo, consulta, buscar=None, dias=30):
+    """Pesquisa um termo no Google Notícias na hora; marca as que já estão no radar deste parlamentar."""
+    consulta = re.sub(r"\s+", " ", consulta or "").strip()[:200]
+    if not consulta:
+        return []
+    url = ("https://news.google.com/rss/search?q=" + quote(f"{consulta} when:{dias}d")
+           + "&hl=pt-BR&gl=BR&ceid=BR:pt-419")
+    conteudo = (buscar or baixar)(url)
+    itens = parse_feed(conteudo)[:30] if conteudo else []
+    col = getattr(noticias.c, COL)
+    with engine.connect() as c:
+        ja = {r[0]: r[1] for r in c.execute(select(noticias.c.link, noticias.c.id).where(col == codigo))}
+    return [{**it, "ja_id": ja.get(it["link"])} for it in itens]
+
+
+_HEADERS_PAGINA = {**_HEADERS, "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                   "Accept-Language": "pt-BR,pt;q=0.9"}
+
+
+def baixar_pagina(url):
+    import requests
+    r = requests.get(url, headers=_HEADERS_PAGINA, timeout=15, allow_redirects=True)
+    if r.status_code != 200:
+        raise ValueError(f"o site respondeu HTTP {r.status_code}")
+    if not r.encoding or r.encoding.lower() == "iso-8859-1":
+        r.encoding = r.apparent_encoding
+    return r.text[:600_000], r.url
+
+
+def _meta(pagina, *nomes):
+    for nome in nomes:
+        for padrao in (rf'<meta[^>]+(?:property|name|itemprop)=["\']{re.escape(nome)}["\'][^>]*content=["\']([^"\']*)',
+                       rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name|itemprop)=["\']{re.escape(nome)}["\']'):
+            m = re.search(padrao, pagina, re.I)
+            if m and m.group(1).strip():
+                return html.unescape(m.group(1)).strip()
+    return None
+
+
+def _data_iso(v):
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+        return d if d.tzinfo is None else d.astimezone(timezone(timedelta(hours=-3))).replace(tzinfo=None)
+    except ValueError:
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", v.strip())
+        return datetime.fromisoformat(m.group(1)) if m else None
+
+
+def metadados(url, baixar_=None):
+    """Título, resumo, veículo e data de uma página de notícia (Open Graph / meta tags)."""
+    pagina, final = (baixar_ or baixar_pagina)(url)
+    titulo = _meta(pagina, "og:title", "twitter:title")
+    if not titulo:
+        m = re.search(r"<title[^>]*>(.*?)</title>", pagina, re.I | re.S)
+        titulo = _limpar_html(m.group(1), 500) if m else None
+    fonte = _meta(pagina, "og:site_name", "application-name")
+    if titulo and fonte:
+        for sep in (" - ", " | ", " – ", " — "):
+            if titulo.endswith(sep + fonte):
+                titulo = titulo[: -len(sep + fonte)].strip()
+    return {"titulo": _limpar_html(titulo, 500) if titulo else None,
+            "resumo": _limpar_html(_meta(pagina, "og:description", "description", "twitter:description")) or None,
+            "fonte": (fonte or "")[:200] or None,
+            "publicado": _data_iso(_meta(pagina, "article:published_time", "datePublished", "pubdate",
+                                         "publishdate", "date", "DC.date.issued")),
+            "final": final}
+
+
+def _dominio(url):
+    m = re.match(r"https?://(?:www\.)?([^/:?#]+)", url or "")
+    return m.group(1) if m else None
+
+
+def incluir_manual(codigo, f, autor=None, baixar_=None):
+    """Inclui uma notícia pelo link. Devolve (id, nova?). Título/resumo/data vêm do formulário ou da página."""
+    link = (f.get("link") or "").strip()
+    if not re.match(r"^https?://\S+\.\S+", link):
+        raise ValueError("Informe o link completo da notícia (começando por http:// ou https://).")
+    link = link[:1000]
+    col = getattr(noticias.c, COL)
+    with engine.connect() as c:
+        ja = c.execute(select(noticias.c.id).where(col == codigo, noticias.c.link == link)).scalar()
+    if ja:
+        return ja, False
+    titulo = (f.get("titulo") or "").strip()[:500]
+    resumo = (f.get("resumo") or "").strip()[:2000]
+    fonte = (f.get("fonte") or "").strip()[:200]
+    pub = _data_iso(f.get("publicado") or "")
+    meta_ = {}
+    if not (titulo and fonte and pub) and "news.google." not in link:     # completa pelo que a página informa
+        try:
+            meta_ = metadados(link, baixar_)
+        except Exception as e:
+            log.info("radar: metadados de %s indisponíveis (%s)", link, e)
+            if not titulo:
+                raise ValueError("Não consegui abrir a página para ler o título. Informe o título manualmente.")
+    titulo = titulo or meta_.get("titulo")
+    if not titulo:
+        raise ValueError("A página não informa o título da notícia. Preencha o título manualmente.")
+    tema = re.sub(r"\s+", " ", f.get("termo") or "").strip()[:120] or "Inclusão manual"
+    item = {"titulo": titulo, "link": link, "fonte": fonte or meta_.get("fonte") or _dominio(meta_.get("final") or link),
+            "publicado": pub or meta_.get("publicado") or datetime.now().replace(microsecond=0),
+            "resumo": resumo or meta_.get("resumo")}
+    with engine.begin() as c:
+        gravar_noticias(c, codigo, tema, [item], origem="manual")
+        nid = c.execute(select(noticias.c.id).where(col == codigo, noticias.c.link == link)).scalar()
+    log.info("radar: notícia incluída manualmente por %s para %s: %s", autor, codigo, link)
+    return nid, True
+
+
+def analisar_em_segundo_plano(codigo, nid):
+    """Análise da IA logo após a inclusão manual, sem esperar o próximo ciclo."""
+    import questoes
+    if not questoes.configurado():
+        return False
+
+    def rodar():
+        try:
+            analisar(codigo, limite=1, ids=[nid])
+        except Exception:
+            log.exception("radar: análise da notícia incluída")
+    threading.Thread(target=rodar, daemon=True).start()
+    return True
 
 
 # ---------------- ciclo ----------------
