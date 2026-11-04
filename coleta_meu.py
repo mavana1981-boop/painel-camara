@@ -16,6 +16,7 @@ import logging
 import json
 import os
 import re
+import threading
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, insert, select, update
@@ -27,6 +28,7 @@ log = logging.getLogger("meu_parlamentar")
 DIAS_AGENDA_PASSADO, DIAS_AGENDA_FUTURO = 7, 45
 DIAS_HISTORICO = int(os.environ.get("MEU_DIAS_HISTORICO", "180"))
 CHAVE_HISTORICO = "meu:historico_pautas"
+CHAVE_AGENDA_PROXIMA = "meu:agenda_proxima"
 
 # ---------------- utilitários ----------------
 
@@ -160,8 +162,90 @@ def pauta(evento_id):
     return [x for x in (doc or {}).get("dados") or [] if isinstance(x, dict)]
 
 
+def hoje_brt():
+    """Data de Brasília (o servidor do Railway roda em UTC: depois das 21h, date.today() já é amanhã)."""
+    from datetime import timezone
+    return datetime.now(timezone(timedelta(hours=-3))).date()
+
+
+_agenda_lock = threading.Lock()   # coleta completa e atualização dos próximos dias não gravam ao mesmo tempo
+
+
+def eventos_do_dia(d: date):
+    """Eventos de um dia, página por página. None se alguma página falhar (para não gravar agenda incompleta)."""
+    from collector import API, get_json
+    url = f"{API}/eventos?dataInicio={d}&dataFim={d}&itens=100&ordem=ASC&ordenarPor=dataHoraInicio"
+    out, vistos = [], set()
+    for _ in range(20):
+        doc = get_json(url)
+        if doc is None:
+            return None
+        for ev in doc.get("dados") or []:
+            if isinstance(ev, dict) and ev.get("id") not in vistos:
+                vistos.add(ev.get("id"))
+                out.append(ev)
+        prox = next((l.get("href") for l in doc.get("links") or [] if l.get("rel") == "next"), None)
+        if not prox or prox == url:
+            return out
+        url = prox
+    return out
+
+
+def atualizar_agenda_proxima(hoje=None, dias=None, ler_dia=None):
+    """Atualização leve e frequente: de hoje até `dias` à frente, um dia por vez.
+
+    Sessões do Plenário costumam ser convocadas depois da coleta diária (na noite anterior ou na própria
+    manhã) e as pautas mudam ao longo do dia; esta rotina as traz a cada AGENDA_MINUTOS. Um dia só é
+    substituído quando todas as páginas dele vieram — se a API falhar, a agenda gravada fica como estava."""
+    hoje = hoje or hoje_brt()
+    dias = int(os.environ.get("AGENDA_DIAS_PROXIMOS", "7")) if dias is None else dias
+    ler_dia = ler_dia or eventos_do_dia
+    total, falhas = 0, []
+    with _agenda_lock:
+        for i in range(dias + 1):
+            d = hoje + timedelta(days=i)
+            try:
+                evs = ler_dia(d)
+            except Exception as e:
+                log.warning("agenda de %s: %s", d, e)
+                evs = None
+            if evs is None:
+                falhas.append(d.isoformat())
+                continue
+            linhas = []
+            for ev in evs:
+                itens = pauta(ev["id"]) if deliberativo(ev) else []
+                linhas.append(parse_evento(ev, itens))
+                if itens:
+                    with engine.begin() as c:
+                        gravar_relatorias_pauta(c, ev, itens)
+            with engine.begin() as c:
+                total += gravar_agenda_camara(c, linhas, d, d)
+    _gravar_meta(CHAVE_AGENDA_PROXIMA, datetime.now().isoformat(timespec="seconds"))
+    if falhas:
+        log.warning("agenda próxima: API falhou em %s — esses dias ficaram como estavam", ", ".join(falhas))
+    log.info("agenda próxima (%d dias): %d eventos", dias + 1, total)
+    return total
+
+
+def precisa_agenda_proxima(agora=None):
+    v = _meta(CHAVE_AGENDA_PROXIMA)
+    if not v:
+        return True
+    try:
+        return (agora or datetime.now()) - datetime.fromisoformat(v) >= timedelta(
+            minutes=float(os.environ.get("AGENDA_MINUTOS", "30")))
+    except ValueError:
+        return True
+
+
 def coletar_agenda(hoje=None):
-    hoje = hoje or date.today()
+    with _agenda_lock:
+        return _coletar_agenda(hoje)
+
+
+def _coletar_agenda(hoje=None):
+    hoje = hoje or hoje_brt()
     ini, fim = hoje - timedelta(days=DIAS_AGENDA_PASSADO), hoje + timedelta(days=DIAS_AGENDA_FUTURO)
     evs = eventos_periodo(ini, fim)
     if not evs:

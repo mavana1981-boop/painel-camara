@@ -899,11 +899,14 @@ def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
     with engine.begin() as c:
         c.execute(ins(processos).values(id=7700001, identificacao="PL 900/2026", sigla="PL"))
         c.execute(ins(autorias).values(processo_id=7700001, codigo_deputado=101, principal=True))
+        c.execute(ins(processos).values(id=7700006, identificacao="PL 901/2026", sigla="PL"))
+        c.execute(ins(autorias).values(processo_id=7700006, codigo_deputado=101, principal=False))
     ev = coleta_meu.parse_evento(_evento(880001, dia, "10:00", "PLEN", "Sessão Deliberativa Extraordinária"), [
         _item_pauta(1, 7700002, "PL", 321, 2026, relator=(101, "Ana Oposição", "PL", "SP"),
                     ementa="Altera o Código de Trânsito."),
         _item_pauta(2, 7700001, "PL", 900, 2026, ementa="Institui o programa de hortas comunitárias."),
         _item_pauta(3, 7700003, "PL", 55, 2026, ementa="Dispõe sobre a igualdade de GÊNEROS nas escolas e combate à misoginia."),
+        _item_pauta(5, 7700006, "PL", 901, 2026, ementa="Cria o selo empresa amiga da escola."),
     ])
     req = _item_pauta(4, 7700004, "REQ", 12, 2026, ementa="Requer urgência para o PL 77/2026.")
     req["proposicaoRelacionada_"] = {"id": 7700005, "siglaTipo": "PL", "numero": 77, "ano": 2026,
@@ -913,11 +916,13 @@ def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
         c.execute(dele(agenda).where(agenda.c.chave.in_(["E880001", "E880002"])))
         for e in (ev, ev2):
             c.execute(ins(agenda).values(**e, codigo_deputado=None))
-    assert len(json.loads(ev["itens_pauta"])) == 3
+    assert len(json.loads(ev["itens_pauta"])) == 4
 
     adm = _cliente()
     html = adm.get("/meu/101?secao=agenda&todos=1&solenes=mostrar").get_data(as_text=True)
     assert "Deputado é relator: PL 321/2026" in html and "Deputado é autor: PL 900/2026" in html
+    assert "Deputado é coautor: PL 901/2026" in html
+    assert 'class="ag-tag autor"' in html and 'class="ag-tag coautor"' in html
     assert "Institui o programa de hortas comunitárias." in html
     assert "⚠ gênero, misoginia</b> — PL 55/2026" in html
     assert "⚠ maconha</b> — REQ 12/2026 (sobre o PL 77/2026)" in html and "Descriminaliza o porte" in html
@@ -954,6 +959,7 @@ def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
     pdf = adm.get(f"/meu/101/agenda.pdf?periodo=data&de={dia}&todos=1")
     texto = " ".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.data)).pages)
     assert "Deputado é relator" in texto and "PL 321/2026" in texto and "Tema sensível" in texto
+    assert "Deputado é coautor: PL 901/2026" in texto and "COAUTOR" in texto
 
 
 def _regimento_falso():
@@ -1874,3 +1880,57 @@ def test_radar_pesquisa_e_inclusao_manual():
     assert radar.buscar_google(101, "Ana Oposição", buscar=_buscar_fake)[0]["ja_id"]
     r = adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "manual", "link": "nada"})
     assert "link completo" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
+
+
+def test_agenda_proxima_traz_sessao_do_plenario_convocada_depois():
+    """Sessão convocada depois da coleta diária aparece na atualização dos próximos dias; dia com
+    falha na API fica como estava."""
+    from datetime import date, datetime, timedelta
+    import app as painel
+    import coleta_meu
+    import meu
+    from db import agenda
+    from sqlalchemy import delete as dele
+    hoje = coleta_meu.hoje_brt()
+    amanha = hoje + timedelta(days=1)
+    with engine.begin() as c:
+        c.execute(dele(agenda).where(agenda.c.origem == "camara"))
+        c.execute(text("DELETE FROM meta WHERE chave = :k"), {"k": coleta_meu.CHAVE_AGENDA_PROXIMA})
+    # coleta diária da manhã: só a reunião da comissão
+    manha = {hoje: [_evento(95001, hoje.isoformat(), "10:00", "CCJC", "Reunião Deliberativa Ordinária")],
+             amanha: [_evento(95003, amanha.isoformat(), "09:00", "CFT", "Audiência Pública")]}
+    orig = coleta_meu.pauta
+    coleta_meu.pauta = lambda eid: []
+    try:
+        coleta_meu.atualizar_agenda_proxima(hoje, dias=1, ler_dia=lambda d: manha.get(d, []))
+        assert {r[0] for r in _q("SELECT chave FROM agenda WHERE origem='camara'")} == {"E95001", "E95003"}
+        assert not coleta_meu.precisa_agenda_proxima()
+        assert coleta_meu.precisa_agenda_proxima(datetime.now() + timedelta(minutes=31))
+        # depois: o Presidente convoca a sessão deliberativa; a API falha para amanhã
+        tarde = {hoje: manha[hoje] + [_evento(95002, hoje.isoformat(), "13:55", "PLEN",
+                                              "Sessão Deliberativa Extraordinária", "Plenário")]}
+        def ler(d):
+            if d not in tarde:
+                raise RuntimeError("Falha ao obter /eventos após 7 tentativas")
+            return tarde[d]
+        coleta_meu.atualizar_agenda_proxima(hoje, dias=1, ler_dia=ler)
+    finally:
+        coleta_meu.pauta = orig
+    chaves = {r[0] for r in _q("SELECT chave FROM agenda WHERE origem='camara'")}
+    assert chaves == {"E95001", "E95002", "E95003"}          # amanhã (falha) preservado
+    # aparece na agenda do deputado (Plenário vale para todos) e em "próximos" antes do horário
+    from app import app as _app
+    with _app.test_request_context("/"):
+        from flask import g as _g
+        _g.usuario = {"id": 1, "login": "admin", "admin": True}
+        dias = meu.agenda_deputado(101, hoje, hoje, so_dele=True)
+    plen = next(e for d in dias for e in d["itens"] if e["chave"] == "E95002")
+    assert plen["titulo"] == "Plenário · Sessão Deliberativa Extraordinária" and plen["membro"]
+    prox, _ = meu.separar_agenda(dias, datetime.combine(hoje, datetime.min.time()) + timedelta(hours=11, minutes=34))
+    assert any(e["chave"] == "E95002" for d in prox for e in d["itens"])
+    # agendador: roda quando passou o intervalo; AUTO_AGENDA=0 desliga
+    os.environ["AUTO_AGENDA"] = "0"
+    try:
+        assert painel.agenda_proxima_se_preciso() is False
+    finally:
+        os.environ.pop("AUTO_AGENDA", None)

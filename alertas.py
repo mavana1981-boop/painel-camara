@@ -1,7 +1,8 @@
 """Alertas da agenda do parlamentar.
 
-1. Deputado na pauta: diz QUAL proposição — ele é relator do item (relator informado na pauta) ou autor/coautor
-   da proposição (tabela autorias), ou o nome dele aparece no texto do evento.
+1. Deputado na pauta: diz QUAL proposição — ele é relator do item (relator informado na pauta), autor
+   (1º signatário) ou coautor da proposição (tabela autorias, campo `principal`), ou o nome dele aparece no
+   texto do evento.
 2. Termos sensíveis para a Oposição (gênero, misoginia, aborto...): procurados na ementa de cada item da pauta
    (e da proposição relacionada, quando o item é um requerimento) e no título/descrição do evento.
    A lista é da equipe toda e pode ser editada na própria agenda; começa com TERMOS_PADRAO.
@@ -86,8 +87,17 @@ def achar(texto, regras):
 # ---------------- análise de um evento ----------------
 
 def autorias_do(cod):
+    """{proposição: True se o deputado é o 1º autor, False se é coautor}."""
     with engine.connect() as c:
-        return {r[0] for r in c.execute(select(autorias.c.processo_id).where(autorias.c.codigo_deputado == cod))}
+        return {r[0]: bool(r[1]) for r in c.execute(select(autorias.c.processo_id, autorias.c.principal)
+                                                    .where(autorias.c.codigo_deputado == cod))}
+
+
+def papel_autoria(autorias_cod, pid):
+    """'autor' (1º signatário) ou 'coautor'; None se o deputado não assina a proposição."""
+    if pid is None or pid not in autorias_cod:
+        return None
+    return "autor" if (autorias_cod.get(pid) if isinstance(autorias_cod, dict) else True) else "coautor"
 
 
 def itens(e):
@@ -106,13 +116,15 @@ def analisar(e, cod, nome_norm, autorias_cod, regras):
         papeis = []
         if it.get("relator_id") == cod:
             papeis.append("relator")
-        if it.get("id") in autorias_cod:
-            papeis.append("autor")
-        if it.get("rel_id") and it["rel_id"] in autorias_cod and "autor" not in papeis:
-            papeis.append(f"autor da {it.get('rel_ident') or 'proposição relacionada'}")
+        autoria = papel_autoria(autorias_cod, it.get("id"))
+        if autoria:
+            papeis.append(autoria)
+        elif papel_autoria(autorias_cod, it.get("rel_id")):    # ex.: requerimento de urgência para projeto dele
+            autoria = papel_autoria(autorias_cod, it.get("rel_id"))
+            papeis.append(f"{autoria} da {it.get('rel_ident') or 'proposição relacionada'}")
         if papeis:
             na_pauta.append({"ident": it.get("ident"), "papel": " e ".join(papeis), "ementa": it.get("ementa"),
-                             "situacao": it.get("situacao")})
+                             "situacao": it.get("situacao"), "autoria": autoria})
         proprio = achar(" ".join(x for x in (it.get("ident"), it.get("ementa")) if x), regras)
         relac = [t for t in achar(it.get("rel_ementa"), regras) if t not in proprio]
         if proprio:

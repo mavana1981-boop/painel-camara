@@ -357,6 +357,16 @@ def radar_se_preciso():
     return True
 
 
+def agenda_proxima_se_preciso():
+    """Agenda de hoje até 7 dias à frente a cada 30 minutos (AGENDA_MINUTOS; AUTO_AGENDA=0 desliga):
+    traz sessões do Plenário convocadas depois da coleta diária e pautas que mudam durante o dia."""
+    import coleta_meu
+    if os.environ.get("AUTO_AGENDA") == "0" or not coleta_meu.precisa_agenda_proxima():
+        return False
+    coleta_meu.atualizar_agenda_proxima()
+    return True
+
+
 def plenario_se_preciso():
     """Cópia da pauta do Minha Pauta a cada 30 minutos (PLENARIO_MINUTOS)."""
     import plenario
@@ -389,7 +399,11 @@ def _agendador_diario():
             plenario_se_preciso()
         except Exception:
             logging.exception("Plenário")
-        time.sleep(30 * 60)
+        try:
+            agenda_proxima_se_preciso()
+        except Exception:
+            logging.exception("agenda dos próximos dias")
+        time.sleep(10 * 60)
 
 
 # Só roda no Railway (ou com AUTO_CARGA=1 local). Desligue com AUTO_CARGA=0 / AUTO_COLETA=0.

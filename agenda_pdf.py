@@ -323,6 +323,8 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
                 tags.append(f'<b>{_p(e["colegiado"])}</b>')
             if e.get("citado"):
                 tags.append(f'<font color="#9b2c2c"><b>{CASA["na_pauta"].upper()}</b></font>')
+                auts = {p.get("autoria") for p in e.get("na_pauta") or []}
+                tags += [f'<font color="#1f6f4a"><b>{x.upper()}</b></font>' for x in ("autor", "coautor") if x in auts]
             elif e.get("sem_proposicao"):
                 tags.append('<font color="#5f6b76"><b>SEM PROPOSIÇÃO DO DEPUTADO</b></font>')
             elif e.get("pauta_pendente"):
