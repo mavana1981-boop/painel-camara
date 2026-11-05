@@ -57,6 +57,8 @@ auth.configurar(app)
 import meu  # noqa: E402
 import fotos  # noqa: E402
 app.register_blueprint(meu.bp)
+import prelista  # noqa: E402
+app.register_blueprint(prelista.bp)
 app.register_blueprint(fotos.bp)
 import ajuda  # noqa: E402
 app.register_blueprint(ajuda.bp)

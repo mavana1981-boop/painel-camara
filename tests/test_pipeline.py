@@ -1657,7 +1657,7 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
     try:
         tok = _tok(adm, "/meu/102?secao=radar&filtro=selecao")
         html = adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
-        assert "Seleção da IA" in html and "Nenhuma seleção ainda" in html and "Distribuição da Seleção da IA" in html
+        assert "Seleção da IA" in html and "Nenhuma seleção ainda" in html and "Distribuição por sorteio" in html
         antes_sols = _q("SELECT COUNT(*) FROM solicitacoes")[0][0]
         random.seed(3)
         r = adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_gerar"})
@@ -2068,3 +2068,133 @@ def test_selecao_devolve_as_abertas_pela_ia_e_mantem_lotes():
     if r.status_code == 200:
         html = r.get_data(as_text=True)
         assert "Lote</span> <b>04/11/2026 às 07:05</b>" in html and "Lote</span> <b>03/11/2026 às 07:10</b>" in html
+
+
+def test_prelista_envio_pelo_whatsapp_e_aprovacao_da_chefia():
+    """Notícias de qualquer filtro e tópicos da Seleção da IA vão para a pré-lista; o envio gera imagem e link
+    público; a chefia aprova parte, escolhe analista ou sorteia; o resto fica recusado."""
+    import random
+    from datetime import datetime, timedelta
+    from urllib.parse import unquote
+    import prelista as pl
+    import selecao_ia as si
+    from db import noticias, selecao_ia as tab
+    from sqlalchemy import insert as ins
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    for login, nome in (("ana.com", "Ana Comissão"), ("beto.out", "Beto Outros"), ("caio.out", "Caio Outros")):
+        adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": login, "nome": nome, "senha": "senha-segura-1"})
+    si.salvar_equipes(["ana.com"], ["beto.out", "caio.out"])
+    agora = datetime.now()
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM prelista")); c.execute(text("DELETE FROM prelista_envios"))
+        n1 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Ministro falta à comissão de novo",
+                                            link="https://p/1", fonte="Folha", origem="google", publicado=agora, relevante=True,
+                                            tipo_acao="Requerimento de convocação", acao_sugerida="Convocar o ministro na comissão",
+                                            status="Em análise")).inserted_primary_key[0]
+        n2 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Preço da gasolina sobe pela 3ª vez",
+                                            link="https://p/2", fonte="G1", origem="portal", publicado=agora)).inserted_primary_key[0]
+        n3 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Notícia que ninguém quer",
+                                            link="https://p/3", origem="google", publicado=agora)).inserted_primary_key[0]
+        t1 = c.execute(ins(tab).values(codigo_deputado=101, lote=agora.replace(microsecond=0).isoformat(), tema="Ana Oposição",
+                                       topico="Fila do INSS passa de 2 milhões", area="Previdência", tipo="outros",
+                                       instrumento="Requerimento de Informação (RIC)", status="pendente", noticias=json.dumps([n2]),
+                                       acao_sugerida="RIC ao Ministério da Previdência sobre a fila", criado_em=agora)).inserted_primary_key[0]
+    tok = _tok(adm, "/meu/101?secao=radar")
+    # em qualquer filtro há "Abrir solicitação" e "Enviar à pré-lista"
+    for filtro in ("", "relevantes", "Em análise", "portal"):
+        html = adm.get(f"/meu/101?secao=radar&filtro={filtro}").get_data(as_text=True)
+        assert "＋ Abrir solicitação" in html and "📋 Enviar à pré-lista" in html and "📋 Pré-lista" in html, filtro
+    for nid in (n1, n2, n3):
+        r = adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "prelista_add", "id": nid, "filtro": "relevantes"})
+        assert r.status_code == 302
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "prelista_add", "id": n1})          # repetida
+    adm.post("/meu/101?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "pre_um": t1})
+    assert pl.contagem(101) == 4 and _q("SELECT status FROM selecao_ia WHERE id = :i", i=t1)[0][0] == "prelista"
+    html = adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    assert "📋 Pré-lista (4)" in html and "📋 na pré-lista" in html
+    # retirar um e devolver o tópico; enviar de novo
+    item_t1 = _q("SELECT id FROM prelista WHERE origem = 'selecao' AND ref_id = :i", i=t1)[0][0]
+    adm.post("/meu/101?secao=radar&filtro=prelista", data={"_csrf": tok, "acao": "prelista_remover", "item": item_t1})
+    assert _q("SELECT status FROM selecao_ia WHERE id = :i", i=t1)[0][0] == "pendente" and pl.contagem(101) == 3
+    adm.post("/meu/101?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "modo": "prelista", "ids": [t1]})
+    html = adm.get("/meu/101?secao=radar&filtro=prelista").get_data(as_text=True)
+    assert "Pré-lista para aprovação da chefia" in html and "Fila do INSS passa de 2 milhões" in html
+    assert "Gerar imagem e link para o WhatsApp" in html
+    # gerar o envio
+    r = adm.post("/meu/101?secao=radar&filtro=prelista", data={"_csrf": tok, "acao": "prelista_enviar"})
+    assert r.status_code == 302 and "envio=" in r.headers["Location"]
+    e = pl.envios(101)[0]
+    assert len(e["itens"]) == 4 and e["status"] == "aguardando" and pl.contagem(101) == 0
+    html = adm.get(f"/meu/101?secao=radar&filtro=prelista&envio={e['id']}").get_data(as_text=True)
+    assert "Enviar pelo WhatsApp" in html and "https://wa.me/?text=" in html and f"/aprovar/{e['token']}" in html
+    wa = unquote(re.search(r'href="https://wa.me/\?text=([^"]+)"', html).group(1))
+    assert "Pré-lista de providências" in wa and "1. Ministro falta à comissão de novo" in wa and e["token"] in wa
+    assert "aguardando a chefia" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    img = adm.get(f"/meu/101/prelista/{e['id']}.png")
+    assert img.status_code == 200 and img.data[:8] == b"\x89PNG\r\n\x1a\n" and len(img.data) > 5000
+    # página pública: sem login
+    anon = _anonimo()
+    pub = anon.get(f"/aprovar/{e['token']}")
+    page = pub.get_data(as_text=True)
+    assert pub.status_code == 200 and "Pré-lista para aprovação" in page and "Fila do INSS" in page
+    assert 'property="og:image"' in page and "Beto Outros" in page and "Sortear" in page
+    assert anon.get(f"/aprovar/{e['token']}/imagem.png").data[:4] == b"\x89PNG"
+    assert anon.get("/aprovar/token-que-nao-existe").status_code == 404
+    assert anon.get("/meu/101?secao=radar&filtro=prelista").status_code == 302           # o painel continua fechado
+    csrf = re.search(r'name="_csrf" value="([^"]+)"', page).group(1)
+    ids = {it["titulo"]: it["id"] for it in e["itens"]}
+    i_min, i_gas, i_inss, i_nao = (ids[k] for k in ("Ministro falta à comissão de novo", "Preço da gasolina sobe pela 3ª vez",
+                                                    "Fila do INSS passa de 2 milhões", "Notícia que ninguém quer"))
+    assert "Marque pelo menos uma" in anon.post(f"/aprovar/{e['token']}", data={"_csrf": csrf, "nome": "Chefe"}).get_data(as_text=True)
+    random.seed(1)
+    r = anon.post(f"/aprovar/{e['token']}", data={"_csrf": csrf, "nome": "Dra. Chefe de Gabinete",
+                                                  "itens": [i_min, i_gas, i_inss], f"resp_{i_min}": pl.SORTEAR,
+                                                  f"resp_{i_gas}": "caio.out", f"resp_{i_inss}": pl.SORTEAR,
+                                                  f"resp_{i_nao}": "beto.out"})
+    page = r.get_data(as_text=True)
+    assert "Pré-lista respondida por Dra. Chefe de Gabinete" in page and "3 solicitações criadas" in page
+    assert "Caio Outros" in page and "não aprovada" in page
+    sols = {t: (resp, sol, por) for t, resp, sol, por in _q(
+        "SELECT titulo, responsavel, solicitante, criado_por FROM solicitacoes WHERE solicitante = 'Pré-lista aprovada pela chefia'")}
+    assert sols["Radar: Ministro falta à comissão de novo"][0] == "ana.com"               # convocação → comissão (sorteio)
+    assert sols["Radar: Preço da gasolina sobe pela 3ª vez"][0] == "caio.out"            # escolhido pela chefia
+    assert sols["Seleção da IA: Fila do INSS passa de 2 milhões"][0] in ("beto.out", "caio.out")
+    assert "Radar: Notícia que ninguém quer" not in sols and len(sols) == 3
+    assert all(v[2] == "Pré-lista · Dra. Chefe de Gabinete" for v in sols.values())
+    assert _q("SELECT status, solicitacao_id IS NOT NULL FROM selecao_ia WHERE id = :i", i=t1)[0] == ("aberta", 1)
+    assert _q("SELECT solicitacao_id IS NOT NULL, assessor FROM noticias WHERE id = :n", n=n1)[0] == (1, "Ana Comissão")
+    assert _q("SELECT solicitacao_id FROM noticias WHERE id = :n", n=n3)[0][0] is None
+    desc = _q("SELECT descricao FROM solicitacoes WHERE titulo = 'Radar: Ministro falta à comissão de novo'")[0][0]
+    assert "Aprovada na pré-lista por Dra. Chefe de Gabinete" in desc and "responsável sorteado" in desc and "https://p/1" in desc
+    ana = _cliente_usuario("ana.com", "senha-segura-1")
+    assert "Radar: Ministro falta à comissão de novo" in ana.get("/orientacoes").get_data(as_text=True)    # aviso de tarefa
+    # link vale uma vez
+    r = anon.post(f"/aprovar/{e['token']}", data={"_csrf": csrf, "itens": [i_nao]})
+    assert "Pré-lista respondida" in r.get_data(as_text=True) and len(_q(
+        "SELECT id FROM solicitacoes WHERE solicitante = 'Pré-lista aprovada pela chefia'")) == 3
+    html = adm.get("/meu/101?secao=radar&filtro=prelista").get_data(as_text=True)
+    assert "Respondida por Dra. Chefe de Gabinete" in html and "3 aprovadas, 1 recusada" in html
+    # cancelar um envio devolve os itens; envio expirado não aceita resposta
+    with engine.begin() as c:
+        n4 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Outra",
+                                            link="https://p/4", origem="google", publicado=agora)).inserted_primary_key[0]
+    pl.adicionar_noticia(101, n4, "admin")
+    e2 = pl.envio_por_id(101, pl.gerar_envio(101, "admin"))
+    assert pl.cancelar_envio(101, e2["id"]) and pl.contagem(101) == 1
+    assert "não está mais disponível" in anon.get(f"/aprovar/{e2['token']}").get_data(as_text=True)
+    e3 = pl.envio_por_id(101, pl.gerar_envio(101, "admin"))
+    with engine.begin() as c:
+        c.execute(text("UPDATE prelista_envios SET expira_em = :d WHERE id = :i"), {"d": agora - timedelta(days=1), "i": e3["id"]})
+    assert "expirou" in anon.get(f"/aprovar/{e3['token']}").get_data(as_text=True)
+    try:
+        pl.responder(e3["token"], {e3["itens"][0]["id"]: pl.SORTEAR}, "x")
+        assert False
+    except ValueError:
+        pass
+    # notícia já com solicitação não entra
+    try:
+        pl.adicionar_noticia(101, n1, "admin")
+        assert False
+    except ValueError as ex:
+        assert "já tem solicitação" in str(ex)

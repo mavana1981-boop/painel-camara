@@ -217,7 +217,7 @@ def _abertos(cod):
                          .select_from(selecao_ia.outerjoin(solicitacoes, solicitacoes.c.id == selecao_ia.c.solicitacao_id))
                          .where(selecao_ia.c.codigo_deputado == cod,
                                 selecao_ia.c.criado_em >= datetime.now() - timedelta(days=DIAS),
-                                or_(selecao_ia.c.status == "pendente",
+                                or_(selecao_ia.c.status.in_(("pendente", "prelista")),
                                     solicitacoes.c.status.in_(("aberta", "andamento"))))).all()
     return [f"{t} — {p}" for t, p in rows]
 
@@ -519,7 +519,7 @@ def lotes(cod, limite=MAX_LOTES):
         for r in itens:
             if r["status"] != "descartada":
                 temas.setdefault(r["tema"], []).append(r)
-        conta = {k: sum(1 for r in itens if r["status"] == k) for k in ("pendente", "aberta", "descartada")}
+        conta = {k: sum(1 for r in itens if r["status"] == k) for k in ("pendente", "aberta", "descartada", "prelista")}
         out.append({"lote": lote, "gerado_em": datetime.fromisoformat(lote), "temas": temas, "total": len(itens),
                     "areas": len({r["area"] for r in itens if r["area"]}), "ultimo": lote == ultimo,
                     "descartados": [r for r in itens if r["status"] == "descartada"], **conta})

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#1d5fbf">
+<title>Pré-lista para aprovação · {{ deputado }}</title>
+<meta property="og:title" content="Pré-lista para aprovação — {{ deputado }}">
+<meta property="og:description" content="{{ e.itens|length }} providência{{ 's' if e.itens|length != 1 }} para escolher quais viram solicitação.">
+<meta property="og:image" content="{{ img_url }}">
+<meta property="og:type" content="website">
+<style>
+:root{--azul:#1d5fbf;--azul-esc:#103d82;--azul-cl:#e8f0fc;--tinta:#1c2128;--suave:#5f6874;--linha:#e2e8f0;--verde:#0b5d3b;--fundo:#f3f6fb}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fundo);color:var(--tinta);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:var(--azul);color:#fff;padding:22px 18px 20px}
+header h1{margin:0;font-size:22px;letter-spacing:-.2px}
+header p{margin:4px 0 0;color:#dce8fa;font-size:14px}
+main{max-width:760px;margin:0 auto;padding:16px 14px 120px}
+.instr{background:#fff;border:1px solid var(--linha);border-radius:12px;padding:12px 14px;font-size:14px;color:var(--suave);margin-bottom:12px}
+.aviso{border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:14.5px}
+.aviso.erro{background:#fdecea;color:#8c1d13}
+.aviso.ok{background:#e6f4ec;color:#0b5d3b}
+.todos{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 2px 10px;font-size:14px}
+.todos label{display:flex;gap:8px;align-items:center;font-weight:600}
+.todos select{font:inherit;font-size:14px;padding:6px 8px;border:1px solid var(--linha);border-radius:8px;background:#fff}
+.it{background:#fff;border:1px solid var(--linha);border-radius:12px;margin-bottom:10px;overflow:hidden;transition:box-shadow .15s,border-color .15s}
+.it.marcado{border-color:var(--azul);box-shadow:0 0 0 2px var(--azul-cl)}
+.it-top{display:flex;gap:12px;padding:14px;cursor:pointer;align-items:flex-start}
+.it-top input{width:24px;height:24px;margin:2px 0 0;accent-color:var(--azul);flex:none;cursor:pointer}
+.num{font-size:12px;font-weight:700;color:var(--azul);margin-right:4px}
+.it h2{margin:0 0 6px;font-size:16.5px;line-height:1.3}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.chip{font-size:11.5px;font-weight:700;background:var(--azul-cl);color:var(--azul-esc);border-radius:10px;padding:2px 8px}
+.acao{margin:0;font-size:14px;color:var(--suave)}
+.links{margin-top:6px;font-size:13px;display:flex;gap:10px;flex-wrap:wrap}
+.links a{color:var(--azul)}
+.resp{display:none;padding:0 14px 14px 50px;gap:8px;align-items:center;font-size:13.5px;color:var(--suave);flex-wrap:wrap}
+.it.marcado .resp{display:flex}
+.resp select{flex:1;min-width:200px;font:inherit;font-size:15px;padding:9px 10px;border:1px solid var(--linha);border-radius:9px;background:#fff;color:var(--tinta)}
+.rodape{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--linha);box-shadow:0 -6px 18px rgba(16,40,80,.08);padding:12px 14px calc(12px + env(safe-area-inset-bottom))}
+.rodape-in{max-width:760px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rodape input[type=text]{flex:1;min-width:160px;font:inherit;padding:11px 12px;border:1px solid var(--linha);border-radius:10px}
+button.conf{background:var(--azul);color:#fff;border:0;border-radius:10px;padding:12px 18px;font:inherit;font-weight:700;cursor:pointer;flex:1;min-width:220px}
+button.conf:disabled{opacity:.6}
+.nenhuma{background:none;border:0;color:var(--suave);text-decoration:underline;font:inherit;font-size:13px;cursor:pointer;padding:4px}
+.res li{margin-bottom:8px}
+.res .ok{color:var(--verde);font-weight:600}
+.res .rec{color:var(--suave)}
+.fim{background:#fff;border:1px solid var(--linha);border-radius:12px;padding:16px}
+.fim h2{margin:0 0 10px;font-size:18px}
+@media (max-width:480px){.resp{padding-left:14px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Pré-lista para aprovação</h1>
+  <p>{{ deputado }} · gerada em {{ quando(e.criado_em) }} · {{ e.itens|length }} providência{{ 's' if e.itens|length != 1 }}</p>
+</header>
+<main>
+{% if e.status == 'respondida' %}
+  <div class="fim">
+    <h2>{{ 'Pronto! ' if request.method == 'POST' }}Pré-lista respondida{% if e.respondido_por %} por {{ e.respondido_por }}{% endif %}{% if e.respondido_em %} em {{ quando(e.respondido_em) }}{% endif %}</h2>
+    <p style="margin-top:0;color:var(--suave)">{{ e.aprovadas }} solicitaç{{ 'ões' if e.aprovadas != 1 else 'ão' }} criada{{ 's' if e.aprovadas != 1 }} e encaminhada{{ 's' if e.aprovadas != 1 }} aos analistas{% if e.recusadas %}; {{ e.recusadas }} não aprovada{{ 's' if e.recusadas != 1 }}{% endif %}.</p>
+    <ol class="res">{% for it in e.itens %}<li>{{ it.titulo }}<br>
+      {% if it.status == 'aprovada' %}<span class="ok">✓ solicitação aberta · {{ nomes.get(it.responsavel) or it.responsavel or 'sem responsável' }}</span>
+      {% else %}<span class="rec">não aprovada</span>{% endif %}</li>{% endfor %}</ol>
+  </div>
+{% elif e.status != 'aguardando' or e.expirado %}
+  <div class="aviso erro">Este link não está mais disponível{{ ' (expirou)' if e.expirado else '' }}. Peça à equipe uma nova pré-lista.</div>
+{% else %}
+  {% if erro %}<div class="aviso erro">{{ erro }}</div>{% endif %}
+  <div class="instr">Marque as providências que devem virar solicitação. Para cada uma, escolha o analista ou deixe <b>sortear</b> (o painel distribui entre a equipe, sem repetir). Depois confirme no fim da página.</div>
+  <form method="post" id="form">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="todos">
+      <label><input type="checkbox" id="todos"> Marcar todas</label>
+      <label>Analista para as marcadas
+        <select id="todosResp"><option value="">— cada uma no seu —</option><option value="{{ sortear }}">Sortear</option>
+          {% for a in analistas %}<option value="{{ a.login }}">{{ a.nome or a.login }}</option>{% endfor %}</select></label>
+    </div>
+    {% for it in e.itens %}
+    <div class="it" data-it>
+      <label class="it-top">
+        <input type="checkbox" name="itens" value="{{ it.id }}">
+        <div>
+          <h2><span class="num">{{ loop.index }}.</span>{{ it.titulo }}</h2>
+          <div class="chips"><span class="chip">{{ 'Comissão' if it.tipo == 'comissao' else 'Outros assuntos' }}</span>{% if it.area %}<span class="chip">{{ it.area }}</span>{% endif %}{% if it.instrumento %}<span class="chip">{{ it.instrumento }}</span>{% endif %}</div>
+          {% if it.acao %}<p class="acao">{{ it.acao }}</p>{% elif it.resumo %}<p class="acao">{{ it.resumo }}</p>{% endif %}
+          {% if it.links_l %}<div class="links">{% for l in it.links_l[:3] %}<a href="{{ l.link }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">{{ l.fonte or 'ver notícia' }}</a>{% endfor %}</div>{% endif %}
+        </div>
+      </label>
+      <div class="resp">Analista
+        <select name="resp_{{ it.id }}"><option value="{{ sortear }}">Sortear ({{ 'equipe de comissão' if it.tipo == 'comissao' else 'outros assuntos' }})</option>
+          {% for a in analistas %}<option value="{{ a.login }}">{{ a.nome or a.login }}</option>{% endfor %}</select>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="rodape"><div class="rodape-in">
+      <input type="text" name="nome" maxlength="120" placeholder="Seu nome (quem está aprovando)" autocomplete="name">
+      <button class="conf" id="conf">Confirmar</button>
+      <button class="nenhuma" name="nenhuma" value="1" formnovalidate onclick="return confirm('Não aprovar nenhuma providência desta lista?')">não aprovar nenhuma</button>
+    </div></div>
+  </form>
+  <script>
+  (function () {
+    var f = document.getElementById('form'), conf = document.getElementById('conf'), todos = document.getElementById('todos');
+    function at() {
+      var chk = f.querySelectorAll('input[name=itens]'), n = 0;
+      chk.forEach(function (c) { c.closest('[data-it]').classList.toggle('marcado', c.checked); if (c.checked) n++; });
+      conf.textContent = n ? 'Confirmar e criar ' + n + ' solicitaç' + (n > 1 ? 'ões' : 'ão') : 'Marque as providências';
+      conf.disabled = !n; todos.checked = n && n === chk.length; todos.indeterminate = n > 0 && n < chk.length;
+    }
+    f.addEventListener('change', function (ev) {
+      if (ev.target === todos) f.querySelectorAll('input[name=itens]').forEach(function (c) { c.checked = todos.checked; });
+      if (ev.target.id === 'todosResp' && ev.target.value) f.querySelectorAll('[data-it]').forEach(function (d) {
+        if (d.querySelector('input[name=itens]').checked) d.querySelector('select').value = ev.target.value; });
+      at();
+    });
+    f.addEventListener('submit', function () { setTimeout(function () { conf.disabled = true; conf.textContent = 'Criando…'; }, 0); });
+    at();
+  })();
+  </script>
+{% endif %}
+</main>
+</body>
+</html>

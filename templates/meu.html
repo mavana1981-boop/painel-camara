@@ -482,15 +482,15 @@
     {% set q = {'termo': termo} if termo else {} %}
     {% if busca %}{% set q = dict(q, q=busca) %}{% endif %}
     <div class="pilulas">
-      {% for k, nome, n in [('', 'Tudo', rc.n), ('selecao', '✨ Seleção da IA', sel_pend if sel_pend else None), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] + ([('manual', 'Incluídas manualmente', rc.manual)] if rc.manual else []) %}
-      <a class="{{ 'sel' if filtro == k }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=k or None, **q) }}">{{ nome }}{% if n is not none %} ({{ n }}){% endif %}</a>
+      {% for k, nome, n in [('', 'Tudo', rc.n), ('selecao', '✨ Seleção da IA', sel_pend if sel_pend else None), ('prelista', '📋 Pré-lista', pre_n if pre_n else None), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] + ([('manual', 'Incluídas manualmente', rc.manual)] if rc.manual else []) %}
+      <a class="{{ 'sel' if filtro == k }}{{ ' pre' if k == 'prelista' }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=k or None, **(q if k != 'prelista' else {})) }}">{{ nome }}{% if n is not none %} ({{ n }}){% endif %}</a>
       {% endfor %}
     </div>
     {% if radar.termos|length > 1 %}<div class="pilulas sec">
       <a class="{{ 'sel' if not termo }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=filtro or None, q=busca or None) }}">Todos os termos</a>
       {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t, filtro=filtro or None, q=busca or None) }}">{{ t }}</a>{% endfor %}
     </div>{% endif %}
-    {% if not ia_ok and filtro != 'selecao' %}<div class="aviso erro" style="margin:12px 16px 0">A análise por IA está desligada: falta a variável <b>ANTHROPIC_API_KEY</b> no Railway. As notícias continuam sendo coletadas.</div>
+    {% if not ia_ok and filtro not in ('selecao', 'prelista') %}<div class="aviso erro" style="margin:12px 16px 0">A análise por IA está desligada: falta a variável <b>ANTHROPIC_API_KEY</b> no Railway. As notícias continuam sendo coletadas.</div>
     {% elif rc.pend %}<div class="rn-fila">{{ rc.pend }} notícia(s) aguardando análise da IA — saem no próximo ciclo (a cada 2 horas).</div>{% endif %}
     {% if filtro == 'selecao' %}
     <div class="sel-cab">
@@ -513,6 +513,7 @@
         <div class="sel-lote-cont">
           {% if L.pendente %}<span class="pend">{{ L.pendente }} pendente{{ 's' if L.pendente != 1 }}</span>{% endif %}
           {% if L.aberta %}<span class="ab">{{ L.aberta }} aberta{{ 's' if L.aberta != 1 }}</span>{% endif %}
+          {% if L.prelista %}<span class="prel">{{ L.prelista }} na pré-lista</span>{% endif %}
           {% if L.descartada %}<span class="desc">{{ L.descartada }} descartada{{ 's' if L.descartada != 1 }}</span>{% endif %}
           <span>{{ L.temas|length }} tema{{ 's' if L.temas|length != 1 }} · {{ L.areas }} área{{ 's' if L.areas != 1 }}</span>
         </div>
@@ -527,6 +528,7 @@
             {% if t.area %}<span class="area-chip">{{ t.area }}</span>{% endif %}
             <b>{{ t.topico }}</b>
             {% if t.status == 'pendente' %}<span class="sel-st pend">pendente de abertura</span>
+            {% elif t.status == 'prelista' %}<a class="pre-chip" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}">📋 na pré-lista</a>
             {% elif t.status_sol %}<span class="sol-st {{ t.status_sol }}">{{ status|selectattr(0, 'equalto', t.status_sol)|map(attribute=1)|first }}</span>{% endif %}
           </div>
           {% if t.resumo %}<p class="sel-res">{{ t.resumo }}</p>{% endif %}
@@ -542,11 +544,14 @@
                 {% for u in usuarios_resp %}<option value="{{ u.login }}">{{ u.nome or u.login }}</option>{% endfor %}
               </select></label>
             <button class="btn mini-btn" name="um" value="{{ t.id }}">Abrir solicitação</button>
+            <button class="rn-btn-pre" name="pre_um" value="{{ t.id }}" formnovalidate>📋 Enviar à pré-lista</button>
             <button class="sel-desc-btn" name="descartar_um" value="{{ t.id }}" formnovalidate>Descartar</button>
+          {% elif t.status == 'prelista' %}
+            <span class="sol-criada">Aguardando a aprovação da chefia pela pré-lista.</span>
           {% else %}
             {% if t.responsavel %}<span class="sel-resp">{{ avatar(t.responsavel, 26) }} {{ (usuarios_resp|selectattr('login', 'equalto', t.responsavel)|map(attribute='nome')|first) or t.responsavel }}</span>
             {% else %}<span class="sel-resp" style="color:var(--suave)">sem responsável</span>{% endif %}
-            {% if t.decidido_por %}<span class="sol-criada">aberta por {{ (usuarios_resp|selectattr('login', 'equalto', t.decidido_por)|map(attribute='nome')|first) or t.decidido_por }}{% if t.decidido_em %} em {{ t.decidido_em|data_hora }}{% endif %}</span>{% endif %}
+            {% if t.decidido_por %}<span class="sol-criada">{{ 'aprovada na ' if t.decidido_por.startswith('Pré-lista') else 'aberta por ' }}{{ (usuarios_resp|selectattr('login', 'equalto', t.decidido_por)|map(attribute='nome')|first) or t.decidido_por }}{% if t.decidido_em %} em {{ t.decidido_em|data_hora }}{% endif %}</span>{% endif %}
             {% if t.solicitacao_id %}<a class="rn-sol" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', abrir=t.solicitacao_id) }}#s{{ t.solicitacao_id }}">ver solicitação {{ ic("seta") }}</a>{% endif %}
           {% endif %}
           </div>
@@ -561,6 +566,7 @@
       <div class="sel-barra" hidden>
         <span><b data-n>0</b> selecionado(s)</span>
         <button class="btn" name="modo" value="abrir">Abrir solicitações selecionadas</button>
+        <button class="btn pre" name="modo" value="prelista">📋 Enviar à pré-lista</button>
         <button class="btn sec" name="modo" value="descartar">Descartar selecionados</button>
       </div>
       {% endif %}
@@ -580,6 +586,86 @@
         at();
       });
       at();
+    });
+    </script>
+    {% elif filtro == 'prelista' %}
+    <div class="sel-cab pre-cab">
+      <div><b>📋 Pré-lista para aprovação da chefia</b>{% if pre_itens %} <span class="pre-n">{{ pre_itens|length }} na lista</span>{% endif %}
+        <small>Envie para cá notícias de qualquer filtro do radar ou tópicos da Seleção da IA. Depois gere a imagem e o link: a chefia (ou o parlamentar) abre pelo WhatsApp, marca o que deve virar solicitação e escolhe o analista ou deixa o painel sortear. O link não pede login, vale para uma resposta e expira em 7 dias.</small></div>
+      {% if pre_itens %}<form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}" onsubmit="this.querySelector('button').disabled=true">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_enviar">
+        <button class="btn pre">Gerar imagem e link para o WhatsApp</button></form>{% endif %}
+    </div>
+    {% for it in pre_itens %}
+    <article class="pre-it">
+      <span class="pre-num">{{ loop.index }}</span>
+      <div class="pre-corpo">
+        <div class="sel-l1">
+          <span class="pre-orig">{{ 'Seleção da IA' if it.origem == 'selecao' else 'Radar' }}</span>
+          <span class="sel-tipo {{ it.tipo }}">{{ 'Comissão' if it.tipo == 'comissao' else 'Outros assuntos' }}</span>
+          {% if it.area %}<span class="area-chip">{{ it.area }}</span>{% endif %}
+          <b>{{ it.titulo }}</b>
+        </div>
+        {% if it.acao %}<p class="sel-acao">{% if it.instrumento %}<span class="sel-inst">{{ it.instrumento }}</span> {% endif %}{{ it.acao }}</p>
+        {% elif it.resumo %}<p class="sel-res">{{ it.resumo }}</p>{% endif %}
+        {% if it.links_l %}<div class="pre-links">{% for l in it.links_l[:3] %}<a href="{{ l.link }}" target="_blank" rel="noopener noreferrer">{{ l.fonte or 'notícia' }}</a>{% endfor %}{% if it.links_l|length > 3 %} <small>+{{ it.links_l|length - 3 }}</small>{% endif %}</div>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_remover">
+        <input type="hidden" name="item" value="{{ it.id }}"><button class="sel-desc-btn" title="Tirar da pré-lista">retirar</button></form>
+    </article>
+    {% else %}<div class="vazio-msg">A pré-lista está vazia. Use “📋 Enviar à pré-lista” nas notícias (em qualquer filtro) ou nos tópicos da Seleção da IA.</div>{% endfor %}
+
+    {% if pre_envios %}<h3 class="pre-h3">Enviadas à chefia</h3>{% endif %}
+    {% for e in pre_envios %}
+    <section class="pre-envio {{ e.status }} {{ 'novo' if pre_novo == e.id }}" id="envio{{ e.id }}">
+      <div class="pre-env-cab">
+        <div><b>Pré-lista de {{ e.criado_em|data_hora }}</b> <small>· {{ e.itens|length }} ite{{ 'ns' if e.itens|length != 1 else 'm' }} · gerada por {{ (usuarios_resp|selectattr('login', 'equalto', e.criado_por)|map(attribute='nome')|first) or e.criado_por }}</small></div>
+        {% if e.status == 'respondida' %}<span class="pre-st ok">Respondida por {{ e.respondido_por }} em {{ e.respondido_em|data_hora }} · {{ e.aprovadas }} aprovada{{ 's' if e.aprovadas != 1 }}{% if e.recusadas %}, {{ e.recusadas }} recusada{{ 's' if e.recusadas != 1 }}{% endif %}</span>
+        {% elif e.expirado %}<span class="pre-st exp">Link expirado sem resposta</span>
+        {% else %}<span class="pre-st ag">Aguardando a chefia · link vale até {{ e.expira_em|data }}</span>{% endif %}
+      </div>
+      {% if e.status == 'aguardando' and not e.expirado %}
+      <div class="pre-env-corpo">
+        <a class="pre-thumb" href="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id) }}" target="_blank"><img src="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id) }}" alt="Imagem da pré-lista" loading="lazy"></a>
+        <div class="pre-acoes">
+          <a class="btn whats" href="{{ e.whatsapp }}" target="_blank" rel="noopener">Enviar pelo WhatsApp</a>
+          <button type="button" class="btn sec" data-compartilhar="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id) }}" data-texto="{{ e.link }}">Compartilhar imagem</button>
+          <a class="btn sec" href="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id, baixar=1) }}">Baixar imagem</a>
+          <div class="pre-link"><input readonly value="{{ e.link }}" aria-label="Link para a chefia"><button type="button" class="btn sec" data-copiar>Copiar link</button></div>
+          <small>“Enviar pelo WhatsApp” abre a conversa com a lista e o link (a prévia do link mostra a imagem). No celular, “Compartilhar imagem” manda a imagem junto.</small>
+          <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}" onsubmit="return confirm('Cancelar este envio? O link deixa de valer e os itens voltam para a pré-lista.')">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_cancelar">
+            <input type="hidden" name="envio" value="{{ e.id }}"><button class="sel-desc-btn">cancelar envio</button></form>
+        </div>
+      </div>
+      {% endif %}
+      <details class="pre-env-itens" {{ 'open' if e.status == 'respondida' and loop.first }}><summary>Ver itens</summary>
+        <ol>{% for it in e.itens %}<li class="{{ it.status }}"><span>{{ it.titulo }}</span>
+          {% if it.status == 'aprovada' %}<em class="ok">aprovada · {{ (usuarios_resp|selectattr('login', 'equalto', it.responsavel)|map(attribute='nome')|first) or it.responsavel or 'sem responsável' }}</em>
+            {% if it.solicitacao_id %}<a class="rn-sol" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', abrir=it.solicitacao_id) }}#s{{ it.solicitacao_id }}">ver solicitação {{ ic("seta") }}</a>{% endif %}
+          {% elif it.status == 'recusada' %}<em class="rec">não aprovada</em>{% endif %}</li>{% endfor %}</ol>
+      </details>
+    </section>
+    {% endfor %}
+    <script>
+    document.querySelectorAll('[data-copiar]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var i = b.parentNode.querySelector('input'); i.select();
+        (navigator.clipboard ? navigator.clipboard.writeText(i.value) : Promise.reject()).catch(function () { document.execCommand('copy'); });
+        b.textContent = 'Copiado!'; setTimeout(function () { b.textContent = 'Copiar link'; }, 1800);
+      });
+    });
+    document.querySelectorAll('[data-compartilhar]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        fetch(b.dataset.compartilhar).then(function (r) { return r.blob(); }).then(function (bl) {
+          var f = new File([bl], 'pre-lista.png', {type: 'image/png'});
+          if (navigator.canShare && navigator.canShare({files: [f]})) {
+            return navigator.share({files: [f], text: 'Pré-lista para aprovação: ' + b.dataset.texto});
+          }
+          var a = document.createElement('a'); a.href = URL.createObjectURL(bl); a.download = 'pre-lista.png'; a.click();
+        }).catch(function () {});
+      });
     });
     </script>
     {% else %}
@@ -635,6 +721,25 @@
         {% elif n.relevante == false %}<div class="rn-sem">IA: sem ação parlamentar{% if n.justificativa %} — {{ n.justificativa }}{% endif %}</div>
         {% elif n.analisado_em %}<div class="rn-sem">{{ n.justificativa }}</div>
         {% else %}<div class="rn-sem">Aguardando análise da IA</div>{% endif %}
+        {% if not n.solicitacao_id %}
+        <div class="rn-rapido">
+          {% if pre_noticias.get(n.id) == 'enviada' %}<span class="pre-chip env">📋 aguardando a chefia</span>
+          {% else %}
+          <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar') }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="item">
+            <input type="hidden" name="id" value="{{ n.id }}"><input type="hidden" name="status" value="{{ n.status or 'Pendente' }}">
+            <input type="hidden" name="criar" value="1">
+            <button class="rn-btn-abrir" title="Abre a solicitação agora, com responsável sorteado pelos critérios">＋ Abrir solicitação</button></form>
+          {% if pre_noticias.get(n.id) == 'na_lista' %}<a class="pre-chip" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}">📋 na pré-lista</a>
+          {% else %}
+          <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar') }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_add">
+            <input type="hidden" name="id" value="{{ n.id }}"><input type="hidden" name="filtro" value="{{ filtro }}">
+            <input type="hidden" name="termo" value="{{ termo }}"><input type="hidden" name="q" value="{{ busca }}">
+            <button class="rn-btn-pre" title="Separa para a chefia ou o parlamentar aprovar pelo WhatsApp">📋 Enviar à pré-lista</button></form>
+          {% endif %}{% endif %}
+        </div>
+        {% endif %}
         {% set atribuida = n.solicitacao_id or n.status in ('Em análise', 'Ação efetuada') or n.assessor %}
         <details class="rn-acomp"{% if n.relevante or atribuida %} open{% endif %}>
           <summary>
@@ -667,9 +772,9 @@
     <p class="nota">Como no Monitor Legislativo: os portais são lidos a cada 2 horas e cada notícia nova passa pela IA, que diz se cabe ação parlamentar, de que tipo e por quê. Daqui entram só as notícias que citam o nome do deputado ou um tema acompanhado; o Google Notícias complementa com outros veículos.</p>
   </div>
   <div class="lado-pilha">
-  {% if filtro == 'selecao' %}
+  {% if filtro in ('selecao', 'prelista') %}
   <div class="card neu lado">
-    <h2>Distribuição da Seleção da IA <small>sorteio equilibrado ao abrir</small></h2>
+    <h2>Distribuição por sorteio <small>Seleção da IA e pré-lista</small></h2>
     {% if sel_faltam %}<div class="aviso" style="margin:10px 14px 0;background:#fff7e6;color:#7a5a12">Não encontrei usuário para: {{ sel_faltam|join(', ') }}. Marque abaixo quem é quem e salve.</div>{% endif %}
     <form method="post" class="meu-form sel-eq" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_equipes">
@@ -685,7 +790,7 @@
     </form>
   </div>
   {% endif %}
-  {% if filtro != 'selecao' %}
+  {% if filtro not in ('selecao', 'prelista') %}
   <div class="card neu lado" id="incluir">
     <h2>Incluir notícia pelo link</h2>
     <form method="post" class="meu-form" action="{{ url_for('meu.painel', cod=cod, secao='radar') }}"

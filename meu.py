@@ -1002,8 +1002,19 @@ def painel(cod):
         ctx["ia_ok"] = questoes.configurado()
         ctx["status_radar"] = rd.STATUS
         ctx["categorias_radar"] = rd.CATEGORIAS
+        import prelista as pl
         import selecao_ia as si
         ctx["sel_pend"] = si.n_pendentes(cod)
+        ctx["pre_n"] = pl.contagem(cod)
+        ctx["pre_noticias"] = pl.noticias_na_lista(cod)
+        if ctx["filtro"] == "prelista":
+            ctx["pre_itens"] = pl.itens(cod)
+            ctx["pre_envios"] = pl.envios(cod)
+            for e in ctx["pre_envios"]:
+                e["link"] = pl.link_publico(e)
+                e["whatsapp"] = "https://wa.me/?text=" + __import__("urllib.parse").parse.quote(pl.texto_whatsapp(e, cod))
+            ctx["pre_novo"] = request.args.get("envio", type=int)
+            ctx["sel_equipes"], ctx["sel_faltam"] = si.equipes(), si.nao_encontrados()
         if ctx["filtro"] == "selecao":
             ctx["lotes"] = si.lotes(cod)
             ctx["sel_equipes"], ctx["sel_tipos"] = si.equipes(), si.TIPOS
@@ -1122,9 +1133,40 @@ def _post(cod, secao, s, autor, pleno=True):
             flash(f"Seleção de {r['gerado_em'].strftime('%d/%m/%Y às %H:%M')} gerada: {len(r['topicos'])} tópico(s) "
                   "pendentes de abertura. Confirme os que devem virar solicitação.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao") + "#lote-" + r["lote"].replace(":", "")
+        elif secao == "radar" and acao == "prelista_add":
+            import prelista as pl
+            _, novo = pl.adicionar_noticia(cod, f.get("id", type=int), autor)
+            flash("Notícia enviada à pré-lista." if novo else "Essa notícia já está na pré-lista.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro=f.get("filtro") or None,
+                              termo=f.get("termo") or None, q=f.get("q") or None) + f"#n{f.get('id', '')}"
+        elif secao == "radar" and acao == "prelista_remover":
+            import prelista as pl
+            pl.remover(cod, f.get("item", type=int))
+            flash("Item retirado da pré-lista.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="prelista")
+        elif secao == "radar" and acao == "prelista_enviar":
+            import prelista as pl
+            eid = pl.gerar_envio(cod, autor)
+            flash("Pré-lista pronta: envie a imagem e o link pelo WhatsApp para a chefia aprovar.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="prelista", envio=eid) + f"#envio{eid}"
+        elif secao == "radar" and acao == "prelista_cancelar":
+            import prelista as pl
+            if pl.cancelar_envio(cod, f.get("envio", type=int)):
+                flash("Envio cancelado: o link deixou de valer e os itens voltaram para a pré-lista.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="prelista")
         elif secao == "radar" and acao == "selecao_decidir":
             import selecao_ia as si
             ancora = ""
+            if f.get("pre_um"):
+                import prelista as pl
+                pl.adicionar_selecao(cod, [f.get("pre_um")], autor)
+                flash("Tópico enviado à pré-lista.", "ok")
+                return redirect(url_for("meu.painel", cod=cod, secao="radar", filtro="selecao") + f"#t{f.get('pre_um')}")
+            if f.get("modo") == "prelista":
+                import prelista as pl
+                n = pl.adicionar_selecao(cod, f.getlist("ids"), autor)
+                flash(f"{n} tópico(s) enviado(s) à pré-lista." if n else "Marque pelo menos um tópico.", "ok" if n else "erro")
+                return redirect(url_for("meu.painel", cod=cod, secao="radar", filtro="selecao"))
             if f.get("um"):
                 ids, modo = [f.get("um")], "abrir"
             elif f.get("descartar_um"):
@@ -1166,6 +1208,18 @@ def _post(cod, secao, s, autor, pleno=True):
     except ValueError as e:
         flash(str(e), "erro")
     return redirect(destino)
+
+
+@bp.route("/<int:cod>/prelista/<int:eid>.png")
+def prelista_imagem(cod, eid):
+    import prelista as pl
+    _exigir_acesso(cod)
+    e = pl.envio_por_id(cod, eid)
+    if not e:
+        abort(404)
+    from flask import send_file
+    return send_file(pl.imagem(e, cod), mimetype="image/png", download_name=f"pre-lista-{eid}.png",
+                     as_attachment=request.args.get("baixar") == "1")
 
 
 @bp.route("/<int:cod>/agenda/status")

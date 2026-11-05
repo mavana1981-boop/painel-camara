@@ -164,6 +164,16 @@ Na primeira subida com `MINHA_PAUTA_DATABASE_URL` configurada, o painel importa 
 login certo viram o hash do painel. Depois da importação só os logins de `ADMINS_PAINEL` (padrão `marcelo.uvara`)
 ficam como administradores — se nenhum deles existir, nada muda. Para repetir: Usuários → **Importar do Minha Pauta**.
 
+## Pré-lista (Radar) — aprovação da chefia pelo WhatsApp
+Em qualquer filtro do radar, cada notícia sem solicitação tem **＋ Abrir solicitação** (responsável sorteado pelos
+critérios) e **📋 Enviar à pré-lista**; os tópicos da Seleção da IA também podem ir para a pré-lista (um a um ou os
+marcados). No filtro azul **📋 Pré-lista**, **Gerar imagem e link para o WhatsApp** congela a lista num envio: uma
+imagem PNG (que também aparece na prévia do link) e um link secreto `/aprovar/<token>`, sem login, para a chefia ou o
+parlamentar. Pelo link, marca-se o que vira solicitação e, para cada item, escolhe-se o analista ou **Sortear**
+(equipe de comissão × outros assuntos, sem repetir). Ao confirmar, as solicitações são criadas e os analistas
+recebem o aviso de tarefa; o que não foi marcado fica como não aprovado. O link vale para uma resposta e expira em
+`PRELISTA_DIAS` (7) dias; **cancelar envio** devolve os itens à pré-lista.
+
 ## Seleção da IA (Radar)
 Filtro **✨ Seleção da IA** no Radar: uma vez por dia (a partir das 7h, no ciclo do radar) ou pelo botão
 **Gerar nova seleção**, a IA lê as notícias das últimas `SELECAO_HORAS` (72) horas de cada tema acompanhado e escolhe

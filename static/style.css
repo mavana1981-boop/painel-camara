@@ -1001,3 +1001,51 @@ details.rn-acomp .rn-form{margin-top:6px}
 .sel-barra[hidden]{display:none}
 .sel-barra span{flex:1;font-size:13.5px}
 @media (max-width:600px){.sel-rodape{flex-direction:column;align-items:stretch}.sel-resp-esc{justify-content:space-between}.sel-resp-esc select{max-width:none;flex:1}.sel-barra .btn{flex:1}}
+/* pré-lista (azul) */
+.pilulas a.pre{border-color:#b9cdf0;color:#1d5fbf;background:#eef4fd;font-weight:700}
+.pilulas a.pre.sel,.pilulas a.pre:hover{background:#1d5fbf;color:#fff;border-color:#1d5fbf}
+.btn.pre{background:#1d5fbf;border-color:#1d5fbf;color:#fff}
+.btn.pre:hover{background:#164c99}
+.btn.whats{background:#1f9d55;border-color:#1f9d55;color:#fff;text-decoration:none}
+.rn-rapido{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0 2px}
+.rn-rapido form{margin:0}
+.rn-btn-abrir,.rn-btn-pre{font:inherit;font-size:12.5px;font-weight:600;border-radius:7px;padding:5px 11px;cursor:pointer;border:1px solid}
+.rn-btn-abrir{background:#fff;color:var(--pri-esc);border-color:#bcd8c8}
+.rn-btn-abrir:hover{background:var(--pri-cl)}
+.rn-btn-pre{background:#eef4fd;color:#1d5fbf;border-color:#b9cdf0}
+.rn-btn-pre:hover{background:#1d5fbf;color:#fff}
+.pre-chip{display:inline-block;font-size:12px;font-weight:700;color:#1d5fbf;background:#eef4fd;border:1px solid #cddcf5;border-radius:12px;padding:2px 9px;text-decoration:none}
+.pre-chip.env{color:#7a5a12;background:#fff6e0;border-color:#f0dcae}
+.sel-lote-cont .prel{color:#1d5fbf;font-weight:700}
+.pre-cab{background:linear-gradient(90deg,#eef4fd,#fff)}
+.pre-n{display:inline-block;margin-left:6px;font-size:12px;font-weight:700;background:#1d5fbf;color:#fff;border-radius:12px;padding:2px 9px}
+.pre-it{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-bottom:1px solid #edf1f5}
+.pre-num{flex:none;width:28px;height:28px;border-radius:50%;background:#1d5fbf;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+.pre-corpo{flex:1;min-width:0}
+.pre-orig{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#5f6874;background:#f1f3f6;border-radius:10px;padding:3px 8px}
+.pre-links{display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px}
+.pre-links a{color:#1d5fbf}
+.pre-h3{margin:0;padding:14px 16px 8px;font-size:14px;color:var(--suave);text-transform:uppercase;letter-spacing:.5px}
+.pre-envio{margin:0 16px 12px;border:1px solid var(--linha);border-radius:10px;overflow:hidden}
+.pre-envio.novo{border-color:#1d5fbf;box-shadow:0 0 0 3px #dfe9fb}
+.pre-env-cab{display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#f8fafd;border-bottom:1px solid var(--linha)}
+.pre-env-cab small{color:var(--suave)}
+.pre-st{font-size:12px;font-weight:700;border-radius:12px;padding:3px 10px}
+.pre-st.ag{background:#fff6e0;color:#7a5a12}
+.pre-st.ok{background:var(--pri-cl);color:var(--pri-esc)}
+.pre-st.exp{background:#f1f3f6;color:#5f6874}
+.pre-env-corpo{display:flex;gap:16px;padding:14px;flex-wrap:wrap}
+.pre-thumb{flex:none;width:220px;max-height:300px;overflow:hidden;border:1px solid var(--linha);border-radius:8px;display:block}
+.pre-thumb img{width:100%;display:block}
+.pre-acoes{flex:1;min-width:240px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.pre-acoes small{color:var(--suave);font-size:12px}
+.pre-link{display:flex;gap:6px;width:100%}
+.pre-link input{flex:1;min-width:0;font:inherit;font-size:12.5px;padding:7px 9px;border:1px solid var(--linha);border-radius:7px;color:var(--suave)}
+.pre-env-itens{padding:8px 14px;font-size:13px}
+.pre-env-itens summary{cursor:pointer;color:#1d5fbf;font-weight:600}
+.pre-env-itens ol{margin:8px 0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
+.pre-env-itens em{font-style:normal;font-size:12px;margin-left:6px}
+.pre-env-itens em.ok{color:var(--pri-esc);font-weight:700}
+.pre-env-itens em.rec{color:var(--suave)}
+.pre-env-itens li.recusada span{color:var(--suave);text-decoration:line-through}
+@media (max-width:600px){.pre-thumb{width:100%;max-height:220px}.pre-acoes .btn{width:100%;text-align:center}}

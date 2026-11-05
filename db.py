@@ -315,6 +315,42 @@ selecao_ia = Table(  # radar: tópicos escolhidos pela IA; viram solicitação s
     Column("decidido_em", DateTime),
 )
 
+prelista = Table(  # pré-lista: providências que a equipe separa para a chefia/parlamentar aprovar
+    "prelista", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("codigo_deputado", Integer, index=True),
+    Column("origem", String(20)),                # noticia (radar) ou selecao (Seleção da IA)
+    Column("ref_id", Integer, index=True),       # id da notícia ou do tópico da Seleção da IA
+    Column("titulo", String(300)),
+    Column("resumo", Text),
+    Column("acao", Text),                        # providência sugerida
+    Column("instrumento", String(80)),
+    Column("area", String(40)),
+    Column("tipo", String(20)),                  # comissao ou outros (define a equipe do sorteio)
+    Column("tema", String(120)),
+    Column("links", Text),                       # JSON: [{titulo, link, fonte}]
+    Column("status", String(20)),                # na_lista, enviada, aprovada, recusada
+    Column("envio_id", Integer, index=True),
+    Column("solicitacao_id", Integer),
+    Column("responsavel", String(60)),
+    Column("incluido_por", String(60)),
+    Column("incluido_em", DateTime),
+    Column("decidido_em", DateTime),
+)
+
+prelista_envios = Table(  # cada link enviado à chefia (WhatsApp) com os itens da pré-lista daquele momento
+    "prelista_envios", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("codigo_deputado", Integer, index=True),
+    Column("token", String(64), unique=True),
+    Column("status", String(20)),                # aguardando, respondida, cancelada
+    Column("criado_por", String(60)),
+    Column("criado_em", DateTime),
+    Column("expira_em", DateTime),
+    Column("respondido_por", String(120)),       # nome informado por quem aprovou
+    Column("respondido_em", DateTime),
+)
+
 fontes_radar = Table(  # portais (RSS) lidos pelo radar
     "fontes_radar", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
