@@ -1217,6 +1217,24 @@ def _post(cod, secao, s, autor, pleno=True):
     return redirect(destino)
 
 
+def _login_do_painel(login, nome=""):
+    """Login deste painel para o usuário do Minha Pauta: o mesmo login (sem diferenciar maiúsculas); se não houver,
+    o usuário ativo cujo nome bate com o nome exibido lá (ex.: "Marcelo Uvara"). None se não achar ou houver empate."""
+    from sqlalchemy import func
+    with engine.connect() as c:
+        if login:
+            achado = c.execute(select(usuarios.c.login).where(func.lower(usuarios.c.login) == login)).scalar()
+            if achado:
+                return achado
+        if nome:
+            alvo = _sem_acento(nome).lower().split()
+            cands = [r[0] for r in c.execute(select(usuarios.c.login, usuarios.c.nome).where(usuarios.c.ativo.is_(True)))
+                     if r[1] and _sem_acento(r[1]).lower().split() == alvo]
+            if len(cands) == 1:
+                return cands[0]
+    return None
+
+
 def tarefas_api():
     """GET /api/tarefas?login=fulano — solicitações em aberto do analista, para o aviso no app Minha Pauta.
 
@@ -1227,15 +1245,19 @@ def tarefas_api():
     from flask import jsonify
     token = os.environ.get("TAREFAS_TOKEN", "")
     enviado = request.headers.get("X-Painel-Token", "")
-    if not token or not hmac.compare_digest(enviado, token):
-        abort(403)
-    login = (request.args.get("login") or "").strip().lower()[:60]
+    if not token:
+        return jsonify({"erro": "sem_token", "detalhe": "TAREFAS_TOKEN não está configurado no Painel."}), 503
+    if not hmac.compare_digest(enviado, token):
+        return jsonify({"erro": "token_diferente", "detalhe": "A chave enviada não confere com TAREFAS_TOKEN."}), 403
+    pedido = (request.args.get("login") or "").strip().lower()[:60]
+    achado = _login_do_painel(pedido, (request.args.get("nome") or "").strip()[:120])
+    login = achado or pedido
     base = request.url_root.rstrip("/")
     if os.environ.get("RAILWAY_ENVIRONMENT") and base.startswith("http://"):
         base = "https://" + base[7:]
     itens = tarefas_do_usuario(login, limite=30) if login else []
     return jsonify({
-        "login": login, "total": len(itens), "novas": sum(1 for t in itens if t["nova"]),
+        "login": login, "usuario_encontrado": bool(achado), "total": len(itens), "novas": sum(1 for t in itens if t["nova"]),
         "atrasadas": sum(1 for t in itens if t["atrasada"]), "url": base + "/orientacoes",
         "itens": [{"titulo": t["titulo"], "deputado": t["deputado"], "nova": t["nova"], "atrasada": t["atrasada"],
                    "prazo": t["prazo"], "status": t["status"],

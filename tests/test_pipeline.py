@@ -2387,7 +2387,8 @@ def test_api_de_tarefas_para_o_minha_pauta():
     from db import solicitacoes
     from sqlalchemy import insert as ins
     anon = _anonimo()
-    assert anon.get("/api/tarefas?login=admin").status_code == 403                  # sem TAREFAS_TOKEN: desligado
+    r = anon.get("/api/tarefas?login=admin")
+    assert r.status_code == 503 and r.get_json()["erro"] == "sem_token"           # sem TAREFAS_TOKEN: desligado
     os.environ["TAREFAS_TOKEN"] = "chave-secreta-123"
     try:
         assert anon.get("/api/tarefas?login=admin").status_code == 403
@@ -2402,6 +2403,13 @@ def test_api_de_tarefas_para_o_minha_pauta():
         assert r.status_code == 200 and d["total"] == 1 and d["novas"] == 1 and d["url"].endswith("/orientacoes")
         assert d["itens"][0]["titulo"] == "RIC sobre o apagão" and d["itens"][0]["url"].endswith(f"abrir={sid}#s{sid}")
         assert "descricao" not in d["itens"][0]
-        assert anon.get("/api/tarefas?login=ninguem", headers={"X-Painel-Token": "chave-secreta-123"}).get_json()["total"] == 0
+        d = anon.get("/api/tarefas?login=ninguem", headers={"X-Painel-Token": "chave-secreta-123"}).get_json()
+        assert d["total"] == 0 and d["usuario_encontrado"] is False
+        # login diferente no Minha Pauta: casa pelo nome exibido
+        adm = _cliente()
+        tok = _tok(adm, "/usuarios")
+        adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": "tarefa.mp", "nome": "Tárefa Pauta", "senha": "senha-segura-1"})
+        d = anon.get("/api/tarefas?login=outro.login&nome=Tarefa%20Pauta", headers={"X-Painel-Token": "chave-secreta-123"}).get_json()
+        assert d["login"] == "tarefa.mp" and d["total"] == 1 and d["usuario_encontrado"] is True
     finally:
         os.environ.pop("TAREFAS_TOKEN", None)
