@@ -2346,3 +2346,37 @@ def test_reanalise_das_relevantes_recentes_ganha_alternativas():
     finally:
         questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
     assert not _q("SELECT valor FROM meta WHERE chave = :k", k=radar.CHAVE_REANALISE)
+
+
+def test_prelista_acompanha_as_sugestoes_atuais():
+    import prelista as pl
+    from datetime import datetime
+    from db import noticias
+    from sqlalchemy import insert as ins
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM prelista")); c.execute(text("DELETE FROM prelista_envios"))
+        nid = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Sugestão vai mudar",
+                                             link="https://sinc/1", origem="google", publicado=datetime.now(), relevante=True,
+                                             tipo_acao="Ofício", acao_sugerida="Sugestão antiga e longa demais")).inserted_primary_key[0]
+    pl.adicionar_noticia(101, nid, "admin")
+    eid = pl.gerar_envio(101, "admin")
+    e = pl.envio_por_id(101, eid)
+    assert e["itens"][0]["alts"] == [{"instrumento": "Ofício", "acao": "Sugestão antiga e longa demais"}]
+    novas = [{"instrumento": "Requerimento de convocação", "acao": "Convocar o ministro"},
+             {"instrumento": "Nota à imprensa", "acao": "Nota denunciando o caso"}]
+    with engine.begin() as c:       # como faz a reanálise do radar
+        c.execute(text("UPDATE noticias SET alternativas = :a, tipo_acao = 'Requerimento de convocação', "
+                       "acao_sugerida = 'Convocar o ministro' WHERE id = :i"), {"a": json.dumps(novas), "i": nid})
+    e = pl.aberta(101)
+    it = e["itens"][0]
+    assert it["alts"] == novas and it["acao"] == "Convocar o ministro" and it["tipo"] == "comissao"
+    page = _anonimo().get(f"/aprovar/{e['token']}").get_data(as_text=True)
+    assert "Convocar o ministro" in page and "Nota denunciando o caso" in page and "Sugestão antiga" not in page
+    assert pl.sincronizar() == 0                                           # nada mais a mudar
+    # depois de respondida, o item fica como foi aprovado
+    pl.responder(e["token"], {it["id"]: pl.SORTEAR}, "Chefe")
+    with engine.begin() as c:
+        c.execute(text("UPDATE noticias SET alternativas = :a WHERE id = :i"),
+                  {"a": json.dumps([{"instrumento": "PEC", "acao": "Outra"}]), "i": nid})
+    pl.sincronizar()
+    assert json.loads(_q("SELECT alternativas FROM prelista WHERE id = :i", i=it["id"])[0][0]) == novas

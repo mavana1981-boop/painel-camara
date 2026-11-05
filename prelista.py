@@ -33,6 +33,41 @@ def _agora_brt():
     return meu.agora_brt()
 
 
+# ---------------- sugestões sempre atuais ----------------
+
+def sincronizar(cod=None):
+    """Itens ainda abertos (na lista ou aguardando a chefia) acompanham as sugestões atuais da origem — por exemplo,
+    depois da reanálise do radar com as alternativas novas. Itens já decididos ficam como foram aprovados.
+    Devolve quantos mudaram."""
+    from radar import alternativas_de
+    import selecao_ia as si
+    n = 0
+    with engine.begin() as c:
+        q = select(prelista).where(prelista.c.status.in_(ATIVOS))
+        if cod is not None:
+            q = q.where(prelista.c.codigo_deputado == cod)
+        for it in [dict(r) for r in c.execute(q).mappings()]:
+            if it["origem"] == "noticia":
+                src = c.execute(select(noticias).where(noticias.c.id == it["ref_id"])).mappings().first()
+                alts = alternativas_de(dict(src)) if src else None
+            else:
+                src = c.execute(select(selecao_ia).where(selecao_ia.c.id == it["ref_id"])).mappings().first()
+                alts = si.alternativas(dict(src)) if src else None
+            if not alts:
+                continue
+            novo = json.dumps(alts, ensure_ascii=False)
+            if novo == it["alternativas"]:
+                continue
+            texto = " ".join(f"{a.get('instrumento') or ''} {a['acao']}" for a in alts[:1])
+            c.execute(update(prelista).where(prelista.c.id == it["id"]).values(
+                alternativas=novo, acao=alts[0]["acao"], instrumento=(alts[0].get("instrumento") or "")[:80] or None,
+                tipo=it["tipo"] if it["origem"] == "selecao" else si.tipo_do_texto(texto + " " + (it["titulo"] or ""))))
+            n += 1
+    if n:
+        log.info("pré-lista: %d item(ns) atualizados com as sugestões atuais", n)
+    return n
+
+
 # ---------------- lista aberta ----------------
 
 def _envio_aberto(c, cod):
@@ -150,6 +185,7 @@ def remover(cod, iid):
 
 
 def itens(cod, status=("na_lista",)):
+    sincronizar(cod)
     with engine.connect() as c:
         rows = [dict(r) for r in c.execute(select(prelista).where(
             prelista.c.codigo_deputado == cod, prelista.c.status.in_(status)).order_by(prelista.c.id)).mappings()]
@@ -237,6 +273,7 @@ def envios(cod, limite=10):
 def aberta(cod):
     """A pré-lista aberta (já com link, aguardando a chefia), com todos os itens; None se não houver."""
     eid = consolidar(cod)
+    sincronizar(cod)
     return envio_por_id(cod, eid) if eid else None
 
 
@@ -252,7 +289,12 @@ def envio_por_token(token):
         return None
     with engine.connect() as c:
         e = c.execute(select(prelista_envios).where(prelista_envios.c.token == token)).mappings().first()
-        return _envio_com_itens(c, e) if e else None
+    if not e:
+        return None
+    if e["status"] == "aguardando":
+        sincronizar(e["codigo_deputado"])          # a chefia vê as sugestões mais recentes
+    with engine.connect() as c:
+        return _envio_com_itens(c, e)
 
 
 def analistas():

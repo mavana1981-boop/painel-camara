@@ -460,6 +460,12 @@ def reanalisar_alternativas(dias=7, limite=400, sessao=None):
         if completo:
             with engine.begin() as c:
                 c.execute(insert(meta).values(chave=CHAVE_REANALISE, valor=datetime.now().isoformat(timespec="seconds")))
+        if n:
+            try:
+                import prelista
+                prelista.sincronizar()                 # pré-listas abertas passam a mostrar as alternativas novas
+            except Exception:
+                log.exception("pré-lista após a reanálise")
         log.info("reanálise do radar: %d de %d notícia(s) ganharam alternativas", n, len(pend))
         return n
     finally:
