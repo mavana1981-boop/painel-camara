@@ -171,8 +171,11 @@ marcados). No filtro azul **📋 Pré-lista**, **Gerar imagem e link para o What
 imagem PNG (que também aparece na prévia do link) e um link secreto `/aprovar/<token>`, sem login, para a chefia ou o
 parlamentar. Pelo link, marca-se o que vira solicitação e, para cada item, escolhe-se o analista ou **Sortear**
 (equipe de comissão × outros assuntos, sem repetir). Ao confirmar, as solicitações são criadas e os analistas
-recebem o aviso de tarefa; o que não foi marcado fica como não aprovado. O link vale para uma resposta e expira em
-`PRELISTA_DIAS` (7) dias; **cancelar envio** devolve os itens à pré-lista.
+recebem o aviso de tarefa; o que não foi marcado fica como não aprovado. Há **uma só pré-lista aberta** por
+deputado: depois de gerado o link, o que for enviado à pré-lista entra nela mesma (mesmo link; imagem e texto do
+WhatsApp atualizados) até a chefia responder e encerrá-la; itens que entraram com a página da chefia já aberta
+não contam como recusados e passam para a próxima pré-lista. O link vale para uma resposta e expira em
+`PRELISTA_DIAS` (7) dias; **cancelar pré-lista** devolve os itens à lista.
 
 ## Seleção da IA (Radar)
 Filtro **✨ Seleção da IA** no Radar: uma vez por dia (a partir das 7h, no ciclo do radar) ou pelo botão

@@ -84,7 +84,7 @@ button.conf:disabled{opacity:.6}
     {% for it in e.itens %}
     <div class="it" data-it>
       <label class="it-top">
-        <input type="checkbox" name="itens" value="{{ it.id }}">
+        <input type="checkbox" name="itens" value="{{ it.id }}"><input type="hidden" name="vistos" value="{{ it.id }}">
         <div>
           <h2><span class="num">{{ loop.index }}.</span>{{ it.titulo }}</h2>
           <div class="chips"><span class="chip">{{ 'Comissão' if it.tipo == 'comissao' else 'Outros assuntos' }}</span>{% if it.area %}<span class="chip">{{ it.area }}</span>{% endif %}{% if it.instrumento %}<span class="chip">{{ it.instrumento }}</span>{% endif %}</div>

@@ -1008,11 +1008,14 @@ def painel(cod):
         ctx["pre_n"] = pl.contagem(cod)
         ctx["pre_noticias"] = pl.noticias_na_lista(cod)
         if ctx["filtro"] == "prelista":
+            ctx["pre_aberta"] = pl.aberta(cod)               # junta tudo na pré-lista que a chefia já recebeu
             ctx["pre_itens"] = pl.itens(cod)
             ctx["pre_envios"] = pl.envios(cod)
-            for e in ctx["pre_envios"]:
+            if ctx["pre_aberta"]:
+                e = ctx["pre_aberta"]
                 e["link"] = pl.link_publico(e)
                 e["whatsapp"] = "https://wa.me/?text=" + __import__("urllib.parse").parse.quote(pl.texto_whatsapp(e, cod))
+                e["depois"] = sum(1 for it in e["itens"] if it["incluido_em"] and it["incluido_em"] > e["criado_em"])
             ctx["pre_novo"] = request.args.get("envio", type=int)
             ctx["sel_equipes"], ctx["sel_faltam"] = si.equipes(), si.nao_encontrados()
         if ctx["filtro"] == "selecao":
@@ -1147,12 +1150,13 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "radar" and acao == "prelista_enviar":
             import prelista as pl
             eid = pl.gerar_envio(cod, autor)
-            flash("Pré-lista pronta: envie a imagem e o link pelo WhatsApp para a chefia aprovar.", "ok")
+            flash("Pré-lista pronta: envie a imagem e o link pelo WhatsApp para a chefia aprovar. O que você enviar "
+                  "à pré-lista daqui em diante entra nesta mesma lista, até a chefia responder.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="radar", filtro="prelista", envio=eid) + f"#envio{eid}"
         elif secao == "radar" and acao == "prelista_cancelar":
             import prelista as pl
             if pl.cancelar_envio(cod, f.get("envio", type=int)):
-                flash("Envio cancelado: o link deixou de valer e os itens voltaram para a pré-lista.", "ok")
+                flash("Pré-lista cancelada: o link deixou de valer e os itens voltaram para a lista.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="radar", filtro="prelista")
         elif secao == "radar" and acao == "selecao_decidir":
             import selecao_ia as si

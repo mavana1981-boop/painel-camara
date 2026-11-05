@@ -5,7 +5,9 @@ quiser, a equipe gera um ENVIO: uma imagem da lista e um link secreto (sem login
 Pelo link, a chefia marca o que deve virar solicitação e, para cada item, escolhe o analista ou deixa o painel
 sortear (pela equipe do tipo: comissão × outros assuntos, sem repetir até todos receberem). Ao confirmar, as
 solicitações são criadas e os analistas recebem o aviso de tarefa; o que não foi marcado fica como recusado.
-Um link vale para uma resposta e expira em PRELISTA_DIAS (7) dias; cancelar o envio devolve os itens à lista.
+Há uma só pré-lista aberta por deputado: depois de gerado o link, o que for enviado à pré-lista entra nela mesma
+(mesmo link; a imagem e o texto do WhatsApp se atualizam) até a chefia responder e encerrá-la. Um link vale para
+uma resposta e expira em PRELISTA_DIAS (7) dias; cancelar a pré-lista devolve os itens à lista.
 """
 import io
 import json
@@ -31,6 +33,40 @@ def _agora_brt():
     return meu.agora_brt()
 
 
+# ---------------- lista aberta ----------------
+
+def _envio_aberto(c, cod):
+    """Id do envio ainda aguardando a chefia (e não expirado) — a pré-lista aberta do deputado."""
+    return c.execute(select(prelista_envios.c.id).where(
+        prelista_envios.c.codigo_deputado == cod, prelista_envios.c.status == "aguardando",
+        prelista_envios.c.expira_em > datetime.now()).order_by(prelista_envios.c.id)).scalar()
+
+
+def consolidar(cod):
+    """Uma só pré-lista aberta por deputado: junta no envio aberto mais antigo (o link que a chefia já recebeu)
+    os itens de outros envios abertos e os que ainda estavam só na lista. Devolve o id do envio aberto."""
+    with engine.begin() as c:
+        abertos = [r[0] for r in c.execute(select(prelista_envios.c.id).where(
+            prelista_envios.c.codigo_deputado == cod, prelista_envios.c.status == "aguardando",
+            prelista_envios.c.expira_em > datetime.now()).order_by(prelista_envios.c.id))]
+        if not abertos:
+            return None
+        alvo, outros = abertos[0], abertos[1:]
+        if outros:
+            c.execute(update(prelista).where(prelista.c.envio_id.in_(outros), prelista.c.status == "enviada")
+                      .values(envio_id=alvo))
+            c.execute(update(prelista_envios).where(prelista_envios.c.id.in_(outros)).values(status="cancelada"))
+        c.execute(update(prelista).where(prelista.c.codigo_deputado == cod, prelista.c.status == "na_lista")
+                  .values(status="enviada", envio_id=alvo))
+    return alvo
+
+
+def _destino_novo(c, cod):
+    """Status e envio de um item que entra agora: direto na pré-lista aberta, se houver."""
+    eid = _envio_aberto(c, cod)
+    return ("enviada", eid) if eid else ("na_lista", None)
+
+
 # ---------------- montar a lista ----------------
 
 def _ja_ativo(c, cod, origem, ref):
@@ -52,12 +88,13 @@ def adicionar_noticia(cod, nid, autor):
         if ja:
             return ja[0], False
         texto = " ".join(str(n.get(k) or "") for k in ("tipo_acao", "acao_sugerida", "titulo"))
-        iid = c.execute(insert(prelista).values(
+        st, eid = _destino_novo(c, cod)
+        iid = c.execute(insert(prelista).values(envio_id=eid,
             codigo_deputado=cod, origem="noticia", ref_id=nid, titulo=(n["titulo"] or "Notícia")[:300],
             resumo=n.get("resumo"), acao=n.get("acao_sugerida"), instrumento=(n.get("tipo_acao") or "")[:80] or None,
             area=None, tipo=si.tipo_do_texto(texto), tema=n.get("termo"),
             links=json.dumps([{"titulo": n["titulo"], "link": n["link"], "fonte": n.get("fonte")}]),
-            status="na_lista", incluido_por=autor, incluido_em=datetime.now())).inserted_primary_key[0]
+            status=st, incluido_por=autor, incluido_em=datetime.now())).inserted_primary_key[0]
     return iid, True
 
 
@@ -69,6 +106,7 @@ def adicionar_selecao(cod, ids, autor):
         tops = [dict(r) for r in c.execute(select(selecao_ia).where(
             selecao_ia.c.codigo_deputado == cod, selecao_ia.c.id.in_(ids or [0]),
             selecao_ia.c.status == "pendente")).mappings()]
+        st, eid = _destino_novo(c, cod)
         for t in tops:
             nids = json.loads(t["noticias"] or "[]")
             links = [{"titulo": r[0], "link": r[1], "fonte": r[2]} for r in c.execute(
@@ -76,7 +114,7 @@ def adicionar_selecao(cod, ids, autor):
             c.execute(insert(prelista).values(
                 codigo_deputado=cod, origem="selecao", ref_id=t["id"], titulo=t["topico"][:300], resumo=t["resumo"],
                 acao=t["acao_sugerida"], instrumento=t["instrumento"], area=t["area"], tipo=t["tipo"] or "outros",
-                tema=t["tema"], links=json.dumps(links), status="na_lista", incluido_por=autor,
+                tema=t["tema"], links=json.dumps(links), status=st, envio_id=eid, incluido_por=autor,
                 incluido_em=datetime.now()))
             c.execute(update(selecao_ia).where(selecao_ia.c.id == t["id"]).values(status="prelista"))
             n += 1
@@ -87,13 +125,15 @@ def remover(cod, iid):
     """Tira um item que ainda não foi enviado (tópico da Seleção da IA volta a pendente de abertura)."""
     with engine.begin() as c:
         it = c.execute(select(prelista).where(prelista.c.id == iid, prelista.c.codigo_deputado == cod,
-                                              prelista.c.status == "na_lista")).mappings().first()
-        if not it:
+                                              prelista.c.status.in_(ATIVOS))).mappings().first()
+        if not it or (it["status"] == "enviada" and it["envio_id"] != _envio_aberto(c, cod)):
             return False
         if it["origem"] == "selecao":
             c.execute(update(selecao_ia).where(selecao_ia.c.id == it["ref_id"], selecao_ia.c.status == "prelista")
                       .values(status="pendente"))
         c.execute(delete(prelista).where(prelista.c.id == iid))
+        if it["envio_id"] and not c.execute(select(prelista.c.id).where(prelista.c.envio_id == it["envio_id"]).limit(1)).first():
+            c.execute(update(prelista_envios).where(prelista_envios.c.id == it["envio_id"]).values(status="cancelada"))
     return True
 
 
@@ -107,9 +147,13 @@ def itens(cod, status=("na_lista",)):
 
 
 def contagem(cod):
+    """Itens na pré-lista aberta (ainda sem resposta da chefia)."""
     with engine.connect() as c:
-        return c.execute(select(func.count()).select_from(prelista).where(
-            prelista.c.codigo_deputado == cod, prelista.c.status == "na_lista")).scalar() or 0
+        eid = _envio_aberto(c, cod)
+        q = select(func.count()).select_from(prelista).where(prelista.c.codigo_deputado == cod)
+        q = q.where((prelista.c.status == "na_lista") | ((prelista.c.status == "enviada") & (prelista.c.envio_id == eid))) \
+            if eid else q.where(prelista.c.status == "na_lista")
+        return c.execute(q).scalar() or 0
 
 
 def noticias_na_lista(cod):
@@ -123,6 +167,9 @@ def noticias_na_lista(cod):
 
 def gerar_envio(cod, autor):
     """Congela os itens da lista num envio com link secreto. Devolve o id do envio."""
+    aberto = consolidar(cod)
+    if aberto:
+        return aberto
     agora = datetime.now()
     with engine.begin() as c:
         ids = [r[0] for r in c.execute(select(prelista.c.id).where(prelista.c.codigo_deputado == cod,
@@ -163,11 +210,20 @@ def _envio_com_itens(c, e):
 
 
 def envios(cod, limite=10):
+    """Pré-listas encerradas (respondidas ou expiradas), da mais recente para a mais antiga."""
     with engine.connect() as c:
+        aberto = _envio_aberto(c, cod)
         rows = c.execute(select(prelista_envios).where(prelista_envios.c.codigo_deputado == cod,
-                                                       prelista_envios.c.status != "cancelada")
+                                                       prelista_envios.c.status != "cancelada",
+                                                       prelista_envios.c.id != (aberto or 0))
                          .order_by(prelista_envios.c.id.desc()).limit(limite)).mappings().all()
         return [_envio_com_itens(c, e) for e in rows]
+
+
+def aberta(cod):
+    """A pré-lista aberta (já com link, aguardando a chefia), com todos os itens; None se não houver."""
+    eid = consolidar(cod)
+    return envio_por_id(cod, eid) if eid else None
 
 
 def envio_por_id(cod, eid):
@@ -197,7 +253,7 @@ def analistas():
     return sorted(out, key=lambda u: (u["nome"] or u["login"]).lower())
 
 
-def responder(token, escolhas, nome, rnd=None):
+def responder(token, escolhas, nome, rnd=None, vistos=None):
     """Resposta da chefia: `escolhas` = {id do item: login ou SORTEAR} só para os itens aprovados.
     Cria as solicitações (sorteando quando pedido) e marca os demais como recusados. Devolve o envio atualizado."""
     import random
@@ -223,6 +279,10 @@ def responder(token, escolhas, nome, rnd=None):
             raise ValueError("Esta pré-lista já foi respondida.")
         for it in e["itens"]:
             if it["status"] != "enviada":
+                continue
+            if vistos is not None and it["id"] not in vistos and it not in aprovados:
+                # entrou na lista depois que a chefia abriu a página: não é recusa, vai para a próxima pré-lista
+                c.execute(update(prelista).where(prelista.c.id == it["id"]).values(status="na_lista", envio_id=None))
                 continue
             if it not in aprovados:
                 c.execute(update(prelista).where(prelista.c.id == it["id"]).values(status="recusada", decidido_em=agora))
@@ -403,7 +463,8 @@ def pagina(token):
             try:
                 if not escolhas and request.form.get("nenhuma") != "1":
                     raise ValueError("Marque pelo menos uma providência (ou confirme que não quer nenhuma).")
-                e = responder(token, escolhas, request.form.get("nome"))
+                vistos = {int(x) for x in request.form.getlist("vistos") if x.isdigit()} or None
+                e = responder(token, escolhas, request.form.get("nome"), vistos=vistos)
             except ValueError as ex:
                 erro = str(ex)
     nomes = {u["login"]: u["nome"] or u["login"] for u in analistas()}

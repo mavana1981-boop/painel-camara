@@ -1049,3 +1049,5 @@ details.rn-acomp .rn-form{margin-top:6px}
 .pre-env-itens em.rec{color:var(--suave)}
 .pre-env-itens li.recusada span{color:var(--suave);text-decoration:line-through}
 @media (max-width:600px){.pre-thumb{width:100%;max-height:220px}.pre-acoes .btn{width:100%;text-align:center}}
+.pre-envio.aberta{margin-top:12px;border-color:#b9cdf0}
+.pre-novos{padding:9px 14px;background:#eef4fd;color:#164c99;font-size:13px;border-bottom:1px solid #d6e3f7}

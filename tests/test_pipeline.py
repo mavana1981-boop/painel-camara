@@ -2124,12 +2124,35 @@ def test_prelista_envio_pelo_whatsapp_e_aprovacao_da_chefia():
     # gerar o envio
     r = adm.post("/meu/101?secao=radar&filtro=prelista", data={"_csrf": tok, "acao": "prelista_enviar"})
     assert r.status_code == 302 and "envio=" in r.headers["Location"]
-    e = pl.envios(101)[0]
-    assert len(e["itens"]) == 4 and e["status"] == "aguardando" and pl.contagem(101) == 0
+    e = pl.aberta(101)
+    assert len(e["itens"]) == 4 and e["status"] == "aguardando" and pl.contagem(101) == 4 and pl.envios(101) == []
+    # o que entra depois vai para a MESMA pré-lista (mesmo link) até a chefia responder
+    with engine.begin() as c:
+        n5 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Entrou depois do envio",
+                                            link="https://p/5", origem="google", publicado=agora)).inserted_primary_key[0]
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "prelista_add", "id": n5})
+    e = pl.aberta(101)
+    assert len(e["itens"]) == 5 and pl.contagem(101) == 5 and len(_q("SELECT id FROM prelista_envios WHERE status='aguardando'")) == 1
+    assert pl.gerar_envio(101, "admin") == e["id"]                                         # não abre outra
+    assert "aguardando a chefia" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
+    html = adm.get("/meu/101?secao=radar&filtro=prelista").get_data(as_text=True)
+    assert "Pré-lista aberta" in html and "incluído depois" in html and "Reenviar pelo WhatsApp" in html
+    assert "Gerar imagem e link para o WhatsApp" not in html and "Entrou depois do envio" in html
+    # duas listas abertas (versão anterior) são juntadas na mais antiga
+    from db import prelista_envios as tenv
+    with engine.begin() as c:
+        e_dup = c.execute(ins(tenv).values(codigo_deputado=101, token="duplicada-xyz", status="aguardando", criado_por="admin",
+                                           criado_em=agora, expira_em=agora + timedelta(days=7))).inserted_primary_key[0]
+        c.execute(text("UPDATE prelista SET envio_id = :d WHERE ref_id = :n AND origem = 'noticia'"), {"d": e_dup, "n": n5})
+    assert pl.consolidar(101) == e["id"]
+    assert _q("SELECT status FROM prelista_envios WHERE id = :i", i=e_dup)[0][0] == "cancelada"
+    assert len(pl.aberta(101)["itens"]) == 5
+    item_n5 = _q("SELECT id FROM prelista WHERE ref_id = :n AND origem = 'noticia'", n=n5)[0][0]
     html = adm.get(f"/meu/101?secao=radar&filtro=prelista&envio={e['id']}").get_data(as_text=True)
     assert "Enviar pelo WhatsApp" in html and "https://wa.me/?text=" in html and f"/aprovar/{e['token']}" in html
     wa = unquote(re.search(r'href="https://wa.me/\?text=([^"]+)"', html).group(1))
     assert "Pré-lista de providências" in wa and "1. Ministro falta à comissão de novo" in wa and e["token"] in wa
+    assert "5. Entrou depois do envio" in wa
     assert "aguardando a chefia" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
     img = adm.get(f"/meu/101/prelista/{e['id']}.png")
     assert img.status_code == 200 and img.data[:8] == b"\x89PNG\r\n\x1a\n" and len(img.data) > 5000
@@ -2144,11 +2167,12 @@ def test_prelista_envio_pelo_whatsapp_e_aprovacao_da_chefia():
     assert anon.get("/meu/101?secao=radar&filtro=prelista").status_code == 302           # o painel continua fechado
     csrf = re.search(r'name="_csrf" value="([^"]+)"', page).group(1)
     ids = {it["titulo"]: it["id"] for it in e["itens"]}
+    vistos = [i for t, i in ids.items() if t != "Entrou depois do envio"]          # como se tivesse entrado com a página aberta
     i_min, i_gas, i_inss, i_nao = (ids[k] for k in ("Ministro falta à comissão de novo", "Preço da gasolina sobe pela 3ª vez",
                                                     "Fila do INSS passa de 2 milhões", "Notícia que ninguém quer"))
     assert "Marque pelo menos uma" in anon.post(f"/aprovar/{e['token']}", data={"_csrf": csrf, "nome": "Chefe"}).get_data(as_text=True)
     random.seed(1)
-    r = anon.post(f"/aprovar/{e['token']}", data={"_csrf": csrf, "nome": "Dra. Chefe de Gabinete",
+    r = anon.post(f"/aprovar/{e['token']}", data={"_csrf": csrf, "nome": "Dra. Chefe de Gabinete", "vistos": vistos,
                                                   "itens": [i_min, i_gas, i_inss], f"resp_{i_min}": pl.SORTEAR,
                                                   f"resp_{i_gas}": "caio.out", f"resp_{i_inss}": pl.SORTEAR,
                                                   f"resp_{i_nao}": "beto.out"})
@@ -2175,6 +2199,9 @@ def test_prelista_envio_pelo_whatsapp_e_aprovacao_da_chefia():
         "SELECT id FROM solicitacoes WHERE solicitante = 'Pré-lista aprovada pela chefia'")) == 3
     html = adm.get("/meu/101?secao=radar&filtro=prelista").get_data(as_text=True)
     assert "Respondida por Dra. Chefe de Gabinete" in html and "3 aprovadas, 1 recusada" in html
+    assert _q("SELECT status, envio_id FROM prelista WHERE id = :i", i=item_n5)[0] == ("na_lista", None)   # não foi recusado
+    assert pl.contagem(101) == 1 and "Pré-listas encerradas" in html and "Gerar imagem e link" in html
+    pl.remover(101, item_n5)
     # cancelar um envio devolve os itens; envio expirado não aceita resposta
     with engine.begin() as c:
         n4 = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Outra",

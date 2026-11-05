@@ -589,14 +589,38 @@
     });
     </script>
     {% elif filtro == 'prelista' %}
+    {% set A = pre_aberta %}
     <div class="sel-cab pre-cab">
-      <div><b>📋 Pré-lista para aprovação da chefia</b>{% if pre_itens %} <span class="pre-n">{{ pre_itens|length }} na lista</span>{% endif %}
-        <small>Envie para cá notícias de qualquer filtro do radar ou tópicos da Seleção da IA. Depois gere a imagem e o link: a chefia (ou o parlamentar) abre pelo WhatsApp, marca o que deve virar solicitação e escolhe o analista ou deixa o painel sortear. O link não pede login, vale para uma resposta e expira em 7 dias.</small></div>
-      {% if pre_itens %}<form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}" onsubmit="this.querySelector('button').disabled=true">
+      <div><b>📋 Pré-lista para aprovação da chefia</b>
+        {% if A %} <span class="pre-n">{{ A.itens|length }} ite{{ 'ns' if A.itens|length != 1 else 'm' }}</span>{% elif pre_itens %} <span class="pre-n">{{ pre_itens|length }} na lista</span>{% endif %}
+        <small>{% if A %}A lista abaixo está com a chefia desde {{ A.criado_em|data_hora }}. Tudo o que você enviar à pré-lista agora entra nela mesma — mesmo link, com a imagem e o texto atualizados — até a chefia responder e encerrá-la.{% else %}Envie para cá notícias de qualquer filtro do radar ou tópicos da Seleção da IA. Depois gere a imagem e o link: a chefia (ou o parlamentar) abre pelo WhatsApp, marca o que deve virar solicitação e escolhe o analista ou deixa o painel sortear. O link não pede login e expira em 7 dias.{% endif %}</small></div>
+      {% if not A and pre_itens %}<form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}" onsubmit="this.querySelector('button').disabled=true">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_enviar">
         <button class="btn pre">Gerar imagem e link para o WhatsApp</button></form>{% endif %}
     </div>
-    {% for it in pre_itens %}
+    {% if A %}
+    <section class="pre-envio aberta {{ 'novo' if pre_novo == A.id }}" id="envio{{ A.id }}">
+      <div class="pre-env-cab">
+        <div><b>Pré-lista aberta</b> <small>· link gerado em {{ A.criado_em|data_hora }} por {{ (usuarios_resp|selectattr('login', 'equalto', A.criado_por)|map(attribute='nome')|first) or A.criado_por }}</small></div>
+        <span class="pre-st ag">Aguardando a chefia · link vale até {{ A.expira_em|data }}</span>
+      </div>
+      {% if A.depois %}<div class="pre-novos">{{ A.depois }} ite{{ 'ns' if A.depois != 1 else 'm' }} entr{{ 'aram' if A.depois != 1 else 'ou' }} depois do primeiro envio. O link é o mesmo e já mostra tudo; se quiser, avise a chefia reenviando pelo WhatsApp.</div>{% endif %}
+      <div class="pre-env-corpo">
+        <a class="pre-thumb" href="{{ url_for('meu.prelista_imagem', cod=cod, eid=A.id, n=A.itens|length) }}" target="_blank"><img src="{{ url_for('meu.prelista_imagem', cod=cod, eid=A.id, n=A.itens|length) }}" alt="Imagem da pré-lista" loading="lazy"></a>
+        <div class="pre-acoes">
+          <a class="btn whats" href="{{ A.whatsapp }}" target="_blank" rel="noopener">{{ 'Reenviar' if A.depois else 'Enviar' }} pelo WhatsApp</a>
+          <button type="button" class="btn sec" data-compartilhar="{{ url_for('meu.prelista_imagem', cod=cod, eid=A.id, n=A.itens|length) }}" data-texto="{{ A.link }}">Compartilhar imagem</button>
+          <a class="btn sec" href="{{ url_for('meu.prelista_imagem', cod=cod, eid=A.id, baixar=1, n=A.itens|length) }}">Baixar imagem</a>
+          <div class="pre-link"><input readonly value="{{ A.link }}" aria-label="Link para a chefia"><button type="button" class="btn sec" data-copiar>Copiar link</button></div>
+          <small>“Enviar pelo WhatsApp” abre a conversa com a lista e o link (a prévia do link mostra a imagem). No celular, “Compartilhar imagem” manda a imagem junto.</small>
+          <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}" onsubmit="return confirm('Cancelar esta pré-lista? O link deixa de valer e os itens voltam para a lista.')">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_cancelar">
+            <input type="hidden" name="envio" value="{{ A.id }}"><button class="sel-desc-btn">cancelar pré-lista</button></form>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+    {% for it in (A.itens if A else pre_itens) %}
     <article class="pre-it">
       <span class="pre-num">{{ loop.index }}</span>
       <div class="pre-corpo">
@@ -605,6 +629,7 @@
           <span class="sel-tipo {{ it.tipo }}">{{ 'Comissão' if it.tipo == 'comissao' else 'Outros assuntos' }}</span>
           {% if it.area %}<span class="area-chip">{{ it.area }}</span>{% endif %}
           <b>{{ it.titulo }}</b>
+          {% if A and it.incluido_em and it.incluido_em > A.criado_em %}<span class="pre-chip">incluído depois</span>{% endif %}
         </div>
         {% if it.acao %}<p class="sel-acao">{% if it.instrumento %}<span class="sel-inst">{{ it.instrumento }}</span> {% endif %}{{ it.acao }}</p>
         {% elif it.resumo %}<p class="sel-res">{{ it.resumo }}</p>{% endif %}
@@ -616,30 +641,14 @@
     </article>
     {% else %}<div class="vazio-msg">A pré-lista está vazia. Use “📋 Enviar à pré-lista” nas notícias (em qualquer filtro) ou nos tópicos da Seleção da IA.</div>{% endfor %}
 
-    {% if pre_envios %}<h3 class="pre-h3">Enviadas à chefia</h3>{% endif %}
+    {% if pre_envios %}<h3 class="pre-h3">Pré-listas encerradas</h3>{% endif %}
     {% for e in pre_envios %}
-    <section class="pre-envio {{ e.status }} {{ 'novo' if pre_novo == e.id }}" id="envio{{ e.id }}">
+    <section class="pre-envio {{ e.status }}" id="envio{{ e.id }}">
       <div class="pre-env-cab">
         <div><b>Pré-lista de {{ e.criado_em|data_hora }}</b> <small>· {{ e.itens|length }} ite{{ 'ns' if e.itens|length != 1 else 'm' }} · gerada por {{ (usuarios_resp|selectattr('login', 'equalto', e.criado_por)|map(attribute='nome')|first) or e.criado_por }}</small></div>
         {% if e.status == 'respondida' %}<span class="pre-st ok">Respondida por {{ e.respondido_por }} em {{ e.respondido_em|data_hora }} · {{ e.aprovadas }} aprovada{{ 's' if e.aprovadas != 1 }}{% if e.recusadas %}, {{ e.recusadas }} recusada{{ 's' if e.recusadas != 1 }}{% endif %}</span>
-        {% elif e.expirado %}<span class="pre-st exp">Link expirado sem resposta</span>
-        {% else %}<span class="pre-st ag">Aguardando a chefia · link vale até {{ e.expira_em|data }}</span>{% endif %}
+        {% else %}<span class="pre-st exp">Link expirado sem resposta</span>{% endif %}
       </div>
-      {% if e.status == 'aguardando' and not e.expirado %}
-      <div class="pre-env-corpo">
-        <a class="pre-thumb" href="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id) }}" target="_blank"><img src="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id) }}" alt="Imagem da pré-lista" loading="lazy"></a>
-        <div class="pre-acoes">
-          <a class="btn whats" href="{{ e.whatsapp }}" target="_blank" rel="noopener">Enviar pelo WhatsApp</a>
-          <button type="button" class="btn sec" data-compartilhar="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id) }}" data-texto="{{ e.link }}">Compartilhar imagem</button>
-          <a class="btn sec" href="{{ url_for('meu.prelista_imagem', cod=cod, eid=e.id, baixar=1) }}">Baixar imagem</a>
-          <div class="pre-link"><input readonly value="{{ e.link }}" aria-label="Link para a chefia"><button type="button" class="btn sec" data-copiar>Copiar link</button></div>
-          <small>“Enviar pelo WhatsApp” abre a conversa com a lista e o link (a prévia do link mostra a imagem). No celular, “Compartilhar imagem” manda a imagem junto.</small>
-          <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}" onsubmit="return confirm('Cancelar este envio? O link deixa de valer e os itens voltam para a pré-lista.')">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_cancelar">
-            <input type="hidden" name="envio" value="{{ e.id }}"><button class="sel-desc-btn">cancelar envio</button></form>
-        </div>
-      </div>
-      {% endif %}
       <details class="pre-env-itens" {{ 'open' if e.status == 'respondida' and loop.first }}><summary>Ver itens</summary>
         <ol>{% for it in e.itens %}<li class="{{ it.status }}"><span>{{ it.titulo }}</span>
           {% if it.status == 'aprovada' %}<em class="ok">aprovada · {{ (usuarios_resp|selectattr('login', 'equalto', it.responsavel)|map(attribute='nome')|first) or it.responsavel or 'sem responsável' }}</em>
