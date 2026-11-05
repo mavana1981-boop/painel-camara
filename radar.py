@@ -67,8 +67,9 @@ FONTES_PADRAO = [
 CATEGORIAS = ["Gastos públicos / corrupção", "Segurança pública e crimes", "Saúde pública", "Educação",
               "Economia e emprego", "Direitos e liberdades civis", "Meio ambiente", "Política externa",
               "Reforma institucional", "Infraestrutura e serviços públicos", "Outros"]
-TIPOS_ACAO = ["Requerimento de informações", "Requerimento de audiência pública", "Nota à imprensa",
-              "Projeto de Lei", "PEC", "Ofício", "Denúncia ao TCU/MPF", "Requerimento de convocação"]
+TIPOS_ACAO = ["Requerimento de informações", "Requerimento de convocação", "Requerimento de audiência pública",
+              "Denúncia ao TCU/MPF", "Projeto de Lei", "Projeto de Decreto Legislativo", "PEC", "Nota à imprensa",
+              "Discurso em Plenário", "Post para redes sociais", "Ofício"]
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
@@ -257,14 +258,31 @@ def coletar_portais(codigos, buscar=baixar):
 
 # ---------------- análise por IA (prompt do Monitor, por parlamentar) ----------------
 
+VIES = """Linha editorial (obrigatória): você trabalha para a OPOSIÇÃO ao governo federal atual. Não fique em cima do
+muro nem proponha nada neutro ou conciliador. Em primeiro lugar, as providências são de CRÍTICA, COBRANÇA e
+FISCALIZAÇÃO incisiva do governo atual, de seus ministérios, órgãos e aliados: pedidos de informação duros e
+específicos, convocação de ministros, denúncia a órgãos de controle, nota pública de crítica, proposta que corrija
+a falha. Em segundo lugar, a DEFESA de valores caros à oposição: segurança pública e combate ao crime, liberdade de
+expressão e contra a censura, família, vida, liberdade econômica, menos impostos e responsabilidade fiscal, defesa
+do agro e da propriedade, combate à corrupção. Seja incisivo no tom, mas sempre ancorado nos fatos da notícia:
+não invente números, nomes ou acusações que a notícia não sustente."""
+
+ALT_REGRAS = """Ofereça de 2 a 3 ALTERNATIVAS de providência, com instrumentos DIFERENTES, para o analista escolher o
+melhor caminho. Cada "acao" tem NO MÁXIMO 20 palavras: diga a quem se dirige e o que se cobra ou propõe, direto, sem
+rodeios e sem repetir a notícia. Ordene da mais forte para a mais simples."""
+
 SISTEMA = f"""Você é um analista político especializado em assessorar a Liderança da Oposição na {CASA} do Brasil, acompanhando o mandato de um(a) parlamentar específico(a).
 
 Sua tarefa é analisar uma notícia que cita o(a) parlamentar ou um tema acompanhado pelo gabinete e decidir se ela é relevante para uma ação parlamentar dele(a). O escopo é amplo: além de política, também interessam notícias de segurança pública, saúde, educação, economia, crimes, corrupção, direitos civis e qualquer tema que possa fundamentar uma ação parlamentar — inclusive defender o(a) parlamentar de uma notícia negativa ou aproveitar uma positiva.
 
+{VIES}
+
+{ALT_REGRAS}
+
 Responda APENAS com JSON puro, sem markdown, sem texto antes ou depois, sem blocos de código.
 
 Formato obrigatório:
-{{"relevante": true, "categoria": "Saúde pública", "tipo_acao": "Requerimento de informações", "acao_sugerida": "Texto curto aqui", "justificativa": "Texto curto aqui"}}
+{{"relevante": true, "categoria": "Saúde pública", "alternativas": [{{"tipo_acao": "Requerimento de informações", "acao": "Até 20 palavras"}}, {{"tipo_acao": "Nota à imprensa", "acao": "Até 20 palavras"}}], "justificativa": "Uma frase curta"}}
 
 Categorias possíveis:
 {chr(10).join('- "' + c + '"' for c in CATEGORIAS)}
@@ -272,9 +290,9 @@ Categorias possíveis:
 Tipos de ação parlamentar:
 {chr(10).join('- "' + t + '"' for t in TIPOS_ACAO)}
 
-Marque relevante=true sempre que a notícia revelar falha do governo, omissão de órgão público, dado preocupante sobre serviço público, escândalo, crime com envolvimento de agente público, algo que envolva diretamente o(a) parlamentar, ou qualquer situação que justifique fiscalização parlamentar.
+Marque relevante=true sempre que a notícia revelar falha do governo, omissão de órgão público, dado preocupante sobre serviço público, escândalo, crime com envolvimento de agente público, ameaça a valores da oposição, algo que envolva diretamente o(a) parlamentar, ou qualquer situação que justifique fiscalização parlamentar.
 
-Se não for relevante: {{"relevante": false, "categoria": null, "tipo_acao": null, "acao_sugerida": null, "justificativa": "Breve motivo"}}"""
+Se não for relevante: {{"relevante": false, "categoria": null, "alternativas": [], "justificativa": "Breve motivo"}}"""
 
 
 def extrair_json(texto):
@@ -296,6 +314,50 @@ def extrair_json(texto):
 
 def _txt(v, limite):
     return str(v).strip()[:limite] if v not in (None, "", "null") else None
+
+
+MAX_PALAVRAS_ALT = 28          # folga sobre as 20 pedidas; acima disso a frase é cortada
+
+
+def _curta(t):
+    t = re.sub(r"\s+", " ", str(t or "")).strip()
+    palavras = t.split()
+    return t if len(palavras) <= MAX_PALAVRAS_ALT else " ".join(palavras[:MAX_PALAVRAS_ALT]).rstrip(",;:") + "…"
+
+
+def normalizar_alternativas(lista, chave_inst="tipo_acao", maximo=3):
+    """[{instrumento, acao}] limpas: sem vazias, sem instrumento repetido, frases curtas."""
+    out, vistos = [], set()
+    for a in lista if isinstance(lista, list) else []:
+        if not isinstance(a, dict):
+            continue
+        inst = _txt(a.get(chave_inst) or a.get("instrumento") or a.get("tipo_acao"), 80)
+        acao = _curta(a.get("acao") or a.get("acao_sugerida"))
+        if not acao or (inst or "").lower() in vistos:
+            continue
+        vistos.add((inst or "").lower())
+        out.append({"instrumento": inst, "acao": acao[:400]})
+        if len(out) == maximo:
+            break
+    return out
+
+
+def alternativas_de(row, inst="tipo_acao", acao="acao_sugerida"):
+    """Alternativas de uma notícia/tópico; registros antigos viram uma alternativa só."""
+    try:
+        alts = json.loads(row.get("alternativas") or "[]")
+    except ValueError:
+        alts = []
+    if alts:
+        return alts
+    return [{"instrumento": row.get(inst), "acao": row.get(acao)}] if row.get(acao) else []
+
+
+def texto_alternativas(alts, titulo="Alternativas sugeridas pela IA (o analista escolhe o caminho)"):
+    if not alts:
+        return None
+    return titulo + ":\n" + "\n".join(f"{i}. {a['instrumento'] + ': ' if a.get('instrumento') else ''}{a['acao']}"
+                                       for i, a in enumerate(alts, 1))
 
 
 def analisar(codigo, limite=MAX_ANALISES, sessao=None, ids=None):
@@ -325,14 +387,20 @@ def analisar(codigo, limite=MAX_ANALISES, sessao=None, ids=None):
                f"Resumo: {it.get('resumo') or 'Sem resumo'}\n\n"
                f"Responda APENAS com JSON puro conforme o formato solicitado.")
         try:
-            texto = questoes.chamar_ia(msg, sessao, sistema=SISTEMA, modelo_=modelo(), max_tokens=600, timeout=60)
+            texto = questoes.chamar_ia(msg, sessao, sistema=SISTEMA, modelo_=modelo(), max_tokens=700, timeout=60)
         except Exception as e:
             log.warning("radar: IA indisponível (%s) — o restante fica para o próximo ciclo", e)
             break
         try:
             r = extrair_json(texto)
-            valores = {"relevante": bool(r.get("relevante")), "categoria": _txt(r.get("categoria"), 80),
-                       "tipo_acao": _txt(r.get("tipo_acao"), 80), "acao_sugerida": _txt(r.get("acao_sugerida"), 2000),
+            alts = normalizar_alternativas(r.get("alternativas"))
+            if not alts and r.get("acao_sugerida"):          # resposta no formato antigo
+                alts = normalizar_alternativas([{"tipo_acao": r.get("tipo_acao"), "acao": r.get("acao_sugerida")}])
+            relevante = bool(r.get("relevante"))
+            valores = {"relevante": relevante, "categoria": _txt(r.get("categoria"), 80),
+                       "tipo_acao": alts[0]["instrumento"] if relevante and alts else None,
+                       "acao_sugerida": alts[0]["acao"] if relevante and alts else None,
+                       "alternativas": json.dumps(alts, ensure_ascii=False) if relevante and alts else None,
                        "justificativa": _txt(r.get("justificativa"), 2000)}
         except (ValueError, AttributeError):
             valores = {"relevante": None, "justificativa": "A resposta da IA não pôde ser lida."}
@@ -368,13 +436,15 @@ def lista(codigo, termo="", filtro="", limite=200, busca=""):
         q = q.where(noticias.c.status == filtro)
     q = q.order_by(noticias.c.publicado.desc().nullslast(), noticias.c.id.desc())
     with engine.connect() as c:
-        if not busca:
-            return [dict(r) for r in c.execute(q.limit(limite)).mappings()]
-        linhas = [dict(r) for r in c.execute(q).mappings()]
-    return [n for n in linhas if casa_busca(n, busca)][:limite]
+        linhas = [dict(r) for r in c.execute(q if busca else q.limit(limite)).mappings()]
+    if busca:
+        linhas = [n for n in linhas if casa_busca(n, busca)][:limite]
+    for n in linhas:
+        n["alts"] = alternativas_de(n)
+    return linhas
 
 
-_CAMPOS_BUSCA = ("titulo", "resumo", "fonte", "termo", "link", "categoria", "tipo_acao", "acao_sugerida",
+_CAMPOS_BUSCA = ("titulo", "resumo", "fonte", "termo", "link", "categoria", "tipo_acao", "acao_sugerida", "alternativas",
                  "justificativa", "assessor", "acao_efetuada")
 
 

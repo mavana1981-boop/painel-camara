@@ -52,6 +52,8 @@ INSTRUMENTOS = ["Requerimento de Informação (RIC)", "Requerimento de convocaç
                 "Ofício a órgão público", "Pedido de CPI (coleta de assinaturas)"]
 GENERICAS = re.compile(r"\b(avaliar|analisar|acompanhar|monitorar|verificar|estudar|observar|levantar informa)", re.I)
 
+from radar import VIES  # noqa: E402  (mesma linha editorial de oposição do radar)
+
 SISTEMA = f"""Você assessora a Liderança da Oposição na Câmara dos Deputados. Recebe as manchetes das últimas 72 horas
 que o radar coletou para um deputado, separadas por tema acompanhado (as áreas de interesse do parlamentar), com o
 veículo de cada uma. Agrupe pelo contexto as manchetes que tratam do mesmo fato, decisão, crise ou debate e escolha
@@ -70,19 +72,22 @@ Regras do tópico:
   palavra solta ("Lula", "Flávio", "Governo", "Ministério").
 - Indique a área temática, escolhendo uma desta lista: {", ".join(AREAS)}.
 
-Regras da providência (o mais importante):
-- Proponha UMA providência concreta e pronta para a equipe executar, escolhendo o instrumento desta lista:
-  {"; ".join(INSTRUMENTOS)}.
-- Em "acao_sugerida", diga exatamente o que fazer: a quem se dirige, o que se pede ou se propõe e por quê. Ex.:
-  "RIC ao Ministério da Justiça pedindo o valor cortado do orçamento da PF em 2026 e os efeitos nas operações de
-  fronteira" ou "Nota à imprensa do Líder criticando o acordo, com os números de comércio citados na Folha".
+{VIES}
+
+Regras das providências (o mais importante):
+- Para cada tópico, ofereça de 2 a 3 ALTERNATIVAS com instrumentos DIFERENTES desta lista, para o analista escolher
+  o melhor caminho: {"; ".join(INSTRUMENTOS)}.
+- Cada "acao" tem NO MÁXIMO 20 palavras: a quem se dirige e o que se cobra ou propõe, direto. Ex.:
+  "RIC ao Ministério da Justiça cobrando o valor cortado da PF e o impacto nas fronteiras" ou
+  "Nota do Líder denunciando o acordo e os prejuízos ao comércio brasileiro".
+- Ordene da mais forte (cobrança, convocação, denúncia) para a mais simples.
 - É PROIBIDO sugerir "avaliar", "analisar", "acompanhar", "monitorar" ou "verificar as notícias".
-- tipo = "comissao" quando o instrumento é requerimento de convocação, convite, audiência pública ou fiscalização
-  (PFC), ou outro pedido votado em comissão; caso contrário, tipo = "outros".
+- tipo = "comissao" quando a PRIMEIRA alternativa é requerimento de convocação, convite, audiência pública ou
+  fiscalização (PFC), ou outro pedido votado em comissão; caso contrário, tipo = "outros".
 
 Responda APENAS com JSON puro, sem texto antes ou depois:
 {{"temas": [{{"tema": "<igual ao recebido>", "topicos": [{{"topico": "<título com contexto>", "area": "<da lista>",
-"resumo": "<1-2 frases com o fato>", "instrumento": "<da lista>", "acao_sugerida": "<providência concreta>",
+"resumo": "<1-2 frases com o fato>", "alternativas": [{{"instrumento": "<da lista>", "acao": "<até 20 palavras>"}}],
 "tipo": "comissao|outros", "noticias": [<ids das notícias do tópico>]}}]}}]}}"""
 
 
@@ -260,20 +265,45 @@ def _instrumento(v):
     return next((i for i in INSTRUMENTOS if norm_nome(i.split(" (")[0]) in n or n in norm_nome(i)), None)
 
 
-def _topico_ok(p):
-    """Tópico com contexto (não um nome solto) e providência concreta; devolve os campos limpos ou None."""
-    titulo = re.sub(r"\s+", " ", str(p.get("topico") or "")).strip()[:200]
-    acao = re.sub(r"\s+", " ", str(p.get("acao_sugerida") or "")).strip()[:1500]
-    inst = _instrumento(p.get("instrumento"))
-    if len(titulo.split()) < 3 or not acao or not inst:
+def _alt_ok(inst_txt, acao_txt):
+    from radar import _curta
+    acao = _curta(acao_txt)[:400]
+    inst = _instrumento(inst_txt)
+    if not acao or not inst:
         return None
     if GENERICAS.match(acao) or (GENERICAS.search(acao) and len(acao.split()) < 12):
         return None
+    return {"instrumento": inst, "acao": acao}
+
+
+def _topico_ok(p):
+    """Tópico com contexto (não um nome solto) e ao menos uma providência concreta; devolve os campos limpos ou None.
+    As alternativas (2 a 3, instrumentos diferentes) vêm em "alternativas"; respostas antigas, em
+    instrumento/acao_sugerida."""
+    titulo = re.sub(r"\s+", " ", str(p.get("topico") or "")).strip()[:200]
+    if len(titulo.split()) < 3:
+        return None
+    brutas = p.get("alternativas") if isinstance(p.get("alternativas"), list) else []
+    if not brutas and p.get("acao_sugerida"):
+        brutas = [{"instrumento": p.get("instrumento"), "acao": p.get("acao_sugerida")}]
+    alts, vistos = [], set()
+    for a in brutas:
+        if not isinstance(a, dict):
+            continue
+        ok = _alt_ok(a.get("instrumento") or a.get("tipo_acao"), a.get("acao") or a.get("acao_sugerida"))
+        if ok and ok["instrumento"] not in vistos:
+            vistos.add(ok["instrumento"])
+            alts.append(ok)
+    alts = alts[:3]
+    if not alts:
+        return None
+    inst = alts[0]["instrumento"]
     tipo = p.get("tipo") if p.get("tipo") in TIPOS else "outros"
     if any(x in norm_nome(inst) for x in ("convocacao", "convite", "audiencia", "fiscalizacao")):
         tipo = "comissao"
     return {"topico": titulo, "area": _area(p.get("area")) or "Outros", "instrumento": inst,
-            "resumo": str(p.get("resumo") or "").strip()[:1500] or None, "acao_sugerida": acao, "tipo": tipo}
+            "resumo": str(p.get("resumo") or "").strip()[:1500] or None, "acao_sugerida": alts[0]["acao"],
+            "alternativas": alts, "tipo": tipo}
 
 
 def _topicos_validos(d, temas):
@@ -302,7 +332,7 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
             texto = questoes.chamar_ia(msg if not tentativa else msg + "\n\nATENÇÃO: a resposta anterior veio inválida "
                                        "ou com providências genéricas. Siga o formato e as regras à risca.", sessao,
                                        sistema=SISTEMA, modelo_=os.environ.get("SELECAO_MODEL") or MODELO_PADRAO,
-                                       max_tokens=5000, timeout=150)
+                                       max_tokens=6000, timeout=150)
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
                 dados = d
@@ -339,6 +369,7 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
             t["id"] = c.execute(insert(selecao_ia).values(
                 codigo_deputado=cod, lote=lote, tema=t["tema"], topico=t["topico"], resumo=t["resumo"], tipo=t["tipo"],
                 acao_sugerida=t["acao_sugerida"], area=t["area"], instrumento=t["instrumento"],
+                alternativas=json.dumps(t["alternativas"], ensure_ascii=False),
                 noticias=json.dumps(t["noticias"]), status="pendente", criado_em=marca)).inserted_primary_key[0]
     log.info("seleção da IA do deputado %s: lote %s com %d tópico(s) pendentes de abertura", cod, lote, len(topicos))
     return {"lote": lote, "gerado_em": agora, "topicos": topicos}
@@ -346,20 +377,36 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
 
 # ---------------- confirmação humana ----------------
 
-def _descricao(c, t):
+def alternativas(t):
+    from radar import alternativas_de
+    return alternativas_de(t, inst="instrumento")
+
+
+def _descricao(c, t, escolha=None):
+    from radar import texto_alternativas
     ids = json.loads(t["noticias"] or "[]")
     links = {r[0]: (r[1], r[2]) for r in c.execute(select(noticias.c.id, noticias.c.titulo, noticias.c.link)
                                                      .where(noticias.c.id.in_(ids or [0])))}
     lote = datetime.fromisoformat(t["lote"]).strftime("%d/%m/%Y às %H:%M") if t.get("lote") else ""
     linhas = [f"Tema acompanhado: {t['tema']} · Área: {t['area'] or 'Outros'} · {TIPOS.get(t['tipo'], 'Outros assuntos')}"
               + (f" · Seleção da IA de {lote}" if lote else ""),
-              t["resumo"], f"Providência sugerida ({t['instrumento']}): {t['acao_sugerida']}"]
+              t["resumo"]]
+    alts = alternativas(t)
+    if escolha is not None and 0 <= escolha < len(alts):
+        a = alts[escolha]
+        rot = f" ({a['instrumento']})" if a.get("instrumento") else ""
+        linhas.append(f"Caminho escolhido{rot}: {a['acao']}")
+        outras = [x for i, x in enumerate(alts) if i != escolha]
+        if outras:
+            linhas.append(texto_alternativas(outras, "Outras alternativas sugeridas pela IA"))
+    else:
+        linhas.append(texto_alternativas(alts))
     if ids:
         linhas.append("Notícias:\n" + "\n".join(f"- {links[i][0]} — {links[i][1]}" for i in ids if i in links))
     return "\n\n".join(x for x in linhas if x)
 
 
-def abrir(cod, ids, autor, responsaveis=None, rnd=random, agora=None):
+def abrir(cod, ids, autor, responsaveis=None, rnd=random, agora=None, escolhas=None):
     """Abre a solicitação dos tópicos pendentes escolhidos (confirmação humana). `responsaveis` = {id: login,
     "" (sem responsável) ou SORTEAR}; o que não vier é sorteado pela equipe do tipo. Devolve [(id, solicitação)]."""
     import meu
@@ -388,7 +435,8 @@ def abrir(cod, ids, autor, responsaveis=None, rnd=random, agora=None):
             if not ok:                                   # outra pessoa confirmou ao mesmo tempo
                 continue
             sid = c.execute(insert(solicitacoes).values(
-                codigo_deputado=cod, titulo=("Seleção da IA: " + t["topico"])[:200], descricao=_descricao(c, t),
+                codigo_deputado=cod, titulo=("Seleção da IA: " + t["topico"])[:200],
+                descricao=_descricao(c, t, (escolhas or {}).get(t["id"])),
                 solicitante="Seleção da IA (radar)", status="aberta", data_solicitacao=hoje.isoformat(), prazo=prazo,
                 responsavel=resp, area=t["area"], atribuido_por=autor if resp else None,
                 atribuido_em=marca if resp else None, criado_por=autor, criado_em=marca,
@@ -511,6 +559,7 @@ def lotes(cod, limite=MAX_LOTES):
         r["noticias_l"] = [nots[i] for i in json.loads(r["noticias"] or "[]") if i in nots]
         r["responsavel"] = r["resp_atual"] or r["responsavel"]
         r["status"] = r["status"] or ("aberta" if r["solicitacao_id"] else "pendente")
+        r["alts"] = alternativas(r)
         por_lote.setdefault(r["lote"], []).append(r)
     out = []
     for lote in escolhidos:

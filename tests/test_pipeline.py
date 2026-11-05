@@ -1696,7 +1696,7 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
     sol = _q("SELECT responsavel, solicitante, prazo, area, descricao, criado_por, atribuido_por FROM solicitacoes "
              "WHERE titulo = 'Seleção da IA: Cobranças ao ministro da Justiça sobre presídios'")
     assert len(sol) == 1 and sol[0][0] == "lianna.souza" and sol[0][1] == "Seleção da IA (radar)" and sol[0][2]
-    assert sol[0][3] == "Segurança Pública" and "Providência sugerida (Requerimento de convocação de ministro)" in sol[0][4]
+    assert sol[0][3] == "Segurança Pública" and "1. Requerimento de convocação de ministro: Requerimento de convocação do ministro" in sol[0][4]
     assert "Seleção da IA de " in sol[0][4] and sol[0][5] == "admin" and sol[0][6] == "admin"
     assert _q("SELECT solicitacao_id IS NOT NULL FROM noticias WHERE id = :n", n=ids[0])[0][0]
     assert "Seleção da IA: Cobranças ao ministro da Justiça sobre presídios" in li.get("/orientacoes").get_data(as_text=True)
@@ -2225,3 +2225,71 @@ def test_prelista_envio_pelo_whatsapp_e_aprovacao_da_chefia():
         assert False
     except ValueError as ex:
         assert "já tem solicitação" in str(ex)
+
+
+def test_ia_sugere_alternativas_curtas_com_vies_de_oposicao():
+    import questoes
+    import radar
+    import selecao_ia as si
+    from datetime import datetime
+    from db import noticias, selecao_ia as tab
+    from sqlalchemy import insert as ins
+    # linha editorial nos dois prompts
+    for prompt in (radar.SISTEMA, si.SISTEMA):
+        assert "OPOSIÇÃO ao governo federal atual" in prompt and "Não fique em cima do" in prompt
+        assert "valores caros à oposição" in prompt and "não invente" in prompt
+    assert "2 a 3" in radar.SISTEMA and "NO MÁXIMO 20 palavras" in radar.SISTEMA and '"alternativas"' in radar.SISTEMA
+    assert "2 a 3 ALTERNATIVAS" in si.SISTEMA and "NO MÁXIMO 20 palavras" in si.SISTEMA
+    # radar: grava as alternativas (curtas, sem instrumento repetido); a 1ª vira tipo_acao/acao_sugerida
+    with engine.begin() as c:
+        nid = c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo="Governo esconde gastos do cartão",
+                                             link="https://alt/1", origem="google", publicado=datetime.now())).inserted_primary_key[0]
+    longa = " ".join(["palavra"] * 45)
+    resp = {"relevante": True, "categoria": "Gastos públicos / corrupção", "justificativa": "Falta de transparência.",
+            "alternativas": [{"tipo_acao": "Requerimento de informações", "acao": "RIC à Casa Civil cobrando os gastos do cartão corporativo"},
+                             {"tipo_acao": "Requerimento de informações", "acao": "repetida"},
+                             {"tipo_acao": "Denúncia ao TCU/MPF", "acao": longa},
+                             {"tipo_acao": "Nota à imprensa", "acao": "Nota do Líder denunciando o sigilo dos gastos"}]}
+    orig_cfg, orig_ia = questoes.configurado, questoes.chamar_ia
+    questoes.configurado = lambda: True
+    questoes.chamar_ia = lambda *a, **k: json.dumps(resp)
+    try:
+        assert radar.analisar(101, ids=[nid]) == 1
+    finally:
+        questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
+    n = next(x for x in radar.lista(101) if x["id"] == nid)
+    assert [a["instrumento"] for a in n["alts"]] == ["Requerimento de informações", "Denúncia ao TCU/MPF", "Nota à imprensa"]
+    assert n["tipo_acao"] == "Requerimento de informações" and n["acao_sugerida"].startswith("RIC à Casa Civil")
+    assert len(n["alts"][1]["acao"].split()) <= radar.MAX_PALAVRAS_ALT and n["alts"][1]["acao"].endswith("…")
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=radar&filtro=relevantes").get_data(as_text=True)
+    assert "Caminhos possíveis — escolha um" in html and f'data-usar="tarefa-{nid}"' in html and "Nota do Líder denunciando" in html
+    # ao abrir pelo radar, a solicitação leva a escolha e as alternativas
+    tok = _tok(adm, "/meu/101?secao=radar")
+    adm.post("/meu/101?secao=radar", data={"_csrf": tok, "acao": "item", "id": nid, "status": "Pendente", "criar": "1",
+                                            "tarefa": "Nota à imprensa: Nota do Líder denunciando o sigilo dos gastos"})
+    desc = _q("SELECT s.descricao FROM solicitacoes s JOIN noticias n ON n.solicitacao_id = s.id WHERE n.id = :n", n=nid)[0][0]
+    assert "O que fazer: Nota à imprensa: Nota do Líder" in desc and "Alternativas sugeridas pela IA" in desc
+    assert "2. Denúncia ao TCU/MPF:" in desc
+    # registro antigo (sem alternativas) continua aparecendo
+    assert radar.alternativas_de({"tipo_acao": "PEC", "acao_sugerida": "PEC X"}) == [{"instrumento": "PEC", "acao": "PEC X"}]
+    # seleção: alternativas validadas; ao abrir, a escolhida vira o "caminho escolhido"
+    ok = si._topico_ok({"topico": "Sigilo nos gastos do cartão corporativo", "area": "Corrupção e Transparência", "tipo": "outros",
+                        "alternativas": [{"instrumento": "RIC", "acao": "RIC à Casa Civil cobrando a abertura dos gastos"},
+                                         {"instrumento": "Nota à imprensa", "acao": "Avaliar"},              # genérica: fora
+                                         {"instrumento": "Requerimento de convocação de ministro",
+                                          "acao": "Convocar o ministro da Casa Civil para explicar o sigilo"},
+                                         {"instrumento": "Inventado", "acao": "algo"}]})
+    assert [a["instrumento"] for a in ok["alternativas"]] == ["Requerimento de Informação (RIC)", "Requerimento de convocação de ministro"]
+    assert ok["instrumento"] == "Requerimento de Informação (RIC)" and ok["tipo"] == "outros"
+    with engine.begin() as c:
+        tid = c.execute(ins(tab).values(codigo_deputado=101, lote="2026-11-05T09:00:00", tema="Ana Oposição", topico=ok["topico"],
+                                        area=ok["area"], tipo="outros", instrumento=ok["instrumento"], acao_sugerida=ok["acao_sugerida"],
+                                        alternativas=json.dumps(ok["alternativas"]), noticias="[]", status="pendente",
+                                        criado_em=datetime.now())).inserted_primary_key[0]
+    html = adm.get("/meu/101?secao=radar&filtro=selecao").get_data(as_text=True)
+    assert f'name="alt_{tid}" value="1"' in html and "Escolha o caminho:" in html
+    adm.post("/meu/101?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "um": tid, f"alt_{tid}": "1"})
+    desc = _q("SELECT s.descricao FROM solicitacoes s JOIN selecao_ia t ON t.solicitacao_id = s.id WHERE t.id = :t", t=tid)[0][0]
+    assert "Caminho escolhido (Requerimento de convocação de ministro): Convocar o ministro" in desc
+    assert "Outras alternativas sugeridas pela IA:\n1. Requerimento de Informação (RIC): RIC à Casa Civil" in desc

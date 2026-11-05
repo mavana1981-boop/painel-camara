@@ -35,6 +35,8 @@ main{max-width:760px;margin:0 auto;padding:16px 14px 120px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 .chip{font-size:11.5px;font-weight:700;background:var(--azul-cl);color:var(--azul-esc);border-radius:10px;padding:2px 8px}
 .acao{margin:0;font-size:14px;color:var(--suave)}
+.alts{margin:0;padding-left:18px;font-size:14px;color:var(--suave);display:flex;flex-direction:column;gap:3px}
+.alts b{color:var(--tinta);font-weight:600}
 .links{margin-top:6px;font-size:13px;display:flex;gap:10px;flex-wrap:wrap}
 .links a{color:var(--azul)}
 .resp{display:none;padding:0 14px 14px 50px;gap:8px;align-items:center;font-size:13.5px;color:var(--suave);flex-wrap:wrap}
@@ -87,8 +89,9 @@ button.conf:disabled{opacity:.6}
         <input type="checkbox" name="itens" value="{{ it.id }}"><input type="hidden" name="vistos" value="{{ it.id }}">
         <div>
           <h2><span class="num">{{ loop.index }}.</span>{{ it.titulo }}</h2>
-          <div class="chips"><span class="chip">{{ 'Comissão' if it.tipo == 'comissao' else 'Outros assuntos' }}</span>{% if it.area %}<span class="chip">{{ it.area }}</span>{% endif %}{% if it.instrumento %}<span class="chip">{{ it.instrumento }}</span>{% endif %}</div>
-          {% if it.acao %}<p class="acao">{{ it.acao }}</p>{% elif it.resumo %}<p class="acao">{{ it.resumo }}</p>{% endif %}
+          <div class="chips"><span class="chip">{{ 'Comissão' if it.tipo == 'comissao' else 'Outros assuntos' }}</span>{% if it.area %}<span class="chip">{{ it.area }}</span>{% endif %}</div>
+          {% if it.alts %}<ul class="alts">{% for a in it.alts %}<li>{% if a.instrumento %}<b>{{ a.instrumento }}:</b> {% endif %}{{ a.acao }}</li>{% endfor %}</ul>
+          {% elif it.resumo %}<p class="acao">{{ it.resumo }}</p>{% endif %}
           {% if it.links_l %}<div class="links">{% for l in it.links_l[:3] %}<a href="{{ l.link }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">{{ l.fonte or 'ver notícia' }}</a>{% endfor %}</div>{% endif %}
         </div>
       </label>

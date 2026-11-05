@@ -771,10 +771,11 @@ def radar_item(cod, nid, f, autor):
         if sid and not c.execute(select(solicitacoes.c.id).where(solicitacoes.c.id == sid)).first():
             sid = None                                   # a solicitação foi excluída
         if not sid and (resp or pedir):
+            alts = rd.alternativas_de(dict(n))
             desc = "\n\n".join(x for x in (
                 f"Notícia: {n['titulo']}", n["link"], n.get("resumo"),
-                f"Ação sugerida pela IA: {n['acao_sugerida']}" if n.get("acao_sugerida") else None,
-                (f.get("tarefa") or "").strip() and f"O que fazer: {f.get('tarefa').strip()}") if x)
+                (f.get("tarefa") or "").strip() and f"O que fazer: {f.get('tarefa').strip()}",
+                rd.texto_alternativas(alts)) if x)
             sid = c.execute(insert(solicitacoes).values(
                 codigo_deputado=cod, titulo=("Radar: " + (n["titulo"] or "notícia"))[:200], descricao=desc,
                 solicitante="Radar de notícias", status="aberta", data_solicitacao=hoje, prazo=prazo,
@@ -1183,7 +1184,9 @@ def _post(cod, secao, s, autor, pleno=True):
                 flash("Marque pelo menos um tópico.", "erro")
             elif modo == "abrir":
                 resps = {int(k[5:]): v for k, v in f.items() if k.startswith("resp_") and k[5:].isdigit()}
-                feitos = si.abrir(cod, ids, autor, resps)
+                escolhas = {int(k[4:]): int(v) for k, v in f.items()
+                            if k.startswith("alt_") and k[4:].isdigit() and str(v).isdigit()}
+                feitos = si.abrir(cod, ids, autor, resps, escolhas=escolhas)
                 if feitos:
                     flash(f"{len(feitos)} solicitação(ões) aberta(s) a partir da Seleção da IA." if len(feitos) > 1 else
                           "Solicitação aberta a partir da Seleção da IA.", "ok")

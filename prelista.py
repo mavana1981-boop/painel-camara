@@ -92,10 +92,21 @@ def adicionar_noticia(cod, nid, autor):
         iid = c.execute(insert(prelista).values(envio_id=eid,
             codigo_deputado=cod, origem="noticia", ref_id=nid, titulo=(n["titulo"] or "Notícia")[:300],
             resumo=n.get("resumo"), acao=n.get("acao_sugerida"), instrumento=(n.get("tipo_acao") or "")[:80] or None,
+            alternativas=json.dumps(__import__("radar").alternativas_de(dict(n)), ensure_ascii=False),
             area=None, tipo=si.tipo_do_texto(texto), tema=n.get("termo"),
             links=json.dumps([{"titulo": n["titulo"], "link": n["link"], "fonte": n.get("fonte")}]),
             status=st, incluido_por=autor, incluido_em=datetime.now())).inserted_primary_key[0]
     return iid, True
+
+
+def si_alts(t):
+    import selecao_ia as si
+    return si.alternativas(t)
+
+
+def alts_item(it):
+    from radar import alternativas_de
+    return alternativas_de(it, inst="instrumento", acao="acao")
 
 
 def adicionar_selecao(cod, ids, autor):
@@ -114,6 +125,7 @@ def adicionar_selecao(cod, ids, autor):
             c.execute(insert(prelista).values(
                 codigo_deputado=cod, origem="selecao", ref_id=t["id"], titulo=t["topico"][:300], resumo=t["resumo"],
                 acao=t["acao_sugerida"], instrumento=t["instrumento"], area=t["area"], tipo=t["tipo"] or "outros",
+                alternativas=json.dumps(si_alts(t), ensure_ascii=False),
                 tema=t["tema"], links=json.dumps(links), status=st, envio_id=eid, incluido_por=autor,
                 incluido_em=datetime.now()))
             c.execute(update(selecao_ia).where(selecao_ia.c.id == t["id"]).values(status="prelista"))
@@ -143,6 +155,7 @@ def itens(cod, status=("na_lista",)):
             prelista.c.codigo_deputado == cod, prelista.c.status.in_(status)).order_by(prelista.c.id)).mappings()]
     for r in rows:
         r["links_l"] = json.loads(r["links"] or "[]")
+        r["alts"] = alts_item(r)
     return rows
 
 
@@ -203,6 +216,7 @@ def _envio_com_itens(c, e):
                                              .order_by(prelista.c.id)).mappings()]
     for r in e["itens"]:
         r["links_l"] = json.loads(r["links"] or "[]")
+        r["alts"] = alts_item(r)
     e["aprovadas"] = sum(1 for r in e["itens"] if r["status"] == "aprovada")
     e["recusadas"] = sum(1 for r in e["itens"] if r["status"] == "recusada")
     e["expirado"] = e["status"] == "aguardando" and e["expira_em"] and e["expira_em"] < datetime.now()
@@ -296,8 +310,7 @@ def responder(token, escolhas, nome, rnd=None, vistos=None):
                 f"Aprovada na pré-lista por {nome} em {quando(agora)}"
                 + (" · responsável sorteado" if it["id"] in sorteados else " · responsável escolhido pela chefia"),
                 f"Tema acompanhado: {it['tema']}" if it.get("tema") else None, it.get("resumo"),
-                f"Providência sugerida{f' ({it['instrumento']})' if it.get('instrumento') else ''}: {it['acao']}"
-                if it.get("acao") else None, f"Notícias:\n{links}" if links else None) if x)
+                __import__("radar").texto_alternativas(it["alts"]), f"Notícias:\n{links}" if links else None) if x)
             prefixo = "Seleção da IA: " if it["origem"] == "selecao" else "Radar: "
             sid = c.execute(insert(solicitacoes).values(
                 codigo_deputado=e["codigo_deputado"], titulo=(prefixo + it["titulo"])[:200], descricao=desc,
@@ -397,9 +410,14 @@ def imagem(e, cod):
     blocos = []
     for i, it in enumerate(e["itens"], 1):
         tit = _quebrar(tmp, it["titulo"], F["item"], larg, 3)
-        acao = _quebrar(tmp, it.get("acao") or it.get("resumo") or "", F["txt"], larg, 3)
-        chips = [x for x in ("Comissão" if it.get("tipo") == "comissao" else "Outros assuntos", it.get("area"),
-                             it.get("instrumento")) if x]
+        if it["alts"]:
+            acao = []
+            for a in it["alts"][:3]:
+                acao += _quebrar(tmp, f"• {a['instrumento'] + ': ' if a.get('instrumento') else ''}{a['acao']}",
+                                 F["txt"], larg, 2)
+        else:
+            acao = _quebrar(tmp, it.get("resumo") or "", F["txt"], larg, 3)
+        chips = [x for x in ("Comissão" if it.get("tipo") == "comissao" else "Outros assuntos", it.get("area")) if x]
         h = 22 + len(tit) * 38 + 44 + len(acao) * 32 + 28
         blocos.append((i, it, tit, acao, chips, h))
     altura = 210 + sum(b[5] for b in blocos) + 120

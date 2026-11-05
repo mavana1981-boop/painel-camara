@@ -532,7 +532,11 @@
             {% elif t.status_sol %}<span class="sol-st {{ t.status_sol }}">{{ status|selectattr(0, 'equalto', t.status_sol)|map(attribute=1)|first }}</span>{% endif %}
           </div>
           {% if t.resumo %}<p class="sel-res">{{ t.resumo }}</p>{% endif %}
-          {% if t.acao_sugerida %}<p class="sel-acao">{% if t.instrumento %}<span class="sel-inst">{{ t.instrumento }}</span> {% endif %}{{ t.acao_sugerida }}</p>{% endif %}
+          {% if t.alts %}<div class="alts"><span class="alts-rot">{% if t.status == 'pendente' and t.alts|length > 1 %}Escolha o caminho:{% else %}Caminhos possíveis:{% endif %}</span>
+            {% if t.status == 'pendente' and t.alts|length > 1 %}
+            <div class="alt-esc">{% for a in t.alts %}<label><input type="radio" name="alt_{{ t.id }}" value="{{ loop.index0 }}" {{ 'checked' if loop.first }}>{% if a.instrumento %}<span class="sel-inst">{{ a.instrumento }}</span> {% endif %}{{ a.acao }}</label>{% endfor %}</div>
+            {% else %}<ol>{% for a in t.alts %}<li>{% if a.instrumento %}<span class="sel-inst">{{ a.instrumento }}</span> {% endif %}{{ a.acao }}</li>{% endfor %}</ol>{% endif %}
+          </div>{% endif %}
           {% if t.noticias_l %}<details class="sel-nots"><summary>{{ t.noticias_l|length }} notícia{{ 's' if t.noticias_l|length != 1 }}</summary>
             <ul>{% for n in t.noticias_l %}<li><a href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.titulo }}</a> <small>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</small></li>{% endfor %}</ul></details>{% endif %}
           <div class="sel-rodape">
@@ -631,7 +635,7 @@
           <b>{{ it.titulo }}</b>
           {% if A and it.incluido_em and it.incluido_em > A.criado_em %}<span class="pre-chip">incluído depois</span>{% endif %}
         </div>
-        {% if it.acao %}<p class="sel-acao">{% if it.instrumento %}<span class="sel-inst">{{ it.instrumento }}</span> {% endif %}{{ it.acao }}</p>
+        {% if it.alts %}<div class="alts"><ol>{% for a in it.alts %}<li>{% if a.instrumento %}<span class="sel-inst">{{ a.instrumento }}</span> {% endif %}{{ a.acao }}</li>{% endfor %}</ol></div>
         {% elif it.resumo %}<p class="sel-res">{{ it.resumo }}</p>{% endif %}
         {% if it.links_l %}<div class="pre-links">{% for l in it.links_l[:3] %}<a href="{{ l.link }}" target="_blank" rel="noopener noreferrer">{{ l.fonte or 'notícia' }}</a>{% endfor %}{% if it.links_l|length > 3 %} <small>+{{ it.links_l|length - 3 }}</small>{% endif %}</div>{% endif %}
       </div>
@@ -723,8 +727,10 @@
         {% if n.resumo %}<p class="rn-res">{{ n.resumo }}</p>{% endif %}
         {% if n.relevante %}
         <div class="rn-ia">
-          <div class="rn-tags"><span class="rn-cat">{{ n.categoria or 'Outros' }}</span>{% if n.tipo_acao %}<span class="rn-tipo">{{ n.tipo_acao }}</span>{% endif %}</div>
-          {% if n.acao_sugerida %}<p><b>Ação sugerida:</b> {{ n.acao_sugerida }}</p>{% endif %}
+          <div class="rn-tags"><span class="rn-cat">{{ n.categoria or 'Outros' }}</span></div>
+          {% if n.alts %}<div class="alts"><span class="alts-rot">Caminhos possíveis{% if n.alts|length > 1 %} — escolha um{% endif %}:</span>
+            <ol>{% for a in n.alts %}<li>{% if a.instrumento %}<span class="sel-inst">{{ a.instrumento }}</span> {% endif %}{{ a.acao }}
+              {% if not n.solicitacao_id %}<button type="button" class="alt-usar" data-usar="tarefa-{{ n.id }}" data-texto="{{ (a.instrumento ~ ': ' if a.instrumento else '') ~ a.acao }}">usar</button>{% endif %}</li>{% endfor %}</ol></div>{% endif %}
           {% if n.justificativa %}<p class="rn-just"><b>Por quê:</b> {{ n.justificativa }}</p>{% endif %}
         </div>
         {% elif n.relevante == false %}<div class="rn-sem">IA: sem ação parlamentar{% if n.justificativa %} — {{ n.justificativa }}{% endif %}</div>
@@ -768,7 +774,7 @@
             <label class="rn-prazo">prazo <input type="date" name="prazo" class="mini"></label>
             <select name="status" class="mini" onchange="this.form.querySelector('.rn-ef').style.display=this.value=='Ação efetuada'?'':'none'">
               {% for st in status_radar %}<option {{ 'selected' if (n.status or 'Pendente') == st }}>{{ st }}</option>{% endfor %}</select>
-            {% if not n.solicitacao_id %}<textarea name="tarefa" class="mini" rows="2" placeholder="O que fazer (vai para a solicitação){% if n.acao_sugerida %} — ex.: {{ n.acao_sugerida[:90] }}{% endif %}"></textarea>{% endif %}
+            {% if not n.solicitacao_id %}<textarea name="tarefa" id="tarefa-{{ n.id }}" class="mini" rows="2" placeholder="O que fazer (vai para a solicitação) — clique em “usar” num dos caminhos acima ou escreva"></textarea>{% endif %}
             <textarea name="acao_efetuada" class="rn-ef mini" rows="2" placeholder="O que foi feito (ex.: RIC 1234/2026 protocolado) — vai para o clipping" style="{{ '' if n.status == 'Ação efetuada' else 'display:none' }}">{{ n.acao_efetuada or '' }}</textarea>
             <button class="mini">Salvar</button>
             {% if not n.solicitacao_id %}<button class="mini rn-criar" name="criar" value="1" title="Sem responsável escolhido, o painel sorteia pelos critérios (comissão → Lianna; outros assuntos → equipe de outros)">＋ Criar solicitação</button>{% endif %}
@@ -778,6 +784,15 @@
     {% else %}<div class="vazio-msg">{% if busca %}Nenhuma notícia do radar com “{{ busca }}”{{ ' neste filtro' if filtro or termo }}. Busque no Google Notícias acima ou inclua a notícia pelo link ao lado.{% else %}Nenhuma notícia {{ 'neste filtro' if filtro or termo else 'coletada ainda' }}. O radar roda a cada 2 horas; use “Atualizar agora” para buscar já.{% endif %}</div>{% endfor %}
     </div>
     {% endif %}
+    <script>
+    document.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-usar]'); if (!b) return;
+      var t = document.getElementById(b.dataset.usar); if (!t) return;
+      var d = t.closest('details'); if (d) d.open = true;
+      t.value = b.dataset.texto; t.focus();
+      b.closest('ol').querySelectorAll('[data-usar]').forEach(function (x) { x.classList.toggle('on', x === b); });
+    });
+    </script>
     <p class="nota">Como no Monitor Legislativo: os portais são lidos a cada 2 horas e cada notícia nova passa pela IA, que diz se cabe ação parlamentar, de que tipo e por quê. Daqui entram só as notícias que citam o nome do deputado ou um tema acompanhado; o Google Notícias complementa com outros veículos.</p>
   </div>
   <div class="lado-pilha">

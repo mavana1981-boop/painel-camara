@@ -164,6 +164,14 @@ Na primeira subida com `MINHA_PAUTA_DATABASE_URL` configurada, o painel importa 
 login certo viram o hash do painel. Depois da importação só os logins de `ADMINS_PAINEL` (padrão `marcelo.uvara`)
 ficam como administradores — se nenhum deles existir, nada muda. Para repetir: Usuários → **Importar do Minha Pauta**.
 
+## Linha editorial e alternativas da IA
+Os prompts do radar e da Seleção da IA (`radar.VIES`) seguem a linha da Oposição: primeiro crítica, cobrança e
+fiscalização incisiva do governo atual; em segundo lugar, defesa de valores caros à oposição — sempre ancorado nos
+fatos da notícia, sem inventar números ou acusações. Para cada notícia relevante e cada tópico, a IA oferece de 2 a 3
+**alternativas** curtas (até 20 palavras, instrumentos diferentes, da mais forte para a mais simples). No radar, o
+botão **usar** leva a alternativa para "O que fazer"; na Seleção da IA, escolhe-se o caminho ao abrir; a solicitação
+registra o caminho escolhido e as demais alternativas. Análises antigas aparecem como uma alternativa só.
+
 ## Pré-lista (Radar) — aprovação da chefia pelo WhatsApp
 Em qualquer filtro do radar, cada notícia sem solicitação tem **＋ Abrir solicitação** (responsável sorteado pelos
 critérios) e **📋 Enviar à pré-lista**; os tópicos da Seleção da IA também podem ir para a pré-lista (um a um ou os

@@ -286,6 +286,7 @@ noticias = Table(  # radar: portais acompanhados (como no Monitor Legislativo) +
     Column("categoria", String(80)),
     Column("tipo_acao", String(80)),
     Column("acao_sugerida", Text),
+    Column("alternativas", Text),                # JSON: [{instrumento, acao}] — caminhos curtos sugeridos pela IA
     Column("justificativa", Text),
     # acompanhamento pela equipe
     Column("status", String(30)),                # Pendente, Em análise, Ação efetuada
@@ -306,6 +307,7 @@ selecao_ia = Table(  # radar: tópicos escolhidos pela IA; viram solicitação s
     Column("area", String(40)),                  # área temática (Saúde, Segurança Pública...)
     Column("instrumento", String(80)),           # RIC, PL, nota à imprensa...
     Column("acao_sugerida", Text),
+    Column("alternativas", Text),                # JSON: [{instrumento, acao}] — o analista escolhe o caminho
     Column("noticias", Text),                    # JSON: ids das notícias do tópico
     Column("responsavel", String(60)),
     Column("solicitacao_id", Integer),
@@ -324,6 +326,7 @@ prelista = Table(  # pré-lista: providências que a equipe separa para a chefia
     Column("titulo", String(300)),
     Column("resumo", Text),
     Column("acao", Text),                        # providência sugerida
+    Column("alternativas", Text),                # JSON: [{instrumento, acao}]
     Column("instrumento", String(80)),
     Column("area", String(40)),
     Column("tipo", String(20)),                  # comissao ou outros (define a equipe do sorteio)
