@@ -63,6 +63,7 @@ app.register_blueprint(ajuda.bp)
 try:
     import selecao_ia  # noqa: E402
     selecao_ia.limpar_selecao_por_palavras()
+    selecao_ia.devolver_abertas_pela_ia()            # abertas sozinhas pela IA voltam a pendentes de abertura
     import areas  # noqa: E402
     if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("AUTO_CARGA") == "1":
         areas.classificar_em_segundo_plano()          # área das solicitações antigas

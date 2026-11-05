@@ -166,8 +166,12 @@ ficam como administradores — se nenhum deles existir, nada muda. Para repetir:
 
 ## Seleção da IA (Radar)
 Filtro **✨ Seleção da IA** no Radar: uma vez por dia (a partir das 7h, no ciclo do radar) ou pelo botão
-**Gerar nova seleção**, a IA lê as notícias dos últimos `SELECAO_DIAS` (7) dias de cada tema acompanhado e escolhe,
-por contexto, pelo menos 2 tópicos por tema, classificados em *comissão* ou *outros assuntos*. Cada tópico vira uma
-solicitação (prazo de `SELECAO_PRAZO_DIAS` = 3 dias) com responsável sorteado — sem repetir até todos receberem —
-entre a equipe do tipo. Padrão: comissão = Lianna; outros = Marcelo, Elyezer, Vinicius, Garibaldi e André Alencar
+**Gerar nova seleção**, a IA lê as notícias das últimas `SELECAO_HORAS` (72) horas de cada tema acompanhado e escolhe
+os assuntos mais comentados (mais manchetes e veículos), espalhando os tópicos pelo maior número possível de temas e
+áreas, classificados em *comissão* ou *outros assuntos*. Cada rodada forma um **lote com dia e hora** em
+**Seleção da IA — pendentes de abertura**: nada vira solicitação sozinho. Um usuário confirma um tópico (ou marca
+vários e abre de uma vez), com responsável escolhido ou sorteado — sem repetir até todos receberem — entre a equipe do
+tipo; o que não interessa pode ser descartado (e voltar depois). A solicitação tem prazo de `SELECAO_PRAZO_DIAS` = 3
+dias. As solicitações que a versão anterior abria sozinha e que ninguém tocou voltaram a ser pendentes de abertura
+(uma vez só, na atualização); as já trabalhadas ficaram. Padrão: comissão = Lianna; outros = Marcelo, Elyezer, Vinicius, Garibaldi e André Alencar
 (casados com os usuários pelo nome, preferindo a equipe Oposição); editável no quadro “Distribuição”.

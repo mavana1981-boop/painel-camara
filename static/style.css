@@ -973,3 +973,31 @@ details.rn-acomp .rn-form{margin-top:6px}
 .ag-sync-pt{width:9px;height:9px;border-radius:50%;background:var(--pri);flex:none;animation:agpulso 1s ease-in-out infinite}
 @keyframes agpulso{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
 @media (prefers-reduced-motion:reduce){.ag-sync-pt{animation:none}}
+/* Seleção da IA: lotes pendentes de abertura */
+.sel-npend{display:inline-block;margin-left:6px;font-size:12px;font-weight:700;background:#fff1dc;color:#8a4b00;border-radius:12px;padding:2px 9px}
+.sel-lote{margin:0;border-bottom:6px solid var(--fundo,#f2f4f7)}
+.sel-lote-cab{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:11px 16px;background:#fff;border-bottom:1px solid var(--linha)}
+.sel-lote-tit{display:flex;gap:8px;align-items:center;font-size:15px}
+.sel-lote-rot{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--suave);font-weight:700}
+.sel-ult{font-size:11px;font-weight:700;background:var(--pri-cl);color:var(--pri-esc);border-radius:10px;padding:2px 8px}
+.sel-todos{display:inline-flex;align-items:center}
+.sel-todos input,.sel-chk{width:17px;height:17px;margin:0;accent-color:var(--pri);cursor:pointer;flex:none}
+.sel-lote-cont{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--suave)}
+.sel-lote-cont .pend{color:#8a4b00;font-weight:700}
+.sel-lote-cont .ab{color:var(--pri-esc);font-weight:700}
+.sel-st.pend{font-size:11px;font-weight:700;color:#8a4b00;background:#fff1dc;border-radius:10px;padding:2px 8px}
+.sel-top.pendente{background:#fffdf8}
+.sel-top.marcado{background:#fff6e5;box-shadow:inset 3px 0 0 #e0a33a}
+.sel-top.aberta{opacity:.92}
+.sel-resp-esc{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--suave);font-weight:600}
+.sel-resp-esc select{font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--linha);border-radius:7px;background:#fff;color:var(--tinta);max-width:240px}
+.sel-rodape .mini-btn{padding:6px 12px;font-size:13px}
+.sel-desc-btn{background:none;border:0;color:var(--suave);font:inherit;font-size:12.5px;cursor:pointer;text-decoration:underline;padding:4px}
+.sel-desc-btn:hover{color:#b03021}
+.sel-descartados{padding:8px 16px;font-size:12.5px;color:var(--suave)}
+.sel-descartados summary{cursor:pointer}
+.sel-desc-it{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:4px 0;border-top:1px dashed var(--linha)}
+.sel-barra{position:sticky;bottom:0;z-index:3;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:#fff8ec;border-top:1px solid #f0d9b0;box-shadow:0 -4px 12px rgba(0,0,0,.06)}
+.sel-barra[hidden]{display:none}
+.sel-barra span{flex:1;font-size:13.5px}
+@media (max-width:600px){.sel-rodape{flex-direction:column;align-items:stretch}.sel-resp-esc{justify-content:space-between}.sel-resp-esc select{max-width:none;flex:1}.sel-barra .btn{flex:1}}

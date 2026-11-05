@@ -1,15 +1,18 @@
 """Radar → "Seleção da IA".
 
-Uma vez por dia (e pelo botão "Gerar nova seleção"), a IA lê as notícias dos últimos dias de cada tema
-acompanhado (o termo que trouxe cada notícia: nome do deputado e temas cadastrados) e escolhe, por contexto,
-pelo menos dois tópicos por tema — os assuntos que mais aparecem. Cada tópico vem com resumo, ação sugerida,
-as notícias que o sustentam e o tipo:
+Uma vez por dia (a partir das 7h) e pelo botão "Gerar nova seleção", a IA lê as notícias das últimas 72 horas
+de cada tema acompanhado (o termo que trouxe cada notícia: nome do deputado e temas cadastrados), agrupa as que
+tratam do mesmo fato e escolhe os assuntos mais comentados, espalhando os tópicos pelo maior número possível de
+temas e áreas do parlamentar. Cada tópico vem com área, resumo, providência concreta, as notícias que o
+sustentam e o tipo:
   - comissao: o caminho é uma providência em comissão (requerimento de audiência pública, convocação ou
     convite de autoridade, fiscalização, pedido de informações tratado na comissão);
   - outros: os demais assuntos.
 
-Cada tópico vira na hora uma solicitação do parlamentar com responsável sorteado entre os servidores da
-equipe daquele tipo (equilibrando a carga do lote) — o responsável recebe o aviso de tarefa na tela inicial.
+Cada rodada forma um LOTE com o dia e a hora em que foi gerado. Os tópicos ficam em "Seleção da IA — pendentes
+de abertura": a solicitação só é aberta quando um usuário confirma (um tópico ou vários de uma vez), com
+responsável escolhido ou sorteado entre os servidores da equipe daquele tipo (equilibrando a carga). Também
+dá para descartar o que não interessa.
 Equipes padrão (editáveis na própria tela): comissão = Lianna; outros = Marcelo, Elyezer, Vinicius,
 Garibaldi e André Alencar. Os nomes são casados com os usuários do sistema, preferindo a equipe Oposição.
 """
@@ -20,13 +23,15 @@ import random
 import re
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 
-from db import engine, meta, noticias, norm_nome, selecao_ia, solicitacoes, usuarios
+from db import anexos, engine, meta, noticias, norm_nome, selecao_ia, solicitacoes, usuarios
 
 log = logging.getLogger("selecao_ia")
 
-DIAS = int(os.environ.get("SELECAO_DIAS", "7"))              # janela de notícias lidas
+HORAS = int(os.environ.get("SELECAO_HORAS", "72"))           # janela de notícias lidas
+DIAS = 7                                                      # tópicos recentes que a IA não deve repetir
+MAX_LOTES = 15                                                # lotes mostrados na tela
 MIN_TOPICOS = 2
 MAX_POR_TEMA = 40                                             # notícias por tema enviadas à IA
 PRAZO_DIAS = int(os.environ.get("SELECAO_PRAZO_DIAS", "3"))   # prazo das solicitações criadas
@@ -47,10 +52,17 @@ INSTRUMENTOS = ["Requerimento de Informação (RIC)", "Requerimento de convocaç
                 "Ofício a órgão público", "Pedido de CPI (coleta de assinaturas)"]
 GENERICAS = re.compile(r"\b(avaliar|analisar|acompanhar|monitorar|verificar|estudar|observar|levantar informa)", re.I)
 
-SISTEMA = f"""Você assessora a Liderança da Oposição na Câmara dos Deputados. Recebe as manchetes recentes que o radar
-coletou para um deputado, separadas por tema acompanhado. Para CADA tema, identifique pelo contexto os ASSUNTOS que
-mais aparecem — agrupe as manchetes que tratam do mesmo fato, decisão, crise ou debate — e escolha pelo menos 2 (no
-máximo 3) tópicos por tema, priorizando os mais recorrentes e com mais potencial de ação da Oposição.
+SISTEMA = f"""Você assessora a Liderança da Oposição na Câmara dos Deputados. Recebe as manchetes das últimas 72 horas
+que o radar coletou para um deputado, separadas por tema acompanhado (as áreas de interesse do parlamentar), com o
+veículo de cada uma. Agrupe pelo contexto as manchetes que tratam do mesmo fato, decisão, crise ou debate e escolha
+os ASSUNTOS MAIS COMENTADOS — os que aparecem em mais manchetes e em mais veículos diferentes — com potencial de
+ação da Oposição.
+
+Distribuição (importante):
+- Espalhe os tópicos pelo MAIOR NÚMERO POSSÍVEL de temas acompanhados e de áreas temáticas diferentes; não
+  concentre a seleção num só tema ou numa só área.
+- Para cada tema com notícias, escolha 2 tópicos (no máximo 3); se o tema tiver um único assunto, 1 basta.
+- Prefira um assunto muito comentado de uma área ainda não coberta a um terceiro tópico da mesma área.
 
 Regras do tópico:
 - O título descreve o fato ou a discussão em poucas palavras, com contexto: "Corte de verbas da Polícia Federal",
@@ -184,8 +196,8 @@ def sortear_um(texto, rnd=random):
 
 # ---------------- geração ----------------
 
-def _noticias_por_tema(cod, dias):
-    corte = datetime.now() - timedelta(days=dias)
+def _noticias_por_tema(cod, horas):
+    corte = datetime.now() - timedelta(hours=horas)
     with engine.connect() as c:
         rows = [dict(r) for r in c.execute(
             select(noticias.c.id, noticias.c.termo, noticias.c.titulo, noticias.c.resumo, noticias.c.fonte,
@@ -199,25 +211,30 @@ def _noticias_por_tema(cod, dias):
 
 
 def _abertos(cod):
-    """Tópicos de seleções anteriores ainda não concluídos (para a IA não repetir)."""
+    """Tópicos recentes ainda pendentes de abertura ou com solicitação em andamento (para a IA não repetir)."""
     with engine.connect() as c:
         rows = c.execute(select(selecao_ia.c.tema, selecao_ia.c.topico)
                          .select_from(selecao_ia.outerjoin(solicitacoes, solicitacoes.c.id == selecao_ia.c.solicitacao_id))
                          .where(selecao_ia.c.codigo_deputado == cod,
                                 selecao_ia.c.criado_em >= datetime.now() - timedelta(days=DIAS),
-                                solicitacoes.c.status.in_(("aberta", "andamento")))).all()
+                                or_(selecao_ia.c.status == "pendente",
+                                    solicitacoes.c.status.in_(("aberta", "andamento"))))).all()
     return [f"{t} — {p}" for t, p in rows]
 
 
 def montar_mensagem(nome_deputado, temas, abertos):
-    partes = [f"Deputado acompanhado: {nome_deputado}", f"Notícias dos últimos {DIAS} dias, por tema:"]
+    partes = [f"Deputado acompanhado: {nome_deputado}",
+              f"Temas acompanhados (áreas de interesse): {', '.join(temas)}",
+              f"Notícias das últimas {HORAS} horas, por tema:"]
     for tema, itens in temas.items():
-        partes.append(f"\n### Tema: {tema} ({len(itens)} notícias)")
+        veiculos = len({(n.get("fonte") or "").strip().lower() for n in itens if n.get("fonte")})
+        partes.append(f"\n### Tema: {tema} ({len(itens)} notícias, {veiculos} veículos)")
         for n in itens[:MAX_POR_TEMA]:
             res = re.sub(r"\s+", " ", n.get("resumo") or "")[:160]
-            partes.append(f"[{n['id']}] {n['titulo']}" + (f" — {res}" if res else ""))
+            partes.append(f"[{n['id']}] {n['titulo']}" + (f" ({n['fonte']})" if n.get("fonte") else "")
+                          + (f" — {res}" if res else ""))
     if abertos:
-        partes.append("\nTópicos já distribuídos e ainda em aberto (não repita): " + "; ".join(abertos[:30]))
+        partes.append("\nTópicos já selecionados e ainda pendentes ou em andamento (não repita): " + "; ".join(abertos[:30]))
     partes.append("\nResponda APENAS com o JSON.")
     return "\n".join(partes)
 
@@ -264,7 +281,8 @@ def _topicos_validos(d, temas):
 
 
 def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
-    """Gera um lote de tópicos para o deputado e cria as solicitações. Devolve {lote, topicos}."""
+    """Gera um lote de tópicos para o deputado, PENDENTES DE ABERTURA (nenhuma solicitação é criada aqui).
+    Devolve {lote, gerado_em, topicos}."""
     import paineis
     import questoes
     import meu
@@ -272,9 +290,9 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     agora = agora or meu.agora_brt()          # lote e datas no horário de Brasília
     marca = datetime.now()
     s = paineis.deputado(cod) or {}
-    temas = _noticias_por_tema(cod, DIAS)
+    temas = _noticias_por_tema(cod, HORAS)
     if not temas:
-        raise ValueError(f"Não há notícias dos últimos {DIAS} dias para selecionar tópicos.")
+        raise ValueError(f"Não há notícias das últimas {HORAS} horas para selecionar tópicos.")
     if not questoes.configurado():
         raise ValueError("A Seleção da IA precisa da chave da Anthropic: configure ANTHROPIC_API_KEY no Railway.")
     msg = montar_mensagem(s.get("nome") or str(cod), temas, _abertos(cod))
@@ -311,35 +329,128 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
             topicos.append({"tema": tema, **ok, "noticias": ids})
     if not topicos:
         raise ValueError("A IA não devolveu tópicos utilizáveis. Tente de novo em alguns minutos.")
-    resps = sortear([t["tipo"] for t in topicos], equipes(), rnd)
     lote = agora.isoformat(timespec="seconds")
+    with engine.begin() as c:
+        while c.execute(select(selecao_ia.c.id).where(selecao_ia.c.codigo_deputado == cod,
+                                                      selecao_ia.c.lote == lote).limit(1)).first():
+            agora += timedelta(seconds=1)                 # dois lotes no mesmo segundo não se misturam
+            lote = agora.isoformat(timespec="seconds")
+        for t in topicos:
+            t["id"] = c.execute(insert(selecao_ia).values(
+                codigo_deputado=cod, lote=lote, tema=t["tema"], topico=t["topico"], resumo=t["resumo"], tipo=t["tipo"],
+                acao_sugerida=t["acao_sugerida"], area=t["area"], instrumento=t["instrumento"],
+                noticias=json.dumps(t["noticias"]), status="pendente", criado_em=marca)).inserted_primary_key[0]
+    log.info("seleção da IA do deputado %s: lote %s com %d tópico(s) pendentes de abertura", cod, lote, len(topicos))
+    return {"lote": lote, "gerado_em": agora, "topicos": topicos}
+
+
+# ---------------- confirmação humana ----------------
+
+def _descricao(c, t):
+    ids = json.loads(t["noticias"] or "[]")
+    links = {r[0]: (r[1], r[2]) for r in c.execute(select(noticias.c.id, noticias.c.titulo, noticias.c.link)
+                                                     .where(noticias.c.id.in_(ids or [0])))}
+    lote = datetime.fromisoformat(t["lote"]).strftime("%d/%m/%Y às %H:%M") if t.get("lote") else ""
+    linhas = [f"Tema acompanhado: {t['tema']} · Área: {t['area'] or 'Outros'} · {TIPOS.get(t['tipo'], 'Outros assuntos')}"
+              + (f" · Seleção da IA de {lote}" if lote else ""),
+              t["resumo"], f"Providência sugerida ({t['instrumento']}): {t['acao_sugerida']}"]
+    if ids:
+        linhas.append("Notícias:\n" + "\n".join(f"- {links[i][0]} — {links[i][1]}" for i in ids if i in links))
+    return "\n\n".join(x for x in linhas if x)
+
+
+def abrir(cod, ids, autor, responsaveis=None, rnd=random, agora=None):
+    """Abre a solicitação dos tópicos pendentes escolhidos (confirmação humana). `responsaveis` = {id: login,
+    "" (sem responsável) ou SORTEAR}; o que não vier é sorteado pela equipe do tipo. Devolve [(id, solicitação)]."""
+    import meu
+    responsaveis = responsaveis or {}
+    agora = agora or meu.agora_brt()
+    marca = datetime.now()
+    ids = [int(i) for i in ids if str(i).isdigit()]
+    with engine.connect() as c:
+        tops = [dict(r) for r in c.execute(select(selecao_ia).where(
+            selecao_ia.c.codigo_deputado == cod, selecao_ia.c.id.in_(ids or [0]),
+            selecao_ia.c.status == "pendente").order_by(selecao_ia.c.id)).mappings()]
+    if not tops:
+        return []
+    ativos = {u["login"] for u in _ativos()}
+    sortear_ = [t for t in tops if responsaveis.get(t["id"], SORTEAR) == SORTEAR]
+    sorteados = dict(zip([t["id"] for t in sortear_], sortear([t["tipo"] for t in sortear_], equipes(), rnd)))
     hoje = agora.date()
     prazo = (hoje + timedelta(days=PRAZO_DIAS)).isoformat()
+    feitos = []
     with engine.begin() as c:
-        links = {r[0]: (r[1], r[2]) for r in c.execute(select(noticias.c.id, noticias.c.titulo, noticias.c.link)
-                                                         .where(noticias.c.id.in_([i for t in topicos for i in t["noticias"]] or [0])))}
-        for t, resp in zip(topicos, resps):
-            linhas = [f"Tema acompanhado: {t['tema']} · Área: {t['area']} · {TIPOS[t['tipo']]}", t["resumo"],
-                      f"Providência sugerida ({t['instrumento']}): {t['acao_sugerida']}"]
-            if t["noticias"]:
-                linhas.append("Notícias:\n" + "\n".join(f"- {links[i][0]} — {links[i][1]}" for i in t["noticias"] if i in links))
+        for t in tops:
+            escolhido = responsaveis.get(t["id"], SORTEAR)
+            resp = sorteados.get(t["id"]) if escolhido == SORTEAR else (escolhido if escolhido in ativos else None)
+            ok = c.execute(update(selecao_ia).where(selecao_ia.c.id == t["id"], selecao_ia.c.status == "pendente")
+                           .values(status="aberta", decidido_por=autor, decidido_em=marca, responsavel=resp)).rowcount
+            if not ok:                                   # outra pessoa confirmou ao mesmo tempo
+                continue
             sid = c.execute(insert(solicitacoes).values(
-                codigo_deputado=cod, titulo=("Seleção da IA: " + t["topico"])[:200],
-                descricao="\n\n".join(x for x in linhas if x), solicitante="Seleção da IA (radar)", status="aberta",
-                data_solicitacao=hoje.isoformat(), prazo=prazo, responsavel=resp, area=t["area"],
-                atribuido_por=autor if resp else None, atribuido_em=marca if resp else None,
-                criado_por=autor, criado_em=marca, atualizado_em=marca)).inserted_primary_key[0]
-            c.execute(insert(selecao_ia).values(codigo_deputado=cod, lote=lote, tema=t["tema"], topico=t["topico"],
-                                                resumo=t["resumo"], tipo=t["tipo"], acao_sugerida=t["acao_sugerida"],
-                                                area=t["area"], instrumento=t["instrumento"],
-                                                noticias=json.dumps(t["noticias"]), responsavel=resp,
-                                                solicitacao_id=sid, criado_em=marca))
-            if t["noticias"]:          # as notícias passam a seguir a solicitação (se ainda não tinham uma)
-                c.execute(update(noticias).where(noticias.c.id.in_(t["noticias"]), noticias.c.solicitacao_id.is_(None))
+                codigo_deputado=cod, titulo=("Seleção da IA: " + t["topico"])[:200], descricao=_descricao(c, t),
+                solicitante="Seleção da IA (radar)", status="aberta", data_solicitacao=hoje.isoformat(), prazo=prazo,
+                responsavel=resp, area=t["area"], atribuido_por=autor if resp else None,
+                atribuido_em=marca if resp else None, criado_por=autor, criado_em=marca,
+                atualizado_em=marca)).inserted_primary_key[0]
+            c.execute(update(selecao_ia).where(selecao_ia.c.id == t["id"]).values(solicitacao_id=sid))
+            nids = json.loads(t["noticias"] or "[]")
+            if nids:          # as notícias passam a seguir a solicitação (se ainda não tinham uma)
+                c.execute(update(noticias).where(noticias.c.id.in_(nids), noticias.c.solicitacao_id.is_(None))
                           .values(solicitacao_id=sid))
-            t["responsavel"], t["solicitacao_id"] = resp, sid
-    log.info("seleção da IA do deputado %s: %d tópico(s)", cod, len(topicos))
-    return {"lote": lote, "topicos": topicos}
+            feitos.append((t["id"], sid))
+    log.info("seleção da IA do deputado %s: %d solicitação(ões) aberta(s) por %s", cod, len(feitos), autor)
+    return feitos
+
+
+def descartar(cod, ids, autor):
+    """Tira tópicos pendentes da fila sem abrir solicitação. Devolve quantos."""
+    ids = [int(i) for i in ids if str(i).isdigit()]
+    with engine.begin() as c:
+        return c.execute(update(selecao_ia).where(selecao_ia.c.codigo_deputado == cod, selecao_ia.c.id.in_(ids or [0]),
+                                                  selecao_ia.c.status == "pendente")
+                         .values(status="descartada", decidido_por=autor, decidido_em=datetime.now())).rowcount
+
+
+def restaurar(cod, ids):
+    """Volta tópicos descartados para pendentes de abertura."""
+    ids = [int(i) for i in ids if str(i).isdigit()]
+    with engine.begin() as c:
+        return c.execute(update(selecao_ia).where(selecao_ia.c.codigo_deputado == cod, selecao_ia.c.id.in_(ids or [0]),
+                                                  selecao_ia.c.status == "descartada")
+                         .values(status="pendente", decidido_por=None, decidido_em=None)).rowcount
+
+
+CHAVE_DEVOLVIDAS = "selecao_ia:devolvidas_pendentes"
+
+
+def devolver_abertas_pela_ia():
+    """Uma vez só: as solicitações que a IA abriu sozinha (versão anterior) e que ninguém tocou — ainda
+    "aberta", sem anexo nem resumo do que foi feito — saem de Solicitações e voltam a ser tópicos pendentes de
+    abertura, no lote em que foram geradas. As que alguém já trabalhou ficam como estão. Devolve quantas."""
+    with engine.begin() as c:
+        if c.execute(select(meta.c.valor).where(meta.c.chave == CHAVE_DEVOLVIDAS)).first():
+            return 0
+        rows = c.execute(select(selecao_ia.c.id, selecao_ia.c.solicitacao_id)
+                         .where(selecao_ia.c.status.is_(None))).all()
+        n = 0
+        for rid, sid in rows:
+            st = c.execute(select(solicitacoes.c.status, solicitacoes.c.resumo_realizado)
+                           .where(solicitacoes.c.id == sid)).first() if sid else None
+            tem_anexo = sid and c.execute(select(anexos.c.id).where(anexos.c.solicitacao_id == sid).limit(1)).first()
+            if st and (st[0] != "aberta" or st[1] or tem_anexo):
+                c.execute(update(selecao_ia).where(selecao_ia.c.id == rid).values(status="aberta"))
+                continue
+            if sid:
+                c.execute(update(noticias).where(noticias.c.solicitacao_id == sid).values(solicitacao_id=None))
+                c.execute(delete(solicitacoes).where(solicitacoes.c.id == sid))
+            c.execute(update(selecao_ia).where(selecao_ia.c.id == rid)
+                      .values(status="pendente", solicitacao_id=None, responsavel=None))
+            n += 1
+        c.execute(insert(meta).values(chave=CHAVE_DEVOLVIDAS, valor=datetime.now().isoformat(timespec="seconds")))
+    if n:
+        log.info("seleção da IA: %d solicitação(ões) abertas pela IA voltaram a ser pendentes de abertura", n)
+    return n
 
 
 def limpar_selecao_por_palavras():
@@ -369,28 +480,56 @@ def limpar_selecao_por_palavras():
 
 # ---------------- leitura ----------------
 
-def ultimo_lote(cod):
-    """Tópicos da seleção mais recente, por tema, com o andamento da solicitação e as notícias."""
+def n_pendentes(cod):
     with engine.connect() as c:
-        lote = c.execute(select(selecao_ia.c.lote).where(selecao_ia.c.codigo_deputado == cod)
-                         .order_by(selecao_ia.c.lote.desc()).limit(1)).scalar()
-        if not lote:
-            return None
+        return c.execute(select(func.count()).select_from(selecao_ia).where(
+            selecao_ia.c.codigo_deputado == cod, selecao_ia.c.status == "pendente")).scalar() or 0
+
+
+def lotes(cod, limite=MAX_LOTES):
+    """Lotes da Seleção da IA, do mais recente ao mais antigo: sempre o último gerado e os que ainda têm tópico
+    pendente de abertura. Cada lote traz o dia e a hora em que foi gerado, os tópicos por tema e as contagens."""
+    with engine.connect() as c:
+        ultimo = c.execute(select(selecao_ia.c.lote).where(selecao_ia.c.codigo_deputado == cod)
+                           .order_by(selecao_ia.c.lote.desc()).limit(1)).scalar()
+        if not ultimo:
+            return []
+        com_pend = [r[0] for r in c.execute(select(selecao_ia.c.lote).where(
+            selecao_ia.c.codigo_deputado == cod, selecao_ia.c.status == "pendente").distinct())]
+        escolhidos = sorted(set(com_pend) | {ultimo}, reverse=True)[:limite]
         rows = [dict(r) for r in c.execute(
-            select(selecao_ia, solicitacoes.c.status.label("status"), solicitacoes.c.responsavel.label("resp_atual"))
+            select(selecao_ia, solicitacoes.c.status.label("status_sol"), solicitacoes.c.responsavel.label("resp_atual"))
             .select_from(selecao_ia.outerjoin(solicitacoes, solicitacoes.c.id == selecao_ia.c.solicitacao_id))
-            .where(selecao_ia.c.codigo_deputado == cod, selecao_ia.c.lote == lote)
+            .where(selecao_ia.c.codigo_deputado == cod, selecao_ia.c.lote.in_(escolhidos))
             .order_by(selecao_ia.c.id)).mappings()]
         ids = {i for r in rows for i in json.loads(r["noticias"] or "[]")}
         nots = {r["id"]: dict(r) for r in c.execute(select(noticias.c.id, noticias.c.titulo, noticias.c.link,
                                                            noticias.c.fonte, noticias.c.publicado)
                                                     .where(noticias.c.id.in_(ids or [0]))).mappings()}
-    temas = {}
+    por_lote = {}
     for r in rows:
         r["noticias_l"] = [nots[i] for i in json.loads(r["noticias"] or "[]") if i in nots]
         r["responsavel"] = r["resp_atual"] or r["responsavel"]
-        temas.setdefault(r["tema"], []).append(r)
-    return {"lote": lote, "gerado_em": datetime.fromisoformat(lote), "temas": temas, "total": len(rows)}
+        r["status"] = r["status"] or ("aberta" if r["solicitacao_id"] else "pendente")
+        por_lote.setdefault(r["lote"], []).append(r)
+    out = []
+    for lote in escolhidos:
+        itens = por_lote.get(lote, [])
+        temas = {}
+        for r in itens:
+            if r["status"] != "descartada":
+                temas.setdefault(r["tema"], []).append(r)
+        conta = {k: sum(1 for r in itens if r["status"] == k) for k in ("pendente", "aberta", "descartada")}
+        out.append({"lote": lote, "gerado_em": datetime.fromisoformat(lote), "temas": temas, "total": len(itens),
+                    "areas": len({r["area"] for r in itens if r["area"]}), "ultimo": lote == ultimo,
+                    "descartados": [r for r in itens if r["status"] == "descartada"], **conta})
+    return out
+
+
+def ultimo_lote(cod):
+    """Compatibilidade: o lote mais recente (mesmo formato de lotes())."""
+    ls = lotes(cod, limite=1)
+    return ls[0] if ls else None
 
 
 def precisa_gerar(cod, agora=None):

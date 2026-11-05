@@ -1658,39 +1658,70 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
         tok = _tok(adm, "/meu/102?secao=radar&filtro=selecao")
         html = adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
         assert "Seleção da IA" in html and "Nenhuma seleção ainda" in html and "Distribuição da Seleção da IA" in html
+        antes_sols = _q("SELECT COUNT(*) FROM solicitacoes")[0][0]
         random.seed(3)
         r = adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_gerar"})
-        assert r.status_code == 302
+        assert r.status_code == 302 and "#lote-" in r.headers["Location"]
     finally:
         questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
     assert "Notícia antiga" not in pedidos[0] and "### Tema: segurança pública" in pedidos[0]
+    assert "últimas 72 horas" in pedidos[0] and "(G1)" in pedidos[0] and "1 veículos" in pedidos[0]
+    assert "MAIS COMENTADOS" in si.SISTEMA and "MAIOR NÚMERO POSSÍVEL" in si.SISTEMA
+    # nada vira solicitação sem confirmação humana
+    assert _q("SELECT COUNT(*) FROM solicitacoes")[0][0] == antes_sols
     sel = si.ultimo_lote(102)
-    assert sel["total"] == 4 and set(sel["temas"]) == {"Bruno Governo", "segurança pública"}
+    assert sel["total"] == 4 and sel["pendente"] == 4 and set(sel["temas"]) == {"Bruno Governo", "segurança pública"}
     tops = {t["topico"]: t for ts in sel["temas"].values() for t in ts}
     assert "Lula" not in tops and "Fala do ministro em entrevista" not in tops
+    assert all(t["status"] == "pendente" and not t["responsavel"] and not t["solicitacao_id"] for t in tops.values())
     cob = tops["Cobranças ao ministro da Justiça sobre presídios"]
-    assert cob["tipo"] == "comissao" and cob["responsavel"] == "lianna.souza"                 # convocação → comissão → Lianna
-    assert cob["area"] == "Segurança Pública" and len(cob["noticias_l"]) == 2
-    outros = [tops[k]["responsavel"] for k in ("Projeto do deputado sobre o Pix", "Avanço das facções no Nordeste",
-                                                "Corte de verbas da Polícia Federal")]
-    assert len(set(outros)) == 3 and set(outros) <= set(eq["outros"])                        # sorteio sem repetir
+    assert cob["tipo"] == "comissao" and cob["area"] == "Segurança Pública" and len(cob["noticias_l"]) == 2
     pf = tops["Corte de verbas da Polícia Federal"]
     assert pf["tipo"] == "outros" and pf["area"] == "Outros" and pf["instrumento"] == "Projeto de Lei (PL)"
     assert tops["Avanço das facções no Nordeste"]["instrumento"] == "Requerimento de Informação (RIC)"
-    sols = _q("SELECT titulo, responsavel, solicitante, prazo, area, descricao FROM solicitacoes "
-              "WHERE titulo LIKE 'Seleção da IA:%' AND codigo_deputado = 102")
-    assert len(sols) == 4 and all(s[2] == "Seleção da IA (radar)" and s[3] and s[4] for s in sols)
-    assert any("Providência sugerida (Requerimento de convocação de ministro)" in s[5] for s in sols)
-    html = adm.get("/meu/102?secao=solicitacoes").get_data(as_text=True)
-    assert '<span class="area-chip">Segurança Pública</span>' in html
-    assert _q("SELECT solicitacao_id IS NOT NULL FROM noticias WHERE id = :n", n=ids[0])[0][0]
+    assert si.n_pendentes(102) == 4
     html = adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
+    assert "Seleção da IA — pendentes de abertura" in html and "4 tópicos aguardando" in html
+    assert f"Lote</span> <b>{sel['gerado_em'].strftime('%d/%m/%Y')} às {sel['gerado_em'].strftime('%H:%M')}</b>" in html
     assert "Cobranças ao ministro da Justiça sobre presídios" in html and "CSPCCO para explicar" in html
     assert 'class="sel-inst">Requerimento de convocação de ministro' in html and 'class="area-chip">Economia' in html
-    assert "Comissão" in html and "Outros assuntos" in html and "ver solicitação" in html
-    # a Lianna recebe o aviso de tarefa
+    assert "Abrir solicitação" in html and "Abrir solicitações selecionadas" in html and "ver solicitação" not in html
+    assert "✨ Seleção da IA (4)" in adm.get("/meu/102?secao=radar").get_data(as_text=True)
     li = _cliente_usuario("lianna.souza", "senha-segura-1")
+    assert "Cobranças ao ministro da Justiça" not in li.get("/orientacoes").get_data(as_text=True)   # sem tarefa ainda
+    # abrir um só, com sorteio → comissão → Lianna
+    r = adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "um": cob["id"],
+                                                              f"resp_{cob['id']}": si.SORTEAR})
+    assert r.status_code == 302 and f"#t{cob['id']}" in r.headers["Location"]
+    sol = _q("SELECT responsavel, solicitante, prazo, area, descricao, criado_por, atribuido_por FROM solicitacoes "
+             "WHERE titulo = 'Seleção da IA: Cobranças ao ministro da Justiça sobre presídios'")
+    assert len(sol) == 1 and sol[0][0] == "lianna.souza" and sol[0][1] == "Seleção da IA (radar)" and sol[0][2]
+    assert sol[0][3] == "Segurança Pública" and "Providência sugerida (Requerimento de convocação de ministro)" in sol[0][4]
+    assert "Seleção da IA de " in sol[0][4] and sol[0][5] == "admin" and sol[0][6] == "admin"
+    assert _q("SELECT solicitacao_id IS NOT NULL FROM noticias WHERE id = :n", n=ids[0])[0][0]
     assert "Seleção da IA: Cobranças ao ministro da Justiça sobre presídios" in li.get("/orientacoes").get_data(as_text=True)
+    # abrir de novo o mesmo: não duplica
+    assert si.abrir(102, [cob["id"]], "admin") == []
+    # vários de uma vez: um com responsável escolhido, os outros sorteados sem repetir
+    pix, fac, pfid = (tops[k]["id"] for k in ("Projeto do deputado sobre o Pix", "Avanço das facções no Nordeste",
+                                               "Corte de verbas da Polícia Federal"))
+    r = adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "modo": "abrir",
+                                                              "ids": [pix, fac], f"resp_{pix}": "andre.alencar",
+                                                              f"resp_{fac}": si.SORTEAR, f"resp_{pfid}": "vinicius.melo"})
+    resp = dict(_q("SELECT topico, responsavel FROM selecao_ia WHERE id IN (:a, :b)", a=pix, b=fac))
+    assert resp["Projeto do deputado sobre o Pix"] == "andre.alencar" and resp["Avanço das facções no Nordeste"] in eq["outros"]
+    assert si.n_pendentes(102) == 1                                                         # PF continua pendente
+    # descartar e voltar
+    adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "descartar_um": pfid})
+    assert si.n_pendentes(102) == 0
+    html = adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
+    assert "1 descartado neste lote" in html and "aberta por" in html and "ver solicitação" in html
+    adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "restaurar_um": pfid})
+    assert si.n_pendentes(102) == 1
+    adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_decidir", "modo": "abrir"})
+    assert "Marque pelo menos um tópico" in adm.get("/meu/102?secao=radar&filtro=selecao").get_data(as_text=True)
+    html = adm.get("/meu/102?secao=solicitacoes").get_data(as_text=True)
+    assert '<span class="area-chip">Segurança Pública</span>' in html
     # equipes editáveis
     adm.post("/meu/102?secao=radar&filtro=selecao", data={"_csrf": tok, "acao": "selecao_equipes",
                                                           "comissao": ["lianna.souza", "vinicius.melo"], "outros": ["andre.alencar"]})
@@ -1994,3 +2025,46 @@ def test_alerta_8_de_janeiro_retirado():
     alertas.adicionar("8 de janeiro", "admin")                     # se a equipe quiser de volta, fica
     assert "8 de janeiro" in alertas.termos()
     alertas.remover("8 de janeiro")
+
+
+def test_selecao_devolve_as_abertas_pela_ia_e_mantem_lotes():
+    """Solicitações abertas sozinhas pela versão anterior voltam a pendentes (as já trabalhadas ficam); lotes
+    antigos com pendentes continuam visíveis, cada um com dia e hora."""
+    from datetime import datetime
+    import selecao_ia as si
+    from db import anexos, meta, noticias, selecao_ia as tab, solicitacoes as tsol
+    from sqlalchemy import insert as ins
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM selecao_ia WHERE codigo_deputado = 103"))
+        c.execute(text("DELETE FROM meta WHERE chave = :k"), {"k": si.CHAVE_DEVOLVIDAS})
+        def velho(topico, status="aberta", resumo=None, anexo=False, lote="2026-11-04T07:05:00"):
+            sid = c.execute(ins(tsol).values(codigo_deputado=103, titulo="Seleção da IA: " + topico, status=status,
+                                             responsavel="out.um", resumo_realizado=resumo,
+                                             solicitante="Seleção da IA (radar)")).inserted_primary_key[0]
+            if anexo:
+                c.execute(ins(anexos).values(solicitacao_id=sid, nome="x.pdf"))
+            nid = c.execute(ins(noticias).values(codigo_deputado=103, termo="t", titulo=topico, link=f"https://v/{sid}",
+                                                 origem="google", solicitacao_id=sid)).inserted_primary_key[0]
+            rid = c.execute(ins(tab).values(codigo_deputado=103, lote=lote, tema="t", topico=topico, tipo="outros",
+                                            acao_sugerida="Nota à imprensa sobre o caso", noticias=json.dumps([nid]),
+                                            responsavel="out.um", solicitacao_id=sid,
+                                            criado_em=datetime.now())).inserted_primary_key[0]
+            return rid, sid, nid
+        intocada = velho("Tópico intocado")
+        andamento = velho("Tópico em andamento", status="andamento")
+        com_anexo = velho("Tópico com anexo", anexo=True)
+        outro_lote = velho("Tópico do lote de ontem", lote="2026-11-03T07:10:00")
+    assert si.devolver_abertas_pela_ia() == 2
+    assert si.devolver_abertas_pela_ia() == 0                                   # roda uma vez só
+    assert not _q("SELECT id FROM solicitacoes WHERE id IN (:a, :b)", a=intocada[1], b=outro_lote[1])
+    assert _q("SELECT status, solicitacao_id, responsavel FROM selecao_ia WHERE id = :i", i=intocada[0])[0] == ("pendente", None, None)
+    assert _q("SELECT solicitacao_id FROM noticias WHERE id = :n", n=intocada[2])[0][0] is None
+    for rid, sid, _ in (andamento, com_anexo):
+        assert _q("SELECT status, solicitacao_id FROM selecao_ia WHERE id = :i", i=rid)[0] == ("aberta", sid)
+    ls = si.lotes(103)
+    assert [l["lote"] for l in ls] == ["2026-11-04T07:05:00", "2026-11-03T07:10:00"]
+    assert ls[0]["pendente"] == 1 and ls[0]["aberta"] == 2 and ls[1]["pendente"] == 1
+    r = _cliente().get("/meu/103?secao=radar&filtro=selecao")
+    if r.status_code == 200:
+        html = r.get_data(as_text=True)
+        assert "Lote</span> <b>04/11/2026 às 07:05</b>" in html and "Lote</span> <b>03/11/2026 às 07:10</b>" in html

@@ -1002,11 +1002,13 @@ def painel(cod):
         ctx["ia_ok"] = questoes.configurado()
         ctx["status_radar"] = rd.STATUS
         ctx["categorias_radar"] = rd.CATEGORIAS
+        import selecao_ia as si
+        ctx["sel_pend"] = si.n_pendentes(cod)
         if ctx["filtro"] == "selecao":
-            import selecao_ia as si
-            ctx["selecao"] = si.ultimo_lote(cod)
+            ctx["lotes"] = si.lotes(cod)
             ctx["sel_equipes"], ctx["sel_tipos"] = si.equipes(), si.TIPOS
-            ctx["sel_faltam"], ctx["sel_dias"] = si.nao_encontrados(), si.DIAS
+            ctx["sel_faltam"], ctx["sel_horas"] = si.nao_encontrados(), si.HORAS
+            ctx["sel_sortear"] = si.SORTEAR
         ctx["usuarios_resp"] = __import__("fotos").usuarios_ativos()
     elif secao == "rankings":
         ctx["ranks"] = rankings(cod)
@@ -1117,8 +1119,38 @@ def _post(cod, secao, s, autor, pleno=True):
         elif secao == "radar" and acao == "selecao_gerar":
             import selecao_ia as si
             r = si.gerar(cod, autor=autor)
-            flash(f"Seleção gerada: {len(r['topicos'])} tópico(s), já distribuídos e registrados em Solicitações.", "ok")
-            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao")
+            flash(f"Seleção de {r['gerado_em'].strftime('%d/%m/%Y às %H:%M')} gerada: {len(r['topicos'])} tópico(s) "
+                  "pendentes de abertura. Confirme os que devem virar solicitação.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao") + "#lote-" + r["lote"].replace(":", "")
+        elif secao == "radar" and acao == "selecao_decidir":
+            import selecao_ia as si
+            ancora = ""
+            if f.get("um"):
+                ids, modo = [f.get("um")], "abrir"
+            elif f.get("descartar_um"):
+                ids, modo = [f.get("descartar_um")], "descartar"
+            elif f.get("restaurar_um"):
+                ids, modo = [f.get("restaurar_um")], "restaurar"
+            else:
+                ids, modo = f.getlist("ids"), f.get("modo")
+            if not ids:
+                flash("Marque pelo menos um tópico.", "erro")
+            elif modo == "abrir":
+                resps = {int(k[5:]): v for k, v in f.items() if k.startswith("resp_") and k[5:].isdigit()}
+                feitos = si.abrir(cod, ids, autor, resps)
+                if feitos:
+                    flash(f"{len(feitos)} solicitação(ões) aberta(s) a partir da Seleção da IA." if len(feitos) > 1 else
+                          "Solicitação aberta a partir da Seleção da IA.", "ok")
+                    ancora = f"#t{feitos[0][0]}"
+                else:
+                    flash("Esses tópicos já tinham sido abertos ou descartados por outra pessoa.", "erro")
+            elif modo == "descartar":
+                flash(f"{si.descartar(cod, ids, autor)} tópico(s) descartado(s).", "ok")
+            elif modo == "restaurar":
+                si.restaurar(cod, ids)
+                flash("Tópico de volta às pendentes de abertura.", "ok")
+                ancora = f"#t{ids[0]}"
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao") + ancora
         elif secao == "radar" and acao == "selecao_equipes":
             import selecao_ia as si
             si.salvar_equipes(f.getlist("comissao"), f.getlist("outros"))

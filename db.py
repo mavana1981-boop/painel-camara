@@ -294,7 +294,7 @@ noticias = Table(  # radar: portais acompanhados (como no Monitor Legislativo) +
     Column("solicitacao_id", Integer),           # solicitação criada ao atribuir um responsável
 )
 
-selecao_ia = Table(  # radar: tópicos escolhidos pela IA (≥2 por tema acompanhado), já distribuídos à equipe
+selecao_ia = Table(  # radar: tópicos escolhidos pela IA; viram solicitação só quando alguém da equipe confirma
     "selecao_ia", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("codigo_deputado", Integer, index=True),
@@ -310,6 +310,9 @@ selecao_ia = Table(  # radar: tópicos escolhidos pela IA (≥2 por tema acompan
     Column("responsavel", String(60)),
     Column("solicitacao_id", Integer),
     Column("criado_em", DateTime),
+    Column("status", String(20)),                # pendente (aguarda confirmação humana), aberta, descartada
+    Column("decidido_por", String(60)),          # quem abriu a solicitação ou descartou o tópico
+    Column("decidido_em", DateTime),
 )
 
 fontes_radar = Table(  # portais (RSS) lidos pelo radar

@@ -482,7 +482,7 @@
     {% set q = {'termo': termo} if termo else {} %}
     {% if busca %}{% set q = dict(q, q=busca) %}{% endif %}
     <div class="pilulas">
-      {% for k, nome, n in [('', 'Tudo', rc.n), ('selecao', '✨ Seleção da IA', None), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] + ([('manual', 'Incluídas manualmente', rc.manual)] if rc.manual else []) %}
+      {% for k, nome, n in [('', 'Tudo', rc.n), ('selecao', '✨ Seleção da IA', sel_pend if sel_pend else None), ('relevantes', 'Relevantes pela IA', rc.rel), ('Pendente', 'Pendentes', rc.pendentes), ('Em análise', 'Em análise', None), ('Ação efetuada', 'Ação efetuada', None), ('portal', 'Portais', rc.portal), ('google', 'Google Notícias', rc.google)] + ([('manual', 'Incluídas manualmente', rc.manual)] if rc.manual else []) %}
       <a class="{{ 'sel' if filtro == k }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', filtro=k or None, **q) }}">{{ nome }}{% if n is not none %} ({{ n }}){% endif %}</a>
       {% endfor %}
     </div>
@@ -494,39 +494,94 @@
     {% elif rc.pend %}<div class="rn-fila">{{ rc.pend }} notícia(s) aguardando análise da IA — saem no próximo ciclo (a cada 2 horas).</div>{% endif %}
     {% if filtro == 'selecao' %}
     <div class="sel-cab">
-      <div>{% if selecao %}<b>Seleção de {{ selecao.gerado_em.strftime('%d/%m/%Y às %H:%M') }}</b> · {{ selecao.total }} tópico{{ 's' if selecao.total != 1 }} de {{ selecao.temas|length }} tema{{ 's' if selecao.temas|length != 1 }}
-        {% else %}<b>Nenhuma seleção ainda.</b>{% endif %}
-        <small>A IA lê as notícias dos últimos {{ sel_dias }} dias de cada tema acompanhado, agrupa as que tratam do mesmo fato e escolhe os assuntos mais recorrentes (pelo menos 2 por tema), cada um com área e uma providência concreta (RIC, PL, nota, requerimento…). Cada tópico já vira uma solicitação com responsável sorteado. Roda sozinha uma vez por dia, a partir das 7h.</small></div>
-      <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Gerando…'">
+      <div><b>✨ Seleção da IA — pendentes de abertura</b>{% if sel_pend %} <span class="sel-npend">{{ sel_pend }} tópico{{ 's' if sel_pend != 1 }} aguardando</span>{% endif %}
+        <small>A IA lê as notícias das últimas {{ sel_horas }} horas, agrupa as que tratam do mesmo fato e escolhe os assuntos mais comentados, espalhando os tópicos pelo maior número possível de temas e áreas do parlamentar. Nada vira solicitação sozinho: confirme um tópico ou marque vários e abra de uma vez. Roda sozinha uma vez por dia, a partir das 7h; cada rodada forma um lote com dia e hora.</small></div>
+      <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Gerando… (até 2 min)'">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_gerar">
         <button class="btn">✨ Gerar nova seleção</button></form>
     </div>
     {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">A Seleção da IA precisa da chave da Anthropic: configure <b>ANTHROPIC_API_KEY</b> no Railway. Sem ela, nenhum tópico é gerado.</div>{% endif %}
-    {% if selecao %}
-    {% for tema, tops in selecao.temas.items() %}
-      <div class="sel-tema"><span>Tema</span> {{ tema }} <small>{{ tops|length }} tópico{{ 's' if tops|length != 1 }}</small></div>
-      {% for t in tops %}
-      <article class="sel-top {{ t.tipo }}">
-        <div class="sel-l1">
-          <span class="sel-tipo {{ t.tipo }}">{{ sel_tipos[t.tipo] }}</span>
-          {% if t.area %}<span class="area-chip">{{ t.area }}</span>{% endif %}
-          <b>{{ t.topico }}</b>
-          {% if t.status %}<span class="sol-st {{ t.status }}">{{ status|selectattr(0, 'equalto', t.status)|map(attribute=1)|first }}</span>{% endif %}
+    {% for L in lotes %}
+    <form method="post" class="sel-lote" id="lote-{{ L.lote|replace(':', '') }}" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_decidir">
+      <div class="sel-lote-cab">
+        <div class="sel-lote-tit">
+          {% if L.pendente %}<label class="sel-todos" title="Marcar todos os pendentes deste lote"><input type="checkbox" data-todos></label>{% endif %}
+          <span class="sel-lote-rot">Lote</span> <b>{{ L.gerado_em.strftime('%d/%m/%Y') }} às {{ L.gerado_em.strftime('%H:%M') }}</b>
+          {% if L.ultimo %}<span class="sel-ult">mais recente</span>{% endif %}
         </div>
-        {% if t.resumo %}<p class="sel-res">{{ t.resumo }}</p>{% endif %}
-        {% if t.acao_sugerida %}<p class="sel-acao">{% if t.instrumento %}<span class="sel-inst">{{ t.instrumento }}</span> {% endif %}{{ t.acao_sugerida }}</p>{% endif %}
-        {% if t.noticias_l %}<details class="sel-nots"><summary>{{ t.noticias_l|length }} notícia{{ 's' if t.noticias_l|length != 1 }}</summary>
-          <ul>{% for n in t.noticias_l %}<li><a href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.titulo }}</a> <small>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</small></li>{% endfor %}</ul></details>{% endif %}
-        <div class="sel-rodape">
-          {% if t.criado_em %}<span class="sol-criada">🕒 criada em {{ t.criado_em|data_hora }}</span>{% endif %}
-          {% if t.responsavel %}<span class="sel-resp">{{ avatar(t.responsavel, 26) }} {{ (usuarios_resp|selectattr('login', 'equalto', t.responsavel)|map(attribute='nome')|first) or t.responsavel }}</span>
-          {% else %}<span class="sel-resp" style="color:#b03021">sem responsável — configure as equipes ao lado</span>{% endif %}
-          {% if t.solicitacao_id %}<a class="rn-sol" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', abrir=t.solicitacao_id) }}#s{{ t.solicitacao_id }}">ver solicitação {{ ic("seta") }}</a>{% endif %}
+        <div class="sel-lote-cont">
+          {% if L.pendente %}<span class="pend">{{ L.pendente }} pendente{{ 's' if L.pendente != 1 }}</span>{% endif %}
+          {% if L.aberta %}<span class="ab">{{ L.aberta }} aberta{{ 's' if L.aberta != 1 }}</span>{% endif %}
+          {% if L.descartada %}<span class="desc">{{ L.descartada }} descartada{{ 's' if L.descartada != 1 }}</span>{% endif %}
+          <span>{{ L.temas|length }} tema{{ 's' if L.temas|length != 1 }} · {{ L.areas }} área{{ 's' if L.areas != 1 }}</span>
         </div>
-      </article>
+      </div>
+      {% for tema, tops in L.temas.items() %}
+        <div class="sel-tema"><span>Tema</span> {{ tema }} <small>{{ tops|length }} tópico{{ 's' if tops|length != 1 }}</small></div>
+        {% for t in tops %}
+        <article class="sel-top {{ t.tipo }} {{ t.status }}" id="t{{ t.id }}">
+          <div class="sel-l1">
+            {% if t.status == 'pendente' %}<input type="checkbox" name="ids" value="{{ t.id }}" class="sel-chk" aria-label="Selecionar {{ t.topico }}">{% endif %}
+            <span class="sel-tipo {{ t.tipo }}">{{ sel_tipos[t.tipo] or 'Outros assuntos' }}</span>
+            {% if t.area %}<span class="area-chip">{{ t.area }}</span>{% endif %}
+            <b>{{ t.topico }}</b>
+            {% if t.status == 'pendente' %}<span class="sel-st pend">pendente de abertura</span>
+            {% elif t.status_sol %}<span class="sol-st {{ t.status_sol }}">{{ status|selectattr(0, 'equalto', t.status_sol)|map(attribute=1)|first }}</span>{% endif %}
+          </div>
+          {% if t.resumo %}<p class="sel-res">{{ t.resumo }}</p>{% endif %}
+          {% if t.acao_sugerida %}<p class="sel-acao">{% if t.instrumento %}<span class="sel-inst">{{ t.instrumento }}</span> {% endif %}{{ t.acao_sugerida }}</p>{% endif %}
+          {% if t.noticias_l %}<details class="sel-nots"><summary>{{ t.noticias_l|length }} notícia{{ 's' if t.noticias_l|length != 1 }}</summary>
+            <ul>{% for n in t.noticias_l %}<li><a href="{{ n.link }}" target="_blank" rel="noopener noreferrer">{{ n.titulo }}</a> <small>{{ n.fonte or '' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</small></li>{% endfor %}</ul></details>{% endif %}
+          <div class="sel-rodape">
+          {% if t.status == 'pendente' %}
+            <label class="sel-resp-esc">Responsável
+              <select name="resp_{{ t.id }}">
+                <option value="{{ sel_sortear }}">Sortear ({{ 'equipe de comissão' if t.tipo == 'comissao' else 'outros assuntos' }})</option>
+                <option value="">Sem responsável</option>
+                {% for u in usuarios_resp %}<option value="{{ u.login }}">{{ u.nome or u.login }}</option>{% endfor %}
+              </select></label>
+            <button class="btn mini-btn" name="um" value="{{ t.id }}">Abrir solicitação</button>
+            <button class="sel-desc-btn" name="descartar_um" value="{{ t.id }}" formnovalidate>Descartar</button>
+          {% else %}
+            {% if t.responsavel %}<span class="sel-resp">{{ avatar(t.responsavel, 26) }} {{ (usuarios_resp|selectattr('login', 'equalto', t.responsavel)|map(attribute='nome')|first) or t.responsavel }}</span>
+            {% else %}<span class="sel-resp" style="color:var(--suave)">sem responsável</span>{% endif %}
+            {% if t.decidido_por %}<span class="sol-criada">aberta por {{ (usuarios_resp|selectattr('login', 'equalto', t.decidido_por)|map(attribute='nome')|first) or t.decidido_por }}{% if t.decidido_em %} em {{ t.decidido_em|data_hora }}{% endif %}</span>{% endif %}
+            {% if t.solicitacao_id %}<a class="rn-sol" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes', abrir=t.solicitacao_id) }}#s{{ t.solicitacao_id }}">ver solicitação {{ ic("seta") }}</a>{% endif %}
+          {% endif %}
+          </div>
+        </article>
+        {% endfor %}
       {% endfor %}
-    {% endfor %}
-    {% else %}<div class="vazio-msg">Clique em “Gerar nova seleção” para a IA escolher os tópicos das notícias dos últimos dias.</div>{% endif %}
+      {% if L.descartados %}<details class="sel-descartados"><summary>{{ L.descartados|length }} descartado{{ 's' if L.descartados|length != 1 }} neste lote</summary>
+        {% for t in L.descartados %}<div class="sel-desc-it" id="t{{ t.id }}"><span>{{ t.topico }} <small>· {{ t.tema }}{% if t.decidido_por %} · descartado por {{ (usuarios_resp|selectattr('login', 'equalto', t.decidido_por)|map(attribute='nome')|first) or t.decidido_por }}{% endif %}</small></span>
+          <button class="sel-desc-btn" name="restaurar_um" value="{{ t.id }}">voltar para pendentes</button></div>{% endfor %}
+      </details>{% endif %}
+      {% if L.pendente %}
+      <div class="sel-barra" hidden>
+        <span><b data-n>0</b> selecionado(s)</span>
+        <button class="btn" name="modo" value="abrir">Abrir solicitações selecionadas</button>
+        <button class="btn sec" name="modo" value="descartar">Descartar selecionados</button>
+      </div>
+      {% endif %}
+    </form>
+    {% else %}<div class="vazio-msg">Nenhuma seleção ainda. Clique em “Gerar nova seleção” para a IA escolher os tópicos das notícias das últimas {{ sel_horas }} horas.</div>{% endfor %}
+    <script>
+    document.querySelectorAll('.sel-lote').forEach(function (f) {
+      var barra = f.querySelector('.sel-barra'), todos = f.querySelector('[data-todos]');
+      function at() {
+        var chk = f.querySelectorAll('.sel-chk'), n = f.querySelectorAll('.sel-chk:checked').length;
+        if (barra) { barra.hidden = n === 0; barra.querySelector('[data-n]').textContent = n; }
+        if (todos) { todos.checked = n > 0 && n === chk.length; todos.indeterminate = n > 0 && n < chk.length; }
+        f.querySelectorAll('.sel-top').forEach(function (a) { var c = a.querySelector('.sel-chk'); a.classList.toggle('marcado', !!(c && c.checked)); });
+      }
+      f.addEventListener('change', function (e) {
+        if (e.target === todos) f.querySelectorAll('.sel-chk').forEach(function (c) { c.checked = todos.checked; });
+        at();
+      });
+      at();
+    });
+    </script>
     {% else %}
     <form method="get" class="rn-busca" action="{{ url_for('meu.painel', cod=cod) }}">
       <input type="hidden" name="secao" value="radar">
@@ -614,7 +669,7 @@
   <div class="lado-pilha">
   {% if filtro == 'selecao' %}
   <div class="card neu lado">
-    <h2>Distribuição da Seleção da IA <small>sorteio equilibrado</small></h2>
+    <h2>Distribuição da Seleção da IA <small>sorteio equilibrado ao abrir</small></h2>
     {% if sel_faltam %}<div class="aviso" style="margin:10px 14px 0;background:#fff7e6;color:#7a5a12">Não encontrei usuário para: {{ sel_faltam|join(', ') }}. Marque abaixo quem é quem e salve.</div>{% endif %}
     <form method="post" class="meu-form sel-eq" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_equipes">
@@ -625,7 +680,7 @@
         {% endfor %}
       </fieldset>
       {% endfor %}
-      <small style="color:var(--suave)">Aparecem os servidores da Oposição (e quem já estiver marcado). A equipe vem de Usuários.</small>
+      <small style="color:var(--suave)">Quando um tópico é aberto com “Sortear”, o responsável sai desta lista, conforme o tipo. Aparecem os servidores da Oposição (e quem já estiver marcado). A equipe vem de Usuários.</small>
       <button class="btn">Salvar equipes</button>
     </form>
   </div>
