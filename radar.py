@@ -376,38 +376,105 @@ def analisar(codigo, limite=MAX_ANALISES, sessao=None, ids=None):
                                            .limit(limite)).mappings()]
     if not p:
         return 0
-    quem = f"{p['nome']} ({p.get('partido') or 'sem partido'}-{p.get('uf') or ''})"
     n = 0
     for it in pend:
-        msg = (f"Parlamentar acompanhado(a): {CARGO} {quem}\n"
-               f"Termo que trouxe a notícia: {it['termo']}\n"
-               f"Fonte: {it.get('fonte') or ('Google Notícias' if it.get('origem') == 'google' else '—')}"
-               f"{' (incluída manualmente pela equipe)' if it.get('origem') == 'manual' else ''}\n"
-               f"Título: {it['titulo']}\n"
-               f"Resumo: {it.get('resumo') or 'Sem resumo'}\n\n"
-               f"Responda APENAS com JSON puro conforme o formato solicitado.")
         try:
-            texto = questoes.chamar_ia(msg, sessao, sistema=SISTEMA, modelo_=modelo(), max_tokens=700, timeout=60)
+            valores = _analisar_um(it, p, sessao)
         except Exception as e:
             log.warning("radar: IA indisponível (%s) — o restante fica para o próximo ciclo", e)
             break
-        try:
-            r = extrair_json(texto)
-            alts = normalizar_alternativas(r.get("alternativas"))
-            if not alts and r.get("acao_sugerida"):          # resposta no formato antigo
-                alts = normalizar_alternativas([{"tipo_acao": r.get("tipo_acao"), "acao": r.get("acao_sugerida")}])
-            relevante = bool(r.get("relevante"))
-            valores = {"relevante": relevante, "categoria": _txt(r.get("categoria"), 80),
-                       "tipo_acao": alts[0]["instrumento"] if relevante and alts else None,
-                       "acao_sugerida": alts[0]["acao"] if relevante and alts else None,
-                       "alternativas": json.dumps(alts, ensure_ascii=False) if relevante and alts else None,
-                       "justificativa": _txt(r.get("justificativa"), 2000)}
-        except (ValueError, AttributeError):
-            valores = {"relevante": None, "justificativa": "A resposta da IA não pôde ser lida."}
         with engine.begin() as c:
             c.execute(update(noticias).where(noticias.c.id == it["id"]).values(analisado_em=datetime.now(), **valores))
         n += 1
     return n
+
+
+def _analisar_um(it, p, sessao=None):
+    """Chama a IA para uma notícia e devolve os campos da análise (levanta exceção se a IA estiver fora)."""
+    import questoes
+    quem = f"{p['nome']} ({p.get('partido') or 'sem partido'}-{p.get('uf') or ''})"
+    msg = (f"Parlamentar acompanhado(a): {CARGO} {quem}\n"
+           f"Termo que trouxe a notícia: {it['termo']}\n"
+           f"Fonte: {it.get('fonte') or ('Google Notícias' if it.get('origem') == 'google' else '—')}"
+           f"{' (incluída manualmente pela equipe)' if it.get('origem') == 'manual' else ''}\n"
+           f"Título: {it['titulo']}\n"
+           f"Resumo: {it.get('resumo') or 'Sem resumo'}\n\n"
+           f"Responda APENAS com JSON puro conforme o formato solicitado.")
+    texto = questoes.chamar_ia(msg, sessao, sistema=SISTEMA, modelo_=modelo(), max_tokens=700, timeout=60)
+    try:
+        r = extrair_json(texto)
+        alts = normalizar_alternativas(r.get("alternativas"))
+        if not alts and r.get("acao_sugerida"):          # resposta no formato antigo
+            alts = normalizar_alternativas([{"tipo_acao": r.get("tipo_acao"), "acao": r.get("acao_sugerida")}])
+        relevante = bool(r.get("relevante"))
+        valores = {"relevante": relevante, "categoria": _txt(r.get("categoria"), 80),
+                   "tipo_acao": alts[0]["instrumento"] if relevante and alts else None,
+                   "acao_sugerida": alts[0]["acao"] if relevante and alts else None,
+                   "alternativas": json.dumps(alts, ensure_ascii=False) if relevante and alts else None,
+                   "justificativa": _txt(r.get("justificativa"), 2000)}
+    except (ValueError, AttributeError):
+        valores = {"relevante": None, "justificativa": "A resposta da IA não pôde ser lida."}
+    return valores
+
+
+CHAVE_REANALISE = "radar:reanalise_alternativas"
+_reanalise_lock = threading.Lock()
+
+
+def reanalisar_alternativas(dias=7, limite=400, sessao=None):
+    """Uma vez (após a mudança para alternativas): as notícias relevantes dos últimos `dias` que ainda têm só a
+    sugestão antiga passam de novo pela IA e ganham 2 a 3 alternativas na linha da oposição. Só troca as
+    sugestões (tipo, ação, alternativas, justificativa) — status, responsável e solicitação ficam como estão; se
+    agora a IA achar que não cabe ação, a sugestão antiga é mantida. Devolve quantas foram atualizadas.
+    Se a IA cair no meio, o que faltou fica para a próxima chamada."""
+    import questoes
+    if not questoes.configurado() or not _reanalise_lock.acquire(blocking=False):
+        return 0
+    try:
+        with engine.connect() as c:
+            if c.execute(select(meta.c.valor).where(meta.c.chave == CHAVE_REANALISE)).first():
+                return 0
+            pend = [dict(r) for r in c.execute(select(noticias).where(
+                noticias.c.relevante.is_(True), noticias.c.alternativas.is_(None),
+                noticias.c.publicado >= datetime.now() - timedelta(days=dias))
+                .order_by(noticias.c.publicado.desc()).limit(limite)).mappings()]
+            parl = {r["codigo"]: dict(r) for r in c.execute(select(parlamentares)).mappings()}
+        n, completo = 0, True
+        for it in pend:
+            p = parl.get(it[COL])
+            if not p:
+                continue
+            try:
+                v = _analisar_um(it, p, sessao)
+            except Exception as e:
+                log.warning("reanálise do radar interrompida (%s); continua depois", e)
+                completo = False
+                break
+            if v.get("relevante") and v.get("alternativas"):
+                with engine.begin() as c:
+                    c.execute(update(noticias).where(noticias.c.id == it["id"]).values(
+                        tipo_acao=v["tipo_acao"], acao_sugerida=v["acao_sugerida"], alternativas=v["alternativas"],
+                        categoria=v.get("categoria") or it.get("categoria"),
+                        justificativa=v.get("justificativa") or it.get("justificativa")))
+                n += 1
+        if completo:
+            with engine.begin() as c:
+                c.execute(insert(meta).values(chave=CHAVE_REANALISE, valor=datetime.now().isoformat(timespec="seconds")))
+        log.info("reanálise do radar: %d de %d notícia(s) ganharam alternativas", n, len(pend))
+        return n
+    finally:
+        _reanalise_lock.release()
+
+
+def reanalisar_em_segundo_plano():
+    threading.Thread(target=lambda: _seguro(reanalisar_alternativas), daemon=True).start()
+
+
+def _seguro(fn):
+    try:
+        fn()
+    except Exception:
+        log.exception("reanálise do radar")
 
 
 # ---------------- acompanhamento pela equipe ----------------
@@ -630,6 +697,10 @@ def _ciclo(codigos, buscar, sessao):
             except Exception:
                 log.exception("radar do parlamentar %s", cod)
     if codigos is None:
+        try:
+            reanalisar_alternativas(sessao=sessao)       # só faz algo até concluir uma vez
+        except Exception:
+            log.exception("reanálise do radar")
         with engine.begin() as c:
             c.execute(delete(meta).where(meta.c.chave == "radar:ultimo_ciclo"))
             c.execute(insert(meta).values(chave="radar:ultimo_ciclo", valor=datetime.now().isoformat(timespec="seconds")))

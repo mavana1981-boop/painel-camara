@@ -2293,3 +2293,56 @@ def test_ia_sugere_alternativas_curtas_com_vies_de_oposicao():
     desc = _q("SELECT s.descricao FROM solicitacoes s JOIN selecao_ia t ON t.solicitacao_id = s.id WHERE t.id = :t", t=tid)[0][0]
     assert "Caminho escolhido (Requerimento de convocação de ministro): Convocar o ministro" in desc
     assert "Outras alternativas sugeridas pela IA:\n1. Requerimento de Informação (RIC): RIC à Casa Civil" in desc
+
+
+def test_reanalise_das_relevantes_recentes_ganha_alternativas():
+    import questoes
+    import radar
+    from datetime import datetime, timedelta
+    from db import noticias
+    from sqlalchemy import insert as ins
+    agora = datetime.now()
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM meta WHERE chave = :k"), {"k": radar.CHAVE_REANALISE})
+        c.execute(text("UPDATE noticias SET alternativas = '[]' WHERE alternativas IS NULL"))   # isola o teste
+        def nova(tit, dias, rel=True, sid=None):
+            return c.execute(ins(noticias).values(codigo_deputado=101, termo="Ana Oposição", titulo=tit, link=f"https://re/{tit}",
+                                                  origem="google", publicado=agora - timedelta(days=dias), relevante=rel,
+                                                  tipo_acao="Ofício", acao_sugerida="Sugestão antiga e longa", status="Em análise",
+                                                  assessor="Fulano", solicitacao_id=sid)).inserted_primary_key[0]
+        recente = nova("Recente relevante", 1, sid=4242)
+        vira_nao = nova("IA agora acha que não", 2)
+        antiga = nova("Antiga", 20)
+        irrelevante = nova("Irrelevante", 1, rel=False)
+    respostas = {"Recente relevante": {"relevante": True, "categoria": "Saúde pública", "justificativa": "Falha do governo.",
+                                       "alternativas": [{"tipo_acao": "Requerimento de convocação", "acao": "Convocar o ministro da Saúde"},
+                                                        {"tipo_acao": "Nota à imprensa", "acao": "Nota denunciando o descaso"}]},
+                 "IA agora acha que não": {"relevante": False, "alternativas": [], "justificativa": "x"}}
+    chamadas = []
+    orig_cfg, orig_ia = questoes.configurado, questoes.chamar_ia
+    questoes.configurado = lambda: True
+    def ia(msg, *a, **k):
+        tit = re.search(r"Título: (.+)", msg).group(1)
+        chamadas.append(tit)
+        return json.dumps(respostas[tit])
+    questoes.chamar_ia = ia
+    try:
+        assert radar.reanalisar_alternativas() == 1
+        assert radar.reanalisar_alternativas() == 0                       # roda uma vez só
+    finally:
+        questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
+    assert sorted(chamadas) == ["IA agora acha que não", "Recente relevante"]  # antigas e irrelevantes ficam de fora
+    r = _q("SELECT tipo_acao, acao_sugerida, status, assessor, solicitacao_id, relevante FROM noticias WHERE id = :i", i=recente)[0]
+    assert r[:2] == ("Requerimento de convocação", "Convocar o ministro da Saúde") and r[2:5] == ("Em análise", "Fulano", 4242)
+    assert json.loads(_q("SELECT alternativas FROM noticias WHERE id = :i", i=recente)[0][0])[1]["instrumento"] == "Nota à imprensa"
+    assert _q("SELECT acao_sugerida, relevante FROM noticias WHERE id = :i", i=vira_nao)[0] == ("Sugestão antiga e longa", True)
+    # IA fora do ar no meio: não marca como concluída
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM meta WHERE chave = :k"), {"k": radar.CHAVE_REANALISE})
+    questoes.configurado = lambda: True
+    questoes.chamar_ia = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("timeout"))
+    try:
+        radar.reanalisar_alternativas()
+    finally:
+        questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
+    assert not _q("SELECT valor FROM meta WHERE chave = :k", k=radar.CHAVE_REANALISE)
