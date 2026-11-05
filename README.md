@@ -172,6 +172,12 @@ fatos da notícia, sem inventar números ou acusações. Para cada notícia rele
 botão **usar** leva a alternativa para "O que fazer"; na Seleção da IA, escolhe-se o caminho ao abrir; a solicitação
 registra o caminho escolhido e as demais alternativas. Análises antigas aparecem como uma alternativa só.
 
+## Aviso no app Minha Pauta
+`GET /api/tarefas?login=<login>` devolve as solicitações em aberto do analista (título, deputado, prazo, link), para o
+aviso no Minha Pauta. Protegido pela chave compartilhada `TAREFAS_TOKEN` (cabeçalho `X-Painel-Token`); sem a variável,
+o serviço fica desligado. No Minha Pauta, configure `PAINEL_URL` (endereço deste painel) e `PAINEL_TOKEN` (o mesmo
+valor).
+
 ## Pré-lista (Radar) — aprovação da chefia pelo WhatsApp
 Em qualquer filtro do radar, cada notícia sem solicitação tem **＋ Abrir solicitação** (responsável sorteado pelos
 critérios) e **📋 Enviar à pré-lista**; os tópicos da Seleção da IA também podem ir para a pré-lista (um a um ou os

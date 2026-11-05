@@ -1217,6 +1217,32 @@ def _post(cod, secao, s, autor, pleno=True):
     return redirect(destino)
 
 
+def tarefas_api():
+    """GET /api/tarefas?login=fulano — solicitações em aberto do analista, para o aviso no app Minha Pauta.
+
+    Protegido pela chave compartilhada TAREFAS_TOKEN (cabeçalho X-Painel-Token); sem a variável, o serviço fica
+    desligado. Devolve só o necessário para o aviso (título, deputado, prazo e link)."""
+    import hmac
+    import os
+    from flask import jsonify
+    token = os.environ.get("TAREFAS_TOKEN", "")
+    enviado = request.headers.get("X-Painel-Token", "")
+    if not token or not hmac.compare_digest(enviado, token):
+        abort(403)
+    login = (request.args.get("login") or "").strip().lower()[:60]
+    base = request.url_root.rstrip("/")
+    if os.environ.get("RAILWAY_ENVIRONMENT") and base.startswith("http://"):
+        base = "https://" + base[7:]
+    itens = tarefas_do_usuario(login, limite=30) if login else []
+    return jsonify({
+        "login": login, "total": len(itens), "novas": sum(1 for t in itens if t["nova"]),
+        "atrasadas": sum(1 for t in itens if t["atrasada"]), "url": base + "/orientacoes",
+        "itens": [{"titulo": t["titulo"], "deputado": t["deputado"], "nova": t["nova"], "atrasada": t["atrasada"],
+                   "prazo": t["prazo"], "status": t["status"],
+                   "url": f"{base}/meu/{t['codigo_deputado']}?secao=solicitacoes&abrir={t['id']}#s{t['id']}"}
+                  for t in itens[:10]]})
+
+
 @bp.route("/<int:cod>/prelista/<int:eid>.png")
 def prelista_imagem(cod, eid):
     import prelista as pl

@@ -2380,3 +2380,28 @@ def test_prelista_acompanha_as_sugestoes_atuais():
                   {"a": json.dumps([{"instrumento": "PEC", "acao": "Outra"}]), "i": nid})
     pl.sincronizar()
     assert json.loads(_q("SELECT alternativas FROM prelista WHERE id = :i", i=it["id"])[0][0]) == novas
+
+
+def test_api_de_tarefas_para_o_minha_pauta():
+    from datetime import datetime
+    from db import solicitacoes
+    from sqlalchemy import insert as ins
+    anon = _anonimo()
+    assert anon.get("/api/tarefas?login=admin").status_code == 403                  # sem TAREFAS_TOKEN: desligado
+    os.environ["TAREFAS_TOKEN"] = "chave-secreta-123"
+    try:
+        assert anon.get("/api/tarefas?login=admin").status_code == 403
+        assert anon.get("/api/tarefas?login=admin", headers={"X-Painel-Token": "errada"}).status_code == 403
+        with engine.begin() as c:
+            sid = c.execute(ins(solicitacoes).values(codigo_deputado=101, titulo="RIC sobre o apagão", status="aberta",
+                                                     responsavel="tarefa.mp", prazo="2026-11-10", atribuido_em=datetime.now(),
+                                                     criado_em=datetime.now())).inserted_primary_key[0]
+            c.execute(ins(solicitacoes).values(codigo_deputado=101, titulo="Concluída", status="concluida", responsavel="tarefa.mp"))
+        r = anon.get("/api/tarefas?login=Tarefa.MP", headers={"X-Painel-Token": "chave-secreta-123"})
+        d = r.get_json()
+        assert r.status_code == 200 and d["total"] == 1 and d["novas"] == 1 and d["url"].endswith("/orientacoes")
+        assert d["itens"][0]["titulo"] == "RIC sobre o apagão" and d["itens"][0]["url"].endswith(f"abrir={sid}#s{sid}")
+        assert "descricao" not in d["itens"][0]
+        assert anon.get("/api/tarefas?login=ninguem", headers={"X-Painel-Token": "chave-secreta-123"}).get_json()["total"] == 0
+    finally:
+        os.environ.pop("TAREFAS_TOKEN", None)

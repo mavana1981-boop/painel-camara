@@ -57,6 +57,7 @@ auth.configurar(app)
 import meu  # noqa: E402
 import fotos  # noqa: E402
 app.register_blueprint(meu.bp)
+app.add_url_rule("/api/tarefas", "api_tarefas", meu.tarefas_api)          # aviso no Minha Pauta (chave TAREFAS_TOKEN)
 import prelista  # noqa: E402
 app.register_blueprint(prelista.bp)
 app.register_blueprint(fotos.bp)
