@@ -181,8 +181,19 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         except ValueError:
             msg = r.text[:300]
         raise RuntimeError(f"A API da Anthropic respondeu {r.status_code}: {msg}")
-    dados = r.json()
-    return "".join(b.get("text", "") for b in dados.get("content", []) if b.get("type") == "text").strip()
+    try:
+        dados = r.json()
+    except ValueError:
+        raise RuntimeError(f"A API da Anthropic devolveu uma resposta que não é JSON: {r.text[:200]!r}")
+    ULTIMA.stop_reason = dados.get("stop_reason")
+    texto = "".join(b.get("text", "") for b in dados.get("content", []) if b.get("type") == "text").strip()
+    if not texto:
+        tipos = ", ".join(sorted({str(b.get("type")) for b in dados.get("content", [])})) or "nenhum"
+        raise RuntimeError(f"a IA respondeu sem texto (motivo de parada: {dados.get('stop_reason')}; blocos: {tipos})")
+    return texto
+
+
+ULTIMA = threading.local()      # stop_reason da última chamada desta thread (diagnóstico)
 
 
 def criar_pedido(codigo_deputado, autor, situacao):

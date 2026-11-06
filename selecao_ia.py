@@ -34,6 +34,7 @@ HORAS = int(os.environ.get("SELECAO_HORAS", "72"))           # janela de notíci
 DIAS = 7                                                      # tópicos recentes que a IA não deve repetir
 MAX_LOTES = 15                                                # lotes mostrados na tela
 MIN_TOPICOS = 2
+MAX_TOKENS = int(os.environ.get("SELECAO_MAX_TOKENS", "16000"))  # resposta da IA (JSON longo)
 MAX_POR_TEMA = 40                                             # notícias por tema enviadas à IA
 PRAZO_DIAS = int(os.environ.get("SELECAO_PRAZO_DIAS", "3"))   # prazo das solicitações criadas
 TIPOS = {"comissao": "Comissão", "outros": "Outros assuntos"}
@@ -380,20 +381,36 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     temas = _verificar(cod)
     msg = montar_mensagem(s.get("nome") or str(cod), temas, _abertos(cod))
     dados, erro = None, None
+    aviso = ""
     for tentativa in range(2):                      # uma nova tentativa se a resposta vier quebrada ou genérica
+        texto = ""
         try:
-            texto = questoes.chamar_ia(msg if not tentativa else msg + "\n\nATENÇÃO: a resposta anterior veio inválida "
-                                       "ou com providências genéricas. Siga o formato e as regras à risca.", sessao,
-                                       sistema=SISTEMA, modelo_=os.environ.get("SELECAO_MODEL") or MODELO_PADRAO,
-                                       max_tokens=6000, timeout=150)
+            questoes.ULTIMA.stop_reason = None
+            texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA,
+                                       modelo_=os.environ.get("SELECAO_MODEL") or MODELO_PADRAO,
+                                       max_tokens=MAX_TOKENS, timeout=240)
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
                 dados = d
                 break
             erro = "a resposta não trouxe tópicos com providências concretas"
+            aviso = ("\n\nATENÇÃO: a resposta anterior veio com providências genéricas ou sem tópicos válidos. "
+                     "Siga o formato e as regras à risca.")
         except Exception as e:
-            erro = str(e)
-            log.warning("seleção da IA: %s", e)
+            parada = getattr(questoes.ULTIMA, "stop_reason", None)
+            if parada == "max_tokens":
+                erro = "a resposta da IA foi cortada por ser longa demais"
+                aviso = ("\n\nATENÇÃO: a resposta anterior ficou longa demais e foi cortada. Seja CONCISO: no máximo "
+                         "2 tópicos por tema, resumo de UMA frase e 2 alternativas por tópico.")
+            elif texto:
+                inicio = re.sub(r"\s+", " ", texto)[:120]
+                erro = f"a IA não respondeu em JSON — começou com: {inicio!r}"
+                aviso = ("\n\nATENÇÃO: a resposta anterior não veio em JSON. Responda SOMENTE com o objeto JSON, "
+                         "começando por { e terminando por }, sem nenhum texto antes ou depois.")
+            else:
+                erro = str(e)
+            log.warning("seleção da IA (tentativa %d, parada=%s): %s | início da resposta: %r",
+                        tentativa + 1, parada, e, (texto or "")[:500])
     if not dados:
         raise ValueError(f"A IA não devolveu uma seleção utilizável ({erro}). Tente de novo em alguns minutos.")
     validos = {n["id"]: (tema, n) for tema, itens in temas.items() for n in itens}
