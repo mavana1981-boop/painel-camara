@@ -2498,3 +2498,22 @@ def test_chamar_ia_sem_texto_diz_o_motivo(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     with pytest.raises(RuntimeError, match="sem texto .*max_tokens.*thinking"):
         questoes.chamar_ia("oi", S())
+
+
+def test_prelista_aceita_noticia_pelo_link():
+    import prelista as pl
+    adm = _cliente()
+    tok = _tok(adm, "/meu/106?secao=radar&filtro=prelista")
+    html = adm.get("/meu/106?secao=radar&filtro=prelista").get_data(as_text=True)
+    assert "Adicionar notícia pelo link" in html and 'value="prelista_link"' in html
+    dados = {"_csrf": tok, "acao": "prelista_link", "link": "https://jornal.exemplo/noticia-106",
+             "titulo": "Governo corta verba da saúde", "fonte": "Jornal Exemplo", "publicado": "2026-11-06"}
+    r = adm.post("/meu/106?secao=radar&filtro=prelista", data=dados)
+    assert r.status_code == 302 and "filtro=prelista" in r.headers["Location"]
+    assert pl.contagem(106) == 1
+    assert _q("SELECT titulo FROM prelista WHERE codigo_deputado = 106")[0][0] == "Governo corta verba da saúde"
+    adm.post("/meu/106?secao=radar&filtro=prelista", data=dados)                    # repetida: não duplica
+    assert pl.contagem(106) == 1
+    r = adm.post("/meu/106?secao=radar&filtro=prelista", data={**dados, "link": "sem-link"})
+    assert pl.contagem(106) == 1
+    assert "link completo" in adm.get("/meu/106?secao=radar&filtro=prelista").get_data(as_text=True)

@@ -1151,6 +1151,19 @@ def _post(cod, secao, s, autor, pleno=True):
             flash("Notícia enviada à pré-lista." if novo else "Essa notícia já está na pré-lista.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="radar", filtro=f.get("filtro") or None,
                               termo=f.get("termo") or None, q=f.get("q") or None) + f"#n{f.get('id', '')}"
+        elif secao == "radar" and acao == "prelista_link":
+            import prelista as pl
+            import radar as rd
+            nid, nova = rd.incluir_manual(cod, f, autor)
+            if nova:
+                try:                                   # análise curta da IA antes, para o item já levar as providências
+                    rd.analisar(cod, limite=1, ids=[nid])
+                except Exception:
+                    log.exception("pré-lista: análise da notícia incluída pelo link")
+            _, novo = pl.adicionar_noticia(cod, nid, autor)
+            flash(("Notícia adicionada à pré-lista." if novo else "Essa notícia já está na pré-lista.")
+                  + ("" if nova else " (Ela já estava no radar.)"), "ok")
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="prelista")
         elif secao == "radar" and acao == "prelista_remover":
             import prelista as pl
             pl.remover(cod, f.get("item", type=int))

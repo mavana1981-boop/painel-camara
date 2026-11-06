@@ -608,6 +608,24 @@
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_enviar">
         <button class="btn pre">Gerar imagem e link para o WhatsApp</button></form>{% endif %}
     </div>
+    <details class="pre-link-add" {{ 'open' if not pre_itens and not A }} style="margin:12px 16px 0">
+      <summary><b>🔗 Adicionar notícia pelo link</b></summary>
+      <form method="post" class="meu-form" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='prelista') }}"
+            onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Lendo a notícia…'">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="prelista_link">
+        <label>Link da notícia<input name="link" type="url" maxlength="1000" required placeholder="https://…"></label>
+        <label>Tema <span class="rn-opc">(opcional)</span><input name="termo" maxlength="120" list="pre-temas" placeholder="Ex.: segurança pública"></label>
+        <datalist id="pre-temas">{% for t in radar.temas %}<option value="{{ t }}">{% endfor %}</datalist>
+        <details class="rn-man-mais"><summary>Título, veículo e data (se a página não informar)</summary>
+          <label>Título<input name="titulo" maxlength="500"></label>
+          <label>Veículo<input name="fonte" maxlength="200" placeholder="Ex.: Correio Braziliense"></label>
+          <label>Data<input name="publicado" type="date"></label>
+          <label>Resumo<textarea name="resumo" rows="2" maxlength="2000"></textarea></label>
+        </details>
+        <small style="color:var(--suave)">O painel lê título, resumo, veículo e data da página, a IA sugere as providências e a notícia entra direto na pré-lista (e também fica no radar).</small>
+        <button class="btn pre">＋ Adicionar à pré-lista</button>
+      </form>
+    </details>
     {% if A %}
     <section class="pre-envio aberta {{ 'novo' if pre_novo == A.id }}" id="envio{{ A.id }}">
       <div class="pre-env-cab">
