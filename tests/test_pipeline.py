@@ -2413,3 +2413,45 @@ def test_api_de_tarefas_para_o_minha_pauta():
         assert d["login"] == "tarefa.mp" and d["total"] == 1 and d["usuario_encontrado"] is True
     finally:
         os.environ.pop("TAREFAS_TOKEN", None)
+
+
+def test_selecao_gerar_roda_em_segundo_plano_quando_a_ia_demora():
+    """O botão não prende a requisição (o gunicorn mata em 120 s): responde 'em andamento' e grava o lote depois."""
+    import threading
+    import questoes
+    import selecao_ia as si
+    from db import engine as eng, noticias
+    from sqlalchemy import insert as ins
+    from datetime import datetime as dt
+    with eng.begin() as c:
+        nid = c.execute(ins(noticias).values(codigo_deputado=104, termo="saúde", titulo="Fila do SUS cresce",
+                                             fonte="G1", publicado=dt.now(), link="https://x/fila-sus-104")).inserted_primary_key[0]
+    libera = threading.Event()
+    resposta = {"temas": [{"tema": "saúde", "topicos": [
+        {"topico": "Crescimento da fila do SUS", "area": "Saúde",
+         "alternativas": [{"instrumento": "RIC", "acao": "RIC ao Ministério da Saúde cobrando o tamanho da fila por estado"},
+                          {"instrumento": "Nota à imprensa", "acao": "Nota do Líder denunciando a fila recorde do SUS"}],
+         "tipo": "outros", "noticias": [nid]},
+        {"topico": "Falta de médicos nos postos", "area": "Saúde",
+         "alternativas": [{"instrumento": "Indicação ao Executivo", "acao": "Indicação ao Ministério da Saúde para reforçar o Mais Médicos nas capitais"}],
+         "tipo": "outros", "noticias": [nid]}]}]}
+
+    def lenta(*a, **k):
+        libera.wait(10)
+        return json.dumps(resposta)
+    orig_cfg, orig_ia, orig_esp = questoes.configurado, questoes.chamar_ia, si.ESPERA_BOTAO
+    questoes.configurado, questoes.chamar_ia = (lambda: True), lenta
+    try:
+        r = si.gerar_em_segundo_plano(104, esperar=0.2)
+        assert r["rodando"]
+        assert si.gerar_em_segundo_plano(104, esperar=0)["rodando"]       # um clique a mais não dispara outra rodada
+        libera.set()
+        for _ in range(100):
+            if not si.estado(104).get("rodando"):
+                break
+            __import__("time").sleep(0.05)
+        e = si.estado(104)
+        assert not e["rodando"] and e["n"] == 2 and not e.get("erro")
+        assert si.ultimo_lote(104)["total"] == 2
+    finally:
+        questoes.configurado, questoes.chamar_ia, si.ESPERA_BOTAO = orig_cfg, orig_ia, orig_esp

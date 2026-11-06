@@ -1024,6 +1024,7 @@ def painel(cod):
             ctx["sel_equipes"], ctx["sel_tipos"] = si.equipes(), si.TIPOS
             ctx["sel_faltam"], ctx["sel_horas"] = si.nao_encontrados(), si.HORAS
             ctx["sel_sortear"] = si.SORTEAR
+            ctx["sel_estado"] = si.estado(cod)
         ctx["usuarios_resp"] = __import__("fotos").usuarios_ativos()
     elif secao == "rankings":
         ctx["ranks"] = rankings(cod)
@@ -1133,10 +1134,17 @@ def _post(cod, secao, s, autor, pleno=True):
                 destino = url_for("meu.painel", cod=cod, secao="radar") + f"#n{nid}"
         elif secao == "radar" and acao == "selecao_gerar":
             import selecao_ia as si
-            r = si.gerar(cod, autor=autor)
-            flash(f"Seleção de {r['gerado_em'].strftime('%d/%m/%Y às %H:%M')} gerada: {len(r['topicos'])} tópico(s) "
-                  "pendentes de abertura. Confirme os que devem virar solicitação.", "ok")
-            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao") + "#lote-" + r["lote"].replace(":", "")
+            r = si.gerar_em_segundo_plano(cod, autor=autor)
+            destino = url_for("meu.painel", cod=cod, secao="radar", filtro="selecao")
+            if r.get("rodando"):
+                flash("A IA está gerando a nova seleção — pode levar 1 a 3 minutos. A página atualiza sozinha "
+                      "quando o lote ficar pronto.", "ok")
+            elif r.get("erro"):
+                raise ValueError(r["erro"])
+            else:
+                flash(f"Seleção de {r['gerado_em'].strftime('%d/%m/%Y às %H:%M')} gerada: {r['n']} tópico(s) "
+                      "pendentes de abertura. Confirme os que devem virar solicitação.", "ok")
+                destino += "#lote-" + r["lote"].replace(":", "")
         elif secao == "radar" and acao == "prelista_add":
             import prelista as pl
             _, novo = pl.adicionar_noticia(cod, f.get("id", type=int), autor)
