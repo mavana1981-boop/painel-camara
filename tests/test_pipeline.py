@@ -2455,3 +2455,46 @@ def test_selecao_gerar_roda_em_segundo_plano_quando_a_ia_demora():
         assert si.ultimo_lote(104)["total"] == 2
     finally:
         questoes.configurado, questoes.chamar_ia, si.ESPERA_BOTAO = orig_cfg, orig_ia, orig_esp
+
+
+def test_selecao_mostra_o_motivo_quando_a_ia_nao_responde_em_json():
+    import questoes
+    import selecao_ia as si
+    from db import engine as eng, noticias
+    from sqlalchemy import insert as ins
+    from datetime import datetime as dt
+    with eng.begin() as c:
+        c.execute(ins(noticias).values(codigo_deputado=105, termo="economia", titulo="Inflação sobe",
+                                       fonte="G1", publicado=dt.now(), link="https://x/inflacao-105"))
+    pedidos = []
+
+    def prosa(msg, *a, **k):
+        pedidos.append(msg)
+        questoes.ULTIMA.stop_reason = "end_turn"
+        return "Desculpe, não consigo selecionar tópicos com essas notícias."
+    orig_cfg, orig_ia = questoes.configurado, questoes.chamar_ia
+    questoes.configurado, questoes.chamar_ia = (lambda: True), prosa
+    try:
+        with pytest.raises(ValueError, match="não respondeu em JSON — começou com: 'Desculpe"):
+            si.gerar(105)
+        assert len(pedidos) == 2 and "SOMENTE com o objeto JSON" in pedidos[1]
+    finally:
+        questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
+
+
+def test_chamar_ia_sem_texto_diz_o_motivo(monkeypatch):
+    import questoes
+
+    class R:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"content": [{"type": "thinking", "thinking": "..."}], "stop_reason": "max_tokens"}
+
+    class S:
+        def post(self, *a, **k):
+            return R()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    with pytest.raises(RuntimeError, match="sem texto .*max_tokens.*thinking"):
+        questoes.chamar_ia("oi", S())
