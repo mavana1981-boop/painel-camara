@@ -21,6 +21,7 @@ import logging
 import os
 import random
 import re
+import threading
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, func, insert, or_, select, update
@@ -310,6 +311,62 @@ def _topicos_validos(d, temas):
     return sum(1 for t in d.get("temas") or [] for p in (t.get("topicos") or []) if _topico_ok(p)) >= min(2, 2 * len(temas))
 
 
+def _verificar(cod):
+    """Confere, antes de chamar a IA, se há o que gerar. Devolve as notícias por tema."""
+    import questoes
+    temas = _noticias_por_tema(cod, HORAS)
+    if not temas:
+        raise ValueError(f"Não há notícias das últimas {HORAS} horas para selecionar tópicos.")
+    if not questoes.configurado():
+        raise ValueError("A Seleção da IA precisa da chave da Anthropic: configure ANTHROPIC_API_KEY no Railway.")
+    return temas
+
+
+# ---------------- geração pelo botão (em segundo plano) ----------------
+# A chamada à IA pode levar mais de 2 minutos (até duas tentativas de 150 s). Feita dentro da requisição, o
+# gunicorn (--timeout 120) matava o processo antes de gravar o lote e nada aparecia. Agora o botão dispara a
+# geração numa thread; a página mostra o andamento e o resultado (ou o erro) da última rodada.
+ESPERA_BOTAO = 20                       # segundos que a requisição aguarda antes de responder "em andamento"
+_estado_lock = threading.Lock()
+_estado = {}                            # cod -> {"rodando": bool, "inicio", "fim", "erro", "lote", "n"}
+
+
+def estado(cod):
+    with _estado_lock:
+        return dict(_estado.get(cod) or {})
+
+
+def gerar_em_segundo_plano(cod, autor="Seleção da IA", esperar=ESPERA_BOTAO):
+    """Dispara a geração sem prender a página. Devolve o estado: se terminar em até `esperar` segundos, já vem
+    com o lote (ou o erro); senão, rodando=True. ValueError imediato se não houver notícias ou chave."""
+    import meu
+    _verificar(cod)
+    with _estado_lock:
+        atual = _estado.get(cod) or {}
+        if atual.get("rodando"):
+            return dict(atual)
+        _estado[cod] = {"rodando": True, "inicio": meu.agora_brt()}
+
+    def rodar():
+        fim = {"rodando": False}
+        try:
+            r = gerar(cod, autor=autor)
+            fim.update(lote=r["lote"], n=len(r["topicos"]), gerado_em=r["gerado_em"])
+        except Exception as e:                    # noqa: BLE001 — o erro vai para a tela
+            log.exception("seleção da IA do deputado %s (botão)", cod)
+            fim["erro"] = str(e) if isinstance(e, ValueError) else f"Falha inesperada: {e}"
+        with _estado_lock:
+            fim["inicio"] = (_estado.get(cod) or {}).get("inicio")
+            fim["fim"] = meu.agora_brt()
+            _estado[cod] = fim
+
+    t = threading.Thread(target=rodar, daemon=True)
+    t.start()
+    if esperar:
+        t.join(esperar)
+    return estado(cod)
+
+
 def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     """Gera um lote de tópicos para o deputado, PENDENTES DE ABERTURA (nenhuma solicitação é criada aqui).
     Devolve {lote, gerado_em, topicos}."""
@@ -320,11 +377,7 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     agora = agora or meu.agora_brt()          # lote e datas no horário de Brasília
     marca = datetime.now()
     s = paineis.deputado(cod) or {}
-    temas = _noticias_por_tema(cod, HORAS)
-    if not temas:
-        raise ValueError(f"Não há notícias das últimas {HORAS} horas para selecionar tópicos.")
-    if not questoes.configurado():
-        raise ValueError("A Seleção da IA precisa da chave da Anthropic: configure ANTHROPIC_API_KEY no Railway.")
+    temas = _verificar(cod)
     msg = montar_mensagem(s.get("nome") or str(cod), temas, _abertos(cod))
     dados, erro = None, None
     for tentativa in range(2):                      # uma nova tentativa se a resposta vier quebrada ou genérica
