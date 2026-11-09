@@ -2591,3 +2591,49 @@ def test_modelo_antigo_da_anthropic_no_railway_e_ignorado(monkeypatch):
     assert radar.modelo() == questoes.MODELO_RAPIDO and questoes.modelo() == questoes.MODELO_PADRAO
     monkeypatch.setenv("RADAR_MODEL", "gemini-outro")
     assert radar.modelo() == "gemini-outro"
+
+
+def test_chamar_ia_nivel_de_raciocinio_e_recusa(monkeypatch):
+    import questoes
+    corpos = []
+
+    class R400:
+        status_code = 400
+        text = ""
+
+        def json(self):
+            return {"error": {"code": 400, "message": "Thinking level is not supported for this model."}}
+
+    class ROk:
+        status_code = 200
+
+        def json(self):
+            return {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "ok"}]}}]}
+
+    respostas = [R400(), ROk()]
+
+    class S:
+        def post(self, url, json=None, timeout=None, headers=None):
+            import copy
+            corpos.append(copy.deepcopy(json))
+            return respostas.pop(0)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    assert questoes.chamar_ia("oi", S(), raciocinio="low") == "ok"
+    assert corpos[0]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
+    assert "thinkingConfig" not in corpos[1]["generationConfig"]
+
+
+def test_selecao_para_no_timeout_sem_repetir(monkeypatch):
+    import questoes
+    import selecao_ia as si
+    import requests as rq
+    chamadas = []
+
+    def lenta(*a, **k):
+        chamadas.append(k.get("raciocinio"))
+        raise rq.exceptions.ReadTimeout("Read timed out. (read timeout=420)")
+    monkeypatch.setattr(si, "_verificar", lambda cod: {"economia": [{"id": 1, "titulo": "Inflação", "termo": "economia"}]})
+    monkeypatch.setattr(questoes, "chamar_ia", lenta)
+    with pytest.raises(ValueError, match="não respondeu em"):
+        si.gerar(101)
+    assert chamadas == ["low"]

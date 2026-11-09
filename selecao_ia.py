@@ -35,6 +35,7 @@ DIAS = 7                                                      # tópicos recente
 MAX_LOTES = 15                                                # lotes mostrados na tela
 MIN_TOPICOS = 2
 MAX_TOKENS = int(os.environ.get("SELECAO_MAX_TOKENS", "16000"))  # resposta da IA (JSON longo)
+TEMPO_IA = int(os.environ.get("SELECAO_TEMPO", "420"))       # segundos de espera pela resposta (roda em 2º plano)
 MAX_POR_TEMA = 40                                             # notícias por tema enviadas à IA
 PRAZO_DIAS = int(os.environ.get("SELECAO_PRAZO_DIAS", "3"))   # prazo das solicitações criadas
 TIPOS = {"comissao": "Comissão", "outros": "Outros assuntos"}
@@ -387,7 +388,8 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
             questoes.ULTIMA.stop_reason = None
             texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA,
                                        modelo_=questoes.modelo_env("SELECAO_MODEL", questoes.modelo()),
-                                       max_tokens=MAX_TOKENS, timeout=240)
+                                       max_tokens=MAX_TOKENS, timeout=TEMPO_IA,
+                                       raciocinio=os.environ.get("SELECAO_RACIOCINIO") or "low")
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
                 dados = d
@@ -410,6 +412,9 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                 erro = str(e)
             log.warning("seleção da IA (tentativa %d, parada=%s): %s | início da resposta: %r",
                         tentativa + 1, parada, e, (texto or "")[:500])
+            if "timed out" in str(e).lower() or "timeout" in type(e).__name__.lower():
+                erro = f"a IA não respondeu em {TEMPO_IA} segundos"
+                break                                   # repetir só dobraria a espera
     if not dados:
         raise ValueError(f"A IA não devolveu uma seleção utilizável ({erro}). Tente de novo em alguns minutos.")
     validos = {n["id"]: (tema, n) for tema, itens in temas.items() for n in itens}

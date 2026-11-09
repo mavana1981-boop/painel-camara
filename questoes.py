@@ -213,8 +213,11 @@ def _segundos_retry(dados):
     return None
 
 
-def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180):
-    """Envia uma mensagem ao Gemini e devolve o texto. Mesma assinatura de quando era o Claude."""
+def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180,
+              raciocinio=None):
+    """Envia uma mensagem ao Gemini e devolve o texto. Mesma assinatura de quando era o Claude.
+    `raciocinio` ("minimal", "low", "medium", "high") limita o quanto o modelo "pensa" antes de responder: menos
+    raciocínio = resposta bem mais rápida. Se o modelo não aceitar o nível, a chamada é refeita sem ele."""
     k = chave()
     if not k:
         raise RuntimeError("GEMINI_API_KEY não configurada no Railway.")
@@ -222,9 +225,12 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
     corpo = {"systemInstruction": {"parts": [{"text": sistema or SISTEMA}]},
              "contents": [{"role": "user", "parts": [{"text": mensagem_usuario}]}],
              "generationConfig": {"maxOutputTokens": min(max_tokens + FOLGA_RACIOCINIO, 65536)}}
+    if raciocinio:
+        corpo["generationConfig"]["thinkingConfig"] = {"thinkingLevel": raciocinio}
     url = f"{API_BASE}/{mod}:generateContent"
     headers = {"x-goog-api-key": k, "content-type": "application/json"}
-    for tentativa in range(2):
+    esperou = False
+    for _ in range(3):
         with _fila:
             _esperar_vez()
             r = (sessao or requests).post(url, json=corpo, timeout=timeout, headers=headers)
@@ -235,9 +241,14 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         except ValueError:
             erro = {}
         msg = (erro.get("error") or {}).get("message") or (r.text or "")[:300]
-        if r.status_code in (429, 503) and tentativa == 0:
+        if r.status_code == 400 and "thinking" in msg.lower() and "thinkingConfig" in corpo["generationConfig"]:
+            log.warning("Gemini não aceitou o nível de raciocínio %r (%s); tentando sem ele", raciocinio, msg)
+            corpo["generationConfig"].pop("thinkingConfig")
+            continue
+        if r.status_code in (429, 503) and not esperou:
             espera = _segundos_retry(erro) or (30 if r.status_code == 429 else 10)
             if espera <= ESPERA_MAX_429:
+                esperou = True
                 log.info("Gemini %s: esperando %.0f s para tentar de novo", r.status_code, espera)
                 time.sleep(espera)
                 continue
