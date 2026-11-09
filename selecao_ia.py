@@ -246,7 +246,6 @@ def montar_mensagem(nome_deputado, temas, abertos):
     return "\n".join(partes)
 
 
-MODELO_PADRAO = "claude-sonnet-5-5"      # agrupar por contexto pede um modelo melhor que o da triagem
 
 
 def _area(v):
@@ -319,7 +318,7 @@ def _verificar(cod):
     if not temas:
         raise ValueError(f"Não há notícias das últimas {HORAS} horas para selecionar tópicos.")
     if not questoes.configurado():
-        raise ValueError("A Seleção da IA precisa da chave da Anthropic: configure ANTHROPIC_API_KEY no Railway.")
+        raise ValueError("A Seleção da IA precisa da chave do Gemini: configure GEMINI_API_KEY no Railway.")
     return temas
 
 
@@ -387,7 +386,7 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
         try:
             questoes.ULTIMA.stop_reason = None
             texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA,
-                                       modelo_=os.environ.get("SELECAO_MODEL") or MODELO_PADRAO,
+                                       modelo_=questoes.modelo_env("SELECAO_MODEL", questoes.modelo()),
                                        max_tokens=MAX_TOKENS, timeout=240)
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):

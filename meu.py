@@ -1099,7 +1099,7 @@ def _post(cod, secao, s, autor, pleno=True):
             if len(sit) < 30:
                 raise ValueError("Descreva a situação com mais detalhes (pelo menos algumas frases).")
             if not questoes.configurado():
-                raise ValueError("A IA ainda não está ligada: falta a variável ANTHROPIC_API_KEY no Railway.")
+                raise ValueError("A IA ainda não está ligada: falta a variável GEMINI_API_KEY no Railway.")
             qid = questoes.criar_pedido(cod, autor, sit[:8000])
             questoes.processar_em_segundo_plano(qid, s["nome"])
             flash("Elaborando a questão de ordem. A resposta aparece aqui em até um minuto.", "ok")

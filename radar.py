@@ -11,8 +11,8 @@ Como o Monitor:
   e incluir manualmente uma notícia pelo link (origem "manual"; a IA analisa em seguida).
 
 Diferenças: aqui o radar é por parlamentar — dos portais entram só as notícias que citam o nome
-dele ou um dos temas cadastrados — e o Google Notícias complementa a busca. A IA é o Claude
-(mesma ANTHROPIC_API_KEY das questões de ordem; modelo em RADAR_MODEL). O ciclo roda a cada
+dele ou um dos temas cadastrados — e o Google Notícias complementa a busca. A IA é o Gemini
+(plano gratuito; mesma GEMINI_API_KEY das questões de ordem; modelo em RADAR_MODEL, padrão flash-lite). O ciclo roda a cada
 2 horas (RADAR_HORAS), na atualização diária e no botão "Atualizar agora".
 """
 import html
@@ -39,7 +39,6 @@ DIAS_NOTICIAS = 60
 MAX_POR_PORTAL = 20                     # entradas lidas de cada feed por ciclo (como no Monitor)
 MAX_ANALISES = int(os.environ.get("RADAR_MAX_ANALISES", "30"))   # por parlamentar e ciclo
 HORAS_CICLO = float(os.environ.get("RADAR_HORAS", "2"))
-MODELO_PADRAO = "claude-haiku-5-5"
 STATUS = ["Pendente", "Em análise", "Ação efetuada"]
 
 # Mesma lista padrão do Monitor Legislativo
@@ -78,7 +77,8 @@ _HEADERS = {
 
 
 def modelo():
-    return os.environ.get("RADAR_MODEL", MODELO_PADRAO)
+    import questoes
+    return questoes.modelo_env("RADAR_MODEL", questoes.modelo_rapido())
 
 
 # ---------------- leitura dos feeds ----------------
