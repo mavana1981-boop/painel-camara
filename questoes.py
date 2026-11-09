@@ -1,4 +1,4 @@
-"""Questões de ordem elaboradas por IA (Claude, via API da Anthropic) com base no Regimento Interno.
+"""Questões de ordem elaboradas por IA (Gemini, plano gratuito da API do Google) com base no Regimento Interno.
 
 - O administrador envia o texto do Regimento Interno da Câmara dos Deputados (PDF ou TXT) uma vez;
   ele fica guardado na tabela `documentos` (chave "ricd").
@@ -8,7 +8,14 @@
 - Sem o Regimento cadastrado, a IA responde com o próprio conhecimento e é instruída a avisar que
   os dispositivos citados precisam ser conferidos.
 
-Variáveis de ambiente: ANTHROPIC_API_KEY (obrigatória para gerar) e ANTHROPIC_MODEL (opcional).
+Variáveis de ambiente: GEMINI_API_KEY (obrigatória para gerar; crie em aistudio.google.com) e GEMINI_MODEL
+(opcional). `chamar_ia` é a porta única de todas as funções de IA do app (questões de ordem, radar, Seleção da IA e
+áreas das solicitações).
+
+Plano gratuito do Gemini: há limite de pedidos por minuto e por dia (por projeto do Google). Por isso as chamadas
+passam por uma fila com intervalo mínimo entre elas (GEMINI_INTERVALO, padrão 6 s ≈ 10 por minuto) e, quando o
+Google responde 429 (limite por minuto), o app espera o tempo indicado e tenta de novo uma vez. Se o limite do dia
+acabar, o erro sobe e o radar deixa o restante para o próximo ciclo, como já fazia quando a IA caía.
 """
 import io
 import logging
@@ -16,6 +23,7 @@ import math
 import os
 import re
 import threading
+import time
 import unicodedata
 from collections import Counter
 from datetime import datetime
@@ -27,8 +35,12 @@ from db import documentos, engine, questoes_ordem
 
 log = logging.getLogger("questoes")
 
-API_URL = "https://api.anthropic.com/v1/messages"
-MODELO_PADRAO = "claude-sonnet-5-5"
+API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+MODELO_PADRAO = "gemini-3.8-flash"            # questões de ordem e Seleção da IA (gratuito)
+MODELO_RAPIDO = "gemini-3.5-flash-lite"       # triagem do radar e áreas (gratuito, cotas maiores)
+INTERVALO = float(os.environ.get("GEMINI_INTERVALO", "6"))   # segundos entre chamadas (plano gratuito)
+FOLGA_RACIOCINIO = 8192       # tokens extras de saída: o "raciocínio" do Gemini conta no limite de saída
+ESPERA_MAX_429 = 65           # espera no máximo isso (s) antes de tentar de novo após um 429
 LIMITE_TRECHO = 70_000          # caracteres do Regimento enviados por pedido
 CHAVE_RICD = "ricd"
 # Questão de ordem e reclamação no RICD (arts. 95 e 96): sempre enviados à IA.
@@ -40,12 +52,26 @@ aquela foi ser são está estão sobre entre quando onde qual quais não sim já
 deve devem ter tem têm deputado deputada deputados camara câmara presidente sessão federal artigo art""".split())
 
 
+def modelo_env(var, padrao):
+    """Modelo de uma variável de ambiente; ignora valores antigos da Anthropic (claude-...) ainda no Railway."""
+    v = (os.environ.get(var) or "").strip()
+    return v if v and not v.lower().startswith("claude") else padrao
+
+
 def modelo():
-    return os.environ.get("ANTHROPIC_MODEL", MODELO_PADRAO)
+    return modelo_env("GEMINI_MODEL", MODELO_PADRAO)
+
+
+def modelo_rapido():
+    return modelo_env("GEMINI_MODEL_RAPIDO", MODELO_RAPIDO)
+
+
+def chave():
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 
 def configurado():
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return bool(chave())
 
 
 # ---------------- Regimento ----------------
@@ -167,29 +193,73 @@ def montar_pedido(situacao, deputado_nome=None):
     return usuario, [n for n, _ in trechos]
 
 
+_fila = threading.Lock()        # uma chamada por vez, com intervalo mínimo (cota por minuto do plano gratuito)
+_ultima_chamada = [0.0]
+
+
+def _esperar_vez():
+    falta = _ultima_chamada[0] + INTERVALO - time.monotonic()
+    if falta > 0:
+        time.sleep(falta)
+    _ultima_chamada[0] = time.monotonic()
+
+
+def _segundos_retry(dados):
+    """Tempo sugerido pelo Google num 429 (RetryInfo.retryDelay, ex.: "17s")."""
+    for d in ((dados or {}).get("error") or {}).get("details") or []:
+        m = re.match(r"([\d.]+)s", str(d.get("retryDelay") or ""))
+        if m:
+            return float(m.group(1))
+    return None
+
+
 def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180):
-    chave = os.environ.get("ANTHROPIC_API_KEY")
-    if not chave:
-        raise RuntimeError("ANTHROPIC_API_KEY não configurada no Railway.")
-    corpo = {"model": modelo_ or modelo(), "max_tokens": max_tokens, "system": sistema or SISTEMA,
-             "messages": [{"role": "user", "content": mensagem_usuario}]}
-    r = (sessao or requests).post(API_URL, json=corpo, timeout=timeout, headers={
-        "x-api-key": chave, "anthropic-version": "2023-06-01", "content-type": "application/json"})
-    if r.status_code != 200:
+    """Envia uma mensagem ao Gemini e devolve o texto. Mesma assinatura de quando era o Claude."""
+    k = chave()
+    if not k:
+        raise RuntimeError("GEMINI_API_KEY não configurada no Railway.")
+    mod = modelo_ or modelo()
+    corpo = {"systemInstruction": {"parts": [{"text": sistema or SISTEMA}]},
+             "contents": [{"role": "user", "parts": [{"text": mensagem_usuario}]}],
+             "generationConfig": {"maxOutputTokens": min(max_tokens + FOLGA_RACIOCINIO, 65536)}}
+    url = f"{API_BASE}/{mod}:generateContent"
+    headers = {"x-goog-api-key": k, "content-type": "application/json"}
+    for tentativa in range(2):
+        with _fila:
+            _esperar_vez()
+            r = (sessao or requests).post(url, json=corpo, timeout=timeout, headers=headers)
+        if r.status_code == 200:
+            break
         try:
-            msg = r.json().get("error", {}).get("message", r.text[:300])
+            erro = r.json()
         except ValueError:
-            msg = r.text[:300]
-        raise RuntimeError(f"A API da Anthropic respondeu {r.status_code}: {msg}")
+            erro = {}
+        msg = (erro.get("error") or {}).get("message") or (r.text or "")[:300]
+        if r.status_code in (429, 503) and tentativa == 0:
+            espera = _segundos_retry(erro) or (30 if r.status_code == 429 else 10)
+            if espera <= ESPERA_MAX_429:
+                log.info("Gemini %s: esperando %.0f s para tentar de novo", r.status_code, espera)
+                time.sleep(espera)
+                continue
+        if r.status_code == 429:
+            raise RuntimeError(f"Limite do plano gratuito do Gemini atingido (429): {msg}")
+        raise RuntimeError(f"A API do Gemini respondeu {r.status_code}: {msg}")
     try:
         dados = r.json()
     except ValueError:
-        raise RuntimeError(f"A API da Anthropic devolveu uma resposta que não é JSON: {r.text[:200]!r}")
-    ULTIMA.stop_reason = dados.get("stop_reason")
-    texto = "".join(b.get("text", "") for b in dados.get("content", []) if b.get("type") == "text").strip()
+        raise RuntimeError(f"A API do Gemini devolveu uma resposta que não é JSON: {r.text[:200]!r}")
+    cands = dados.get("candidates") or []
+    cand = cands[0] if cands else {}
+    fim = cand.get("finishReason")
+    ULTIMA.stop_reason = "max_tokens" if fim == "MAX_TOKENS" else (fim or "").lower() or None
+    ULTIMA.uso = dados.get("usageMetadata")
+    partes = (cand.get("content") or {}).get("parts") or []
+    texto = "".join(p.get("text", "") for p in partes if not p.get("thought")).strip()
     if not texto:
-        tipos = ", ".join(sorted({str(b.get("type")) for b in dados.get("content", [])})) or "nenhum"
-        raise RuntimeError(f"a IA respondeu sem texto (motivo de parada: {dados.get('stop_reason')}; blocos: {tipos})")
+        bloqueio = (dados.get("promptFeedback") or {}).get("blockReason")
+        tipos = "raciocínio" if any(p.get("thought") for p in partes) else "nenhum"
+        raise RuntimeError(f"a IA respondeu sem texto (motivo de parada: {ULTIMA.stop_reason or bloqueio}; "
+                           f"blocos: {tipos})")
     return texto
 
 

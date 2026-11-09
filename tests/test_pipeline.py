@@ -19,6 +19,7 @@ os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_t
 os.environ["ADMIN_USER"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "senha-de-teste-123"
 os.environ["SECRET_KEY"] = "teste"
+os.environ["GEMINI_INTERVALO"] = "0"        # sem espera entre chamadas da IA nos testes
 os.environ["AGENDA_AO_ACESSAR"] = "0"     # a tela da agenda não chama a API da Câmara nos testes
 os.environ.pop("RAILWAY_ENVIRONMENT", None)
 os.environ.pop("CEAP_REAJUSTES", None)
@@ -1012,8 +1013,8 @@ def test_questao_de_ordem_por_ia():
     assert {95, 96} <= set(sel) and 120 in sel and len(sel) < 60
     adm = _cliente()
     tok = _tok(adm, "/meu/101?secao=questoes")
-    os.environ.pop("ANTHROPIC_API_KEY", None)
-    assert "ANTHROPIC_API_KEY" in adm.get("/meu/101?secao=questoes").get_data(as_text=True)
+    os.environ.pop("GEMINI_API_KEY", None)
+    assert "GEMINI_API_KEY" in adm.get("/meu/101?secao=questoes").get_data(as_text=True)
     adm.post("/meu/101?secao=questoes", content_type="multipart/form-data", data={
         "_csrf": tok, "acao": "regimento", "arquivo": (io.BytesIO(texto.encode()), "RICD.txt")})
     assert "282 artigos" in adm.get("/meu/101?secao=questoes").get_data(as_text=True)
@@ -1024,9 +1025,9 @@ def test_questao_de_ordem_por_ia():
         status_code = 200
 
         def json(self):
-            return {"content": [{"type": "text", "text": "## Cabimento\nCabe, no Plenário.\n## Questão de ordem (texto para leitura)\n"
+            return {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "## Cabimento\nCabe, no Plenário.\n## Questão de ordem (texto para leitura)\n"
                                  "Senhor Presidente, com fundamento no art. 95 do Regimento Interno, formulo a seguinte questão de ordem: **<script>x</script>**\n"
-                                 "## Pedido\n- Que seja reaberto o prazo de emendas."}]}
+                                 "## Pedido\n- Que seja reaberto o prazo de emendas."}]}}]}
 
     class _Sessao:
         def post(self, url, json=None, timeout=None, headers=None):
@@ -1034,16 +1035,17 @@ def test_questao_de_ordem_por_ia():
             return _Resp()
 
     orig = questoes.processar_em_segundo_plano
-    os.environ["ANTHROPIC_API_KEY"] = "sk-teste"
+    os.environ["GEMINI_API_KEY"] = "sk-teste"
     questoes.processar_em_segundo_plano = lambda qid, nome=None: questoes.processar(qid, nome, sessao=_Sessao())
     try:
         adm.post("/meu/101?secao=questoes", data={"_csrf": tok, "acao": "gerar",
                  "situacao": "A comissão encerrou o prazo de emendas antes das cinco sessões e já vai votar o parecer hoje."})
     finally:
         questoes.processar_em_segundo_plano = orig
-    assert enviado["url"] == questoes.API_URL and enviado["headers"]["x-api-key"] == "sk-teste"
-    assert enviado["corpo"]["model"] == questoes.modelo() and "RICD" in enviado["corpo"]["system"]
-    msg = enviado["corpo"]["messages"][0]["content"]
+    assert enviado["url"] == f"{questoes.API_BASE}/{questoes.modelo()}:generateContent"
+    assert enviado["headers"]["x-goog-api-key"] == "sk-teste"
+    assert "RICD" in enviado["corpo"]["systemInstruction"]["parts"][0]["text"]
+    msg = enviado["corpo"]["contents"][0]["parts"][0]["text"]
     assert "<regimento>" in msg and "Art. 95" in msg and "Art. 120" in msg and "Deputado(a): Ana Oposição" in msg
     assert "Câmara dos Deputados" in msg
     html = adm.get("/meu/101?secao=questoes").get_data(as_text=True)
@@ -1059,8 +1061,8 @@ def test_questao_de_ordem_por_ia():
             return {"error": {"message": "invalid x-api-key"}}
     qid = questoes.criar_pedido(101, "admin", "Outra situação qualquer com detalhes suficientes para o teste.")
     questoes.processar(qid, sessao=type("S", (), {"post": lambda self, *a, **k: _Erro()})())
-    assert questoes.historico(101)[0]["resposta"].startswith("[ERRO] A API da Anthropic respondeu 401")
-    os.environ.pop("ANTHROPIC_API_KEY", None)
+    assert questoes.historico(101)[0]["resposta"].startswith("[ERRO] A API do Gemini respondeu 401")
+    os.environ.pop("GEMINI_API_KEY", None)
 
 
 def test_radar_clipping_rankings_e_paginas():
@@ -1155,8 +1157,8 @@ class _IAFake:
         self.pedidos = []
 
     def post(self, url, json=None, timeout=None, headers=None):
-        self.pedidos.append(json)
-        msg = json["messages"][0]["content"]
+        self.pedidos.append(dict(json, _url=url))
+        msg = json["contents"][0]["parts"][0]["text"]
         if "obras paradas" in msg:
             txt = ('```json\n{"relevante": true, "categoria": "Infraestrutura e serviços públicos", "tipo_acao": '
                    '"Requerimento de informações", "acao_sugerida": "Apresentar RIC ao Ministério sobre as 40 obras.", '
@@ -1170,7 +1172,7 @@ class _IAFake:
             status_code = 200
 
             def json(self_):
-                return {"content": [{"type": "text", "text": txt}]}
+                return {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": txt}]}}]}
         return R()
 
 
@@ -1196,13 +1198,13 @@ def test_radar_no_modelo_do_monitor():
     assert radar.casa_termo("A deputada ANA OPOSICAO falou", radar._termos_norm(101)) == "Ana Oposição"
 
     ia = _IAFake()
-    os.environ["ANTHROPIC_API_KEY"] = "sk-teste"
+    os.environ["GEMINI_API_KEY"] = "sk-teste"
     try:
         res = radar.ciclo([101], buscar=_buscar_fake, sessao=ia)
         assert res == {"portais": 3, "google": 1, "analisadas": 4}
         assert radar.ciclo([101], buscar=_buscar_fake, sessao=ia)["portais"] == 0      # já vistas
     finally:
-        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("GEMINI_API_KEY", None)
     itens = {n["link"]: n for n in radar.lista(101)}
     assert set(itens) == {"https://g1.exemplo/1", "https://g1.exemplo/2", "https://poder.exemplo/9", "https://news.google/a"}
     g1 = itens["https://g1.exemplo/1"]
@@ -1215,8 +1217,9 @@ def test_radar_no_modelo_do_monitor():
     assert gg["origem"] == "google" and gg["fonte"] == "Folha de S.Paulo" and gg["titulo"] == "Deputada Ana Oposição visita hospital em SP"
     assert gg["relevante"] is None and "não pôde ser lida" in gg["justificativa"]
     pedido = ia.pedidos[0]
-    assert pedido["model"] == radar.modelo() and "Liderança da Oposição" in pedido["system"]
-    assert "deputado Ana Oposição (PL-SP)" in pedido["messages"][0]["content"]
+    assert pedido["_url"].endswith(f"/{radar.modelo()}:generateContent")
+    assert "Liderança da Oposição" in pedido["systemInstruction"]["parts"][0]["text"]
+    assert "deputado Ana Oposição (PL-SP)" in pedido["contents"][0]["parts"][0]["text"]
     assert [n["link"] for n in radar.lista(101, filtro="relevantes")] == ["https://g1.exemplo/1"]
     assert len(radar.lista(101, filtro="portal")) == 3 and len(radar.lista(101, termo="segurança pública")) == 1
 
@@ -1759,7 +1762,7 @@ def test_selecao_da_ia_distribui_topicos_para_a_oposicao():
         si.gerar(102)
         assert False, "deveria exigir a chave"
     except ValueError as e:
-        assert "ANTHROPIC_API_KEY" in str(e)
+        assert "GEMINI_API_KEY" in str(e)
     # IA respondendo só coisas genéricas duas vezes: erro, sem criar solicitações
     questoes.configurado = lambda: True
     questoes.chamar_ia = lambda *a, **k: json.dumps({"temas": [{"tema": "Bruno Governo", "topicos": [
@@ -2514,13 +2517,13 @@ def test_chamar_ia_sem_texto_diz_o_motivo(monkeypatch):
         text = ""
 
         def json(self):
-            return {"content": [{"type": "thinking", "thinking": "..."}], "stop_reason": "max_tokens"}
+            return {"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "...", "thought": True}]}}]}
 
     class S:
         def post(self, *a, **k):
             return R()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
-    with pytest.raises(RuntimeError, match="sem texto .*max_tokens.*thinking"):
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    with pytest.raises(RuntimeError, match="sem texto .*max_tokens.*raciocínio"):
         questoes.chamar_ia("oi", S())
 
 
@@ -2541,3 +2544,50 @@ def test_prelista_aceita_noticia_pelo_link():
     r = adm.post("/meu/106?secao=radar&filtro=prelista", data={**dados, "link": "sem-link"})
     assert pl.contagem(106) == 1
     assert "link completo" in adm.get("/meu/106?secao=radar&filtro=prelista").get_data(as_text=True)
+
+
+def test_chamar_ia_gemini_429_espera_e_tenta_de_novo(monkeypatch):
+    import questoes
+    esperas, chamadas = [], []
+
+    class R429:
+        status_code = 429
+        text = "quota"
+
+        def json(self):
+            return {"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED",
+                              "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "7s"}]}}
+
+    class ROk:
+        status_code = 200
+
+        def json(self):
+            return {"candidates": [{"finishReason": "STOP", "content": {"parts": [
+                {"text": "pensando", "thought": True}, {"text": "resposta final"}]}}],
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 3}}
+
+    class S:
+        def __init__(self, respostas):
+            self.respostas = respostas
+
+        def post(self, url, json=None, timeout=None, headers=None):
+            chamadas.append((url, json))
+            return self.respostas.pop(0)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setattr(questoes.time, "sleep", lambda s: esperas.append(s))
+    assert questoes.chamar_ia("oi", S([R429(), ROk()]), modelo_="gemini-x", max_tokens=700) == "resposta final"
+    assert esperas == [7.0] and len(chamadas) == 2 and chamadas[0][0].endswith("/gemini-x:generateContent")
+    assert chamadas[0][1]["generationConfig"]["maxOutputTokens"] == 700 + questoes.FOLGA_RACIOCINIO
+    assert questoes.ULTIMA.uso["promptTokenCount"] == 10
+    with pytest.raises(RuntimeError, match="Limite do plano gratuito"):
+        questoes.chamar_ia("oi", S([R429(), R429()]))
+
+
+def test_modelo_antigo_da_anthropic_no_railway_e_ignorado(monkeypatch):
+    import questoes
+    import radar
+    monkeypatch.setenv("RADAR_MODEL", "claude-haiku-5-5")
+    monkeypatch.setenv("GEMINI_MODEL", "claude-sonnet-5-5")
+    assert radar.modelo() == questoes.MODELO_RAPIDO and questoes.modelo() == questoes.MODELO_PADRAO
+    monkeypatch.setenv("RADAR_MODEL", "gemini-outro")
+    assert radar.modelo() == "gemini-outro"

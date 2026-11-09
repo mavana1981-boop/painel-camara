@@ -122,7 +122,7 @@ O administrador vê todos os deputados em exercício.
 | Agenda | Eventos dos órgãos do deputado e sessões do Plenário (API `/eventos`, 7 dias atrás e 45 à frente) + compromissos lançados pela equipe. “Deputado na pauta” = relator de item da pauta |
 | Notificações | Mudanças de situação das proposições e proposições novas, detectadas na coleta diária (guardadas por 180 dias) |
 | Solicitações | Registro com status, data da solicitação, prazo final, data da solução, responsável (usuário do sistema) e anexos (até 10 MB cada, guardados no banco). Quem recebe a tarefa vê o aviso na tela inicial (com prazo e foto) e acessa as próprias tarefas mesmo sem vínculo com o deputado |
-| Questões de ordem | IA (Claude, API da Anthropic) com base no Regimento Interno da Câmara enviado pelo admin (PDF/TXT) |
+| Questões de ordem | IA (Gemini, plano gratuito da API do Google) com base no Regimento Interno da Câmara enviado pelo admin (PDF/TXT) |
 | Radar de notícias | No modelo do Monitor Legislativo: os mesmos portais (RSS, editáveis pelo admin) a cada 2 horas, mais o Google Notícias; entram as notícias que citam o deputado ou um tema cadastrado, e a IA indica relevância, categoria, tipo de ação e ação sugerida. A equipe marca Pendente / Em análise / Ação efetuada. Dá para pesquisar por palavra (sem diferenciar acento), buscar o termo na hora no Google Notícias e incluir uma notícia pelo link (título, veículo e data lidos da página; a IA analisa em seguida) |
 | Rankings | Posição entre os deputados em exercício e quanto falta para subir |
 | Clipping | Solicitações concluídas pela equipe (resumo do que foi feito + anexos), proposições do deputado com situação de aprovação e relatorias com parecer aprovado, por data. Botão **Relatório de realizações** gera o PDF do ano |
@@ -137,8 +137,10 @@ sempre que alguém abre a agenda (no máximo uma vez por minuto, `AGENDA_SEGUNDO
 página se recarrega sozinha quando ela termina. Nos itens da pauta, o
 painel diz se o deputado é relator, autor (1º signatário) ou coautor.
 O radar roda a cada 2 horas (`RADAR_HORAS`; `AUTO_RADAR=0` desliga) só para deputados com usuário vinculado; o botão
-**Atualizar agora** busca na hora. A IA do radar e das questões de ordem usa `ANTHROPIC_API_KEY`; o modelo do radar
-fica em `RADAR_MODEL` (padrão `claude-haiku-5-5`) e o limite de análises por deputado e ciclo em `RADAR_MAX_ANALISES` (30).
+**Atualizar agora** busca na hora. A IA do radar e das questões de ordem usa `GEMINI_API_KEY` (plano gratuito, chave em
+aistudio.google.com); o modelo do radar fica em `RADAR_MODEL` (padrão `gemini-3.5-flash-lite`), o da Seleção da IA e
+das questões de ordem em `GEMINI_MODEL` (padrão `gemini-3.8-flash`). As chamadas são espaçadas em `GEMINI_INTERVALO`
+segundos (padrão 6) para caber no limite por minuto do plano gratuito e o limite de análises por deputado e ciclo em `RADAR_MAX_ANALISES` (30).
 
 ## Plenário (pauta do Minha Pauta)
 
