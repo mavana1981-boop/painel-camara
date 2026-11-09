@@ -25,7 +25,8 @@
     </div>
     {% if e.na_pauta %}<div class="ag-aviso pauta">{% for p in e.na_pauta %}
       <div><b>{{ 'Deputado é ' + p.papel if p.ident else ('Deputado na pauta' if p.papel != 'relator' else 'Deputado é relator de item da pauta') }}{% if p.ident %}: {{ p.ident }}{% endif %}</b>{% if p.situacao and not compacto %} <small>· {{ p.situacao }}</small>{% endif %}
-        {% if p.ementa and not compacto %}<span>{{ p.ementa }}</span>{% endif %}</div>{% endfor %}</div>{% endif %}
+        {% if p.ementa_projeto %}<span class="ag-ementa-proj">{% if p.projeto_relacionado %}<em>Ementa do {{ p.proj_ident or 'projeto' }}:</em> {% endif %}{{ p.ementa_projeto }}</span>
+        {% elif p.ementa and not compacto %}<span>{{ p.ementa }}</span>{% endif %}</div>{% endfor %}</div>{% endif %}
     {% if e.alertas %}<div class="ag-aviso sensivel">{% for a in e.alertas %}
       <div><b>⚠ {{ a.termos|join(', ') }}</b>{% if a.ident %} — {{ a.ident }}{% endif %}
         {% if a.ementa and not compacto %}<span>{{ a.ementa }}</span>{% endif %}</div>{% endfor %}</div>{% endif %}

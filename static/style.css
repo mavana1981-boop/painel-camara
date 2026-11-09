@@ -829,6 +829,7 @@ details.nt-prop>summary{list-style:none;cursor:pointer;display:flex;gap:10px;ali
 .ag-aviso div b{font-weight:700}
 .ag-aviso span{display:block;color:var(--suave);font-size:12px;margin-top:1px}
 .ag-aviso small{color:var(--suave)}
+.ag-aviso span.ag-ementa-proj{color:var(--tinta);font-size:12.5px;line-height:1.4}.ag-ementa-proj em{font-style:normal;font-weight:600;color:var(--suave)}
 .ag-aviso.pauta{background:#fdf0ef;border-left:3px solid #b03021}.ag-aviso.pauta b{color:#9b2c2c}
 .ag-aviso.sensivel{background:#fff6e8;border-left:3px solid #e08a00}.ag-aviso.sensivel b{color:#8a4b00}
 .ag-item.citado,.ag-item:has(.ag-aviso.sensivel){background:#fffdf8}

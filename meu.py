@@ -251,6 +251,7 @@ def agenda_deputado(cod, inicio, fim, so_dele=True, sem_solenes=False):
         if sem_solenes and r["origem"] != "equipe" and eh_solene(r):
             continue
         out.append(r)
+    alertas.completar_ementas(out)
     dias = {}
     for r in out:
         dias.setdefault(r["data"], []).append(r)

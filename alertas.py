@@ -16,7 +16,7 @@ from datetime import datetime
 
 from sqlalchemy import delete, insert, select
 
-from db import autorias, engine, norm_nome, sem_acento, termos_alerta
+from db import autorias, engine, norm_nome, processos, sem_acento, termos_alerta
 
 TERMOS_PADRAO = [
     "gênero", "identidade de gênero", "ideologia de gênero", "linguagem neutra", "misoginia", "feminicídio",
@@ -126,6 +126,23 @@ def itens(e):
         return []
 
 
+def completar_ementas(eventos):
+    """Garante a ementa do projeto quando o deputado é autor/coautor: a pauta da Câmara às vezes vem sem
+    ementa (ou cortada em 500 caracteres); nesse caso usa a ementa completa da tabela de proposições."""
+    pids = {p["proj_id"] for e in eventos for p in e.get("na_pauta") or [] if p.get("proj_id")}
+    if not pids:
+        return eventos
+    with engine.connect() as c:
+        base = {r[0]: (r[1] or "").strip() for r in c.execute(
+            select(processos.c.id, processos.c.ementa).where(processos.c.id.in_(pids)))}
+    for e in eventos:
+        for p in e.get("na_pauta") or []:
+            completa = base.get(p.get("proj_id"))
+            if completa and len(completa) > len(p.get("ementa_projeto") or ""):
+                p["ementa_projeto"] = " ".join(completa.split())
+    return eventos
+
+
 def analisar(e, cod, nome_norm, autorias_cod, regras):
     """Acrescenta ao evento `na_pauta` ([{ident, papel, ementa}]) e `alertas` ([{termos, ident, ementa}])."""
     na_pauta, alertas = [], []
@@ -141,8 +158,15 @@ def analisar(e, cod, nome_norm, autorias_cod, regras):
             autoria = papel_autoria(autorias_cod, it.get("rel_id"))
             papeis.append(f"{autoria} da {it.get('rel_ident') or 'proposição relacionada'}")
         if papeis:
-            na_pauta.append({"ident": it.get("ident"), "papel": " e ".join(papeis), "ementa": it.get("ementa"),
-                             "situacao": it.get("situacao"), "autoria": autoria})
+            p = {"ident": it.get("ident"), "papel": " e ".join(papeis), "ementa": it.get("ementa"),
+                 "situacao": it.get("situacao"), "autoria": autoria}
+            if autoria:   # ementa do projeto que o deputado assina (o próprio item ou o projeto relacionado)
+                direto = papel_autoria(autorias_cod, it.get("id")) is not None
+                p["proj_id"] = it.get("id") if direto else it.get("rel_id")
+                p["proj_ident"] = it.get("ident") if direto else it.get("rel_ident")
+                p["ementa_projeto"] = it.get("ementa") if direto else it.get("rel_ementa")
+                p["projeto_relacionado"] = not direto
+            na_pauta.append(p)
         proprio = achar(" ".join(x for x in (it.get("ident"), it.get("ementa")) if x), regras)
         relac = [t for t in achar(it.get("rel_ementa"), regras) if t not in proprio]
         if proprio:

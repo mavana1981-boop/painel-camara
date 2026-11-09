@@ -338,7 +338,10 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
             for p in e.get("na_pauta") or []:
                 txt = (f"Deputado é {p['papel']}: <b>{_p(p['ident'])}</b>" if p.get("ident")
                        else ("Deputado é relator de item da pauta" if p.get("papel") == "relator" else "Deputado citado no evento"))
-                if p.get("ementa"):
+                if p.get("ementa_projeto"):
+                    rot = f"ementa do {_p(p.get('proj_ident') or 'projeto')}: " if p.get("projeto_relacionado") else ""
+                    txt += f" — {rot}{_p(p['ementa_projeto'])}"
+                elif p.get("ementa"):
                     txt += f" — {_p(p['ementa'])}"
                 cel.append(Spacer(1, 1 * mm))
                 cel.append(Paragraph(f'<font color="#9b2c2c">▶ {txt}</font>', st["aviso"]))

@@ -909,6 +909,22 @@ def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
         _item_pauta(3, 7700003, "PL", 55, 2026, ementa="Dispõe sobre a igualdade de GÊNEROS nas escolas e combate à misoginia."),
         _item_pauta(5, 7700006, "PL", 901, 2026, ementa="Cria o selo empresa amiga da escola."),
     ])
+    # REQ de urgência para projeto do deputado (ementa vem do projeto) e item sem ementa na pauta
+    with engine.begin() as c:
+        c.execute(ins(processos).values(id=7700007, identificacao="PL 902/2026", sigla="PL",
+                                        ementa="Cria o cadastro nacional de cuidadores de idosos."))
+        c.execute(ins(autorias).values(processo_id=7700007, codigo_deputado=101, principal=False))
+        c.execute(ins(processos).values(id=7700008, identificacao="PL 903/2026", sigla="PL",
+                                        ementa="Isenta de IPI as cadeiras de rodas motorizadas."))
+        c.execute(ins(autorias).values(processo_id=7700008, codigo_deputado=101, principal=True))
+    urg = _item_pauta(6, 7700009, "REQ", 13, 2026, ementa="Requer urgência para o PL 902/2026.")
+    urg["proposicaoRelacionada_"] = {"id": 7700007, "siglaTipo": "PL", "numero": 902, "ano": 2026,
+                                     "ementa": "Cria o cadastro nacional de cuidadores de idosos."}
+    sem = _item_pauta(7, 7700008, "PL", 903, 2026, ementa="")
+    ev3 = coleta_meu.parse_evento(_evento(880003, dia, "16:00", "PLEN", "Sessão Deliberativa Extraordinária"), [urg, sem])
+    with engine.begin() as c:
+        c.execute(dele(agenda).where(agenda.c.chave == "E880003"))
+        c.execute(ins(agenda).values(**ev3, codigo_deputado=None))
     req = _item_pauta(4, 7700004, "REQ", 12, 2026, ementa="Requer urgência para o PL 77/2026.")
     req["proposicaoRelacionada_"] = {"id": 7700005, "siglaTipo": "PL", "numero": 77, "ano": 2026,
                                      "ementa": "Descriminaliza o porte de maconha para uso pessoal."}
@@ -925,6 +941,14 @@ def test_agenda_avisa_deputado_na_pauta_e_termos_sensiveis():
     assert "Deputado é coautor: PL 901/2026" in html
     assert 'class="ag-tag autor"' in html and 'class="ag-tag coautor"' in html
     assert "Institui o programa de hortas comunitárias." in html
+    assert "Cria o selo empresa amiga da escola." in html                      # coautor: ementa também
+    assert "Deputado é coautor da PL 902/2026: REQ 13/2026" in html
+    assert "<em>Ementa do PL 902/2026:</em> Cria o cadastro nacional de cuidadores de idosos." in html
+    assert "Deputado é autor: PL 903/2026" in html and "Isenta de IPI as cadeiras de rodas motorizadas." in html
+    # visão geral (agenda compacta) também mostra a ementa quando ele é autor/coautor
+    geral = adm.get("/meu/101").get_data(as_text=True)
+    if "Deputado é autor: PL 900/2026" in geral:
+        assert "Institui o programa de hortas comunitárias." in geral
     assert "⚠ gênero, misoginia</b> — PL 55/2026" in html
     assert "⚠ maconha</b> — REQ 12/2026 (sobre o PL 77/2026)" in html and "Descriminaliza o porte" in html
     assert "Deputado na pauta em <b>" in html and "Temas sensíveis em <b>" in html
