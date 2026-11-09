@@ -498,6 +498,7 @@ td.vinc details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(
 .meu .ag-hora{width:auto;min-width:52px;text-align:center;background:var(--pri-cl);color:var(--pri);border-radius:6px;padding:3px 6px;font-size:12.5px}
 .meu .ag-item.equipe .ag-hora{background:var(--mp-ouro-cl);color:var(--mp-ouro-esc)}
 .meu .ag-item.equipe{box-shadow:inset 3px 0 0 var(--mp-ouro)}
+.ag-item.equipe .ag-txt>b,.ag-item.equipe .ag-txt>b a{color:#8a6d22}
 .meu .ag-txt b{font-weight:600;line-height:1.35}
 .meu .ag-meta{margin-top:4px}
 .meu .news{padding:12px 16px;transition:background .15s}

@@ -14,7 +14,7 @@
   <div class="ag-txt">
     <b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.titulo }}</a>{% else %}{{ e.titulo }}{% endif %}</b>
     <div class="ag-meta">
-      {% if e.origem == 'equipe' %}<span class="ag-tag eq">equipe</span>{% elif e.colegiado == 'PLEN' %}<span class="ag-tag pl">Plenário</span>{% elif e.colegiado %}<span class="ag-tag">{{ e.colegiado }}</span>{% endif %}
+      {% if e.origem == 'equipe' %}{% elif e.colegiado == 'PLEN' %}<span class="ag-tag pl">Plenário</span>{% elif e.colegiado %}<span class="ag-tag">{{ e.colegiado }}</span>{% endif %}
       {% if e.citado %}<span class="ag-tag cit">deputado na pauta</span>{% endif %}
       {% set auts = e.na_pauta|map(attribute='autoria')|select|list %}
       {% if 'autor' in auts %}<span class="ag-tag autor" title="1º signatário de proposição desta pauta">autor</span>{% endif %}

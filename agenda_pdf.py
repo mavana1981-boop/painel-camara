@@ -315,8 +315,9 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
         linhas, estilo = [], []
         for e in itens:
             tags = []
-            if e.get("origem") == "equipe":
-                tags.append('<font color="#8a6d22"><b>EQUIPE</b></font>')
+            equipe = e.get("origem") == "equipe"      # inclusão manual: sem selo, só o título na cor ouro
+            if equipe:
+                pass
             elif e.get("colegiado") == "PLEN":
                 tags.append(f'<font color="{CASA["cor"]}"><b>PLENÁRIO</b></font>')
             elif e.get("colegiado"):
@@ -332,7 +333,8 @@ def gerar(parl, dias, inicio, fim, rotulo, so_dele=True, com_descricao=True, ago
             for k in ("local", "situacao"):
                 if e.get(k):
                     tags.append(_p(e[k]))
-            cel = [Paragraph(_p(e.get("titulo")), st["tit"])]
+            titulo = _p(e.get("titulo"))
+            cel = [Paragraph(f'<font color="#8a6d22">{titulo}</font>' if equipe else titulo, st["tit"])]
             if tags:
                 cel.append(Paragraph("  ·  ".join(tags), st["meta"]))
             for p in e.get("na_pauta") or []:
