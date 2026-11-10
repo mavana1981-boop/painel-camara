@@ -246,6 +246,15 @@ anexos = Table(
     Column("enviado_em", DateTime),
 )
 
+resumos_ia = Table(  # resumo em linguagem simples da ementa (IA), guardado à parte: a coleta recria `processos`
+    "resumos_ia", metadata,
+    Column("processo_id", Integer, primary_key=True),
+    Column("hash", String(40)),          # sha1 da ementa resumida; se a ementa mudar, o resumo é refeito
+    Column("resumo", Text),
+    Column("modelo", String(60)),
+    Column("criado_em", DateTime),
+)
+
 questoes_ordem = Table(
     "questoes_ordem", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
