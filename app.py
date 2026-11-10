@@ -259,11 +259,18 @@ def proposicoes_exportar():
         abort(404)
     filtros = _filtros_proposicoes()
     s = paineis.deputado(cod) or {}
-    itens = paineis.proposicoes(cod, limite=None, **filtros)["itens"]
+    props = paineis.proposicoes(cod, limite=None, **filtros)
+    itens = props["itens"]
     extras = paineis.relatorias_pauta_extras(cod, [p["id"] for p in itens]) \
         if filtros["papel"] == "relator" and request.args.get("pautas") == "1" else []
     nome = exportar.nome_arquivo(s.get("nome") or str(cod), filtros["papel"])
-    if request.args.get("formato") == "csv":
+    if request.args.get("formato") == "pdf":
+        import proposicoes_pdf
+        corpo = proposicoes_pdf.gerar(s, props, exportar.descricao_filtros(s, filtros, com_nome=False),
+                                      paineis.PAPEIS.get(filtros["papel"], ""), extras,
+                                      relatoria=filtros["papel"] == "relator")
+        mime, ext = "application/pdf", "pdf"
+    elif request.args.get("formato") == "csv":
         corpo, mime, ext = exportar.csv_bytes(itens, extras), "text/csv; charset=utf-8", "csv"
     else:
         corpo = exportar.xlsx_bytes(itens, extras, exportar.descricao_filtros(s, filtros))

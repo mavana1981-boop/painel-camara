@@ -104,11 +104,11 @@ def xlsx_bytes(itens, extras=(), descricao=""):
     return buf.getvalue()
 
 
-def descricao_filtros(s, f):
+def descricao_filtros(s, f, com_nome=True):
     nome = s.get("nome") or ""
     if s.get("partido"):
         nome += f" ({s['partido']}-{s.get('uf') or ''})"
-    partes = [f"Proposições · {nome}", paineis.PAPEIS.get(f.get("papel", ""), "")]
+    partes = [f"Proposições · {nome}" if com_nome else "", paineis.PAPEIS.get(f.get("papel", ""), "")]
     andamento = {"tramitando": "Tramitando", "encerrada": "Tramitação encerrada", "norma": "Virou norma"}
     if f.get("regime") in paineis.REGIMES:
         partes.append(f"Regime: {paineis.REGIMES[f['regime']][0]}")

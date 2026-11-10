@@ -45,6 +45,7 @@
 
 <div class="exportar">
   <span>Exportar ({{ props.total|mil }}{% if extras %} + {{ extras|length }} da pauta{% endif %}):</span>
+  <a class="btn" href="{{ url_for('proposicoes_exportar', deputado=cod, formato='pdf', pautas='1' if extras else None, **args_export) }}">Relatório PDF</a>
   <a class="btn sec" href="{{ url_for('proposicoes_exportar', deputado=cod, pautas='1' if extras else None, **args_export) }}">Excel</a>
   <a class="btn sec" href="{{ url_for('proposicoes_exportar', deputado=cod, formato='csv', pautas='1' if extras else None, **args_export) }}">CSV</a>
 </div>
