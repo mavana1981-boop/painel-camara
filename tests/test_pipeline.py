@@ -2705,7 +2705,8 @@ def test_proposicoes_ementa_resumida():
         cli = _cliente()
         r = cli.get("/proposicoes/exportar?deputado=101&papel=todos&formato=pdf")
         txt = "".join(p.extract_text() for p in PdfReader(io.BytesIO(r.data)).pages)
-        assert "Resumo simples 2440210." in txt and "Ementa:" in txt and "geradas por IA" in " ".join(txt.split())
+        assert "Resumo simples 2440210." in txt and "geradas por IA" in " ".join(txt.split())
+        assert "Ementa:" not in txt and "Cria o programa de bolsas" not in txt     # PDF só com o resumo
         n = len(chamadas)
         assert n >= 1
         # reaproveita: exportar de novo não chama a IA
