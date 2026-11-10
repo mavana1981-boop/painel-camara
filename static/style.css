@@ -1075,3 +1075,29 @@ details.rn-acomp .rn-form{margin-top:6px}
 .regime.urg{background:#fde2e1;color:#b42318}
 .regime.pri{background:#fff1d6;color:#8a5a00}
 .regime.esp{background:#e6eefc;color:#1f4fa8}
+
+/* filtros com seleção múltipla (aba Proposições) */
+.multi{display:flex;flex-direction:column;gap:4px;flex:1 1 150px;min-width:0;position:relative}
+.multi.largo{flex:2 1 220px}
+.multi-rot{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--suave)}
+.multi details{position:relative}
+.multi summary{list-style:none;cursor:pointer;border:1px solid var(--linha);border-radius:8px;padding:7px 28px 7px 10px;
+  font-size:13px;background:var(--card,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;min-height:18px}
+.multi summary::-webkit-details-marker{display:none}
+.multi summary::after{content:"▾";position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--suave);font-size:12px}
+.multi details[open] summary{border-color:var(--pri)}
+.multi summary b{color:var(--pri)}
+.multi-todos{color:var(--suave)}
+.multi-lista{position:absolute;z-index:30;top:calc(100% + 4px);left:0;min-width:100%;width:max-content;max-width:min(420px,88vw);
+  max-height:300px;overflow:auto;background:var(--card,#fff);border:1px solid var(--linha);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px}
+.multi-lista label{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:6px;font-size:13px;
+  font-weight:400;text-transform:none;letter-spacing:0;color:inherit;cursor:pointer;white-space:normal}
+.multi-lista label:hover{background:var(--fundo,#f3f6f4)}
+.multi-lista input{margin-top:2px;accent-color:var(--pri)}
+.multi-limpar{display:block;width:100%;margin-top:4px;border:0;border-top:1px solid var(--linha);background:none;
+  padding:7px 8px 3px;text-align:left;color:var(--pri);font-size:12px;font-weight:600;cursor:pointer}
+.filtros .multi-lista label{flex-direction:row;align-items:center;flex:none;min-width:0;margin:0;font-size:13px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--texto,#1f2933)}
+.filtros .multi-lista input{width:auto;flex:none;margin:0}
+.filtros .multi-lista label{justify-content:flex-start;gap:9px}
+.filtros .multi-lista input[type=checkbox]{width:16px;min-width:16px;height:16px;padding:0}

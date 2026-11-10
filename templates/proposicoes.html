@@ -4,34 +4,39 @@
 {% block conteudo %}
 {{ m.seletor(lista, cod, s, 'proposicoes') }}
 
+{% macro multi(nome, rotulo, opcoes, marcados, todos='Todos', largo=False) %}
+{# opcoes: lista de (valor, texto). Seleção múltipla: OU dentro do filtro. #}
+<div class="multi{{ ' largo' if largo }}">
+  <span class="multi-rot">{{ rotulo }}</span>
+  <details>
+    {% set sel = opcoes|selectattr(0, 'in', marcados)|map(attribute=1)|list %}
+    <summary>{% if not sel %}<span class="multi-todos">{{ todos }}</span>{% elif sel|length <= 2 %}{{ sel|join(', ') }}{% else %}{{ sel[:2]|join(', ') }} <b>+{{ sel|length - 2 }}</b>{% endif %}</summary>
+    <div class="multi-lista">
+      {% for v, txt in opcoes %}
+      <label><input type="checkbox" name="{{ nome }}" value="{{ v }}" {{ 'checked' if v in marcados }}> {{ txt }}</label>
+      {% else %}<span class="multi-todos">sem opções</span>{% endfor %}
+      {% if opcoes|length > 1 %}<button type="button" class="multi-limpar">Limpar seleção</button>{% endif %}
+    </div>
+  </details>
+</div>
+{% endmacro %}
+
 <nav class="abas-papel">
-  <a href="{{ url_for('proposicoes', deputado=cod) }}" class="{{ 'on' if fp.papel not in ('relator', 'todos') }}">Autoria</a>
-  <a href="{{ url_for('proposicoes', deputado=cod, papel='relator') }}" class="{{ 'on' if fp.papel == 'relator' }}">Relatoria <small>{{ opc.n_relator|mil }}</small></a>
-  <a href="{{ url_for('proposicoes', deputado=cod, papel='todos') }}" class="{{ 'on' if fp.papel == 'todos' }}">Tudo</a>
+  <a href="{{ url_for('proposicoes', deputado=cod) }}" class="{{ 'on' if papel_aba not in ('relator', 'todos') }}">Autoria</a>
+  <a href="{{ url_for('proposicoes', deputado=cod, papel='relator') }}" class="{{ 'on' if papel_aba == 'relator' }}">Relatoria <small>{{ opc.n_relator|mil }}</small></a>
+  <a href="{{ url_for('proposicoes', deputado=cod, papel='todos') }}" class="{{ 'on' if papel_aba == 'todos' }}">Tudo</a>
 </nav>
 
-<form class="filtros" method="get">
+<form class="filtros" method="get" id="form-props">
   <input type="hidden" name="deputado" value="{{ cod }}">
   <label style="flex:2 1 200px">Buscar na ementa, número ou autoria<input type="search" name="busca" value="{{ fp.busca }}" placeholder="Ex.: segurança, PL 1234"></label>
-  <label>Papel do deputado<select name="papel">
-    {% for k, rot in papeis.items() %}<option value="{{ k }}" {{ 'selected' if fp.papel == k }}>{{ rot }}</option>{% endfor %}</select></label>
-  <label>Tipo<select name="sigla"><option value="">Todos</option>
-    {% for x in opc.siglas %}<option {{ 'selected' if fp.sigla == x }}>{{ x }}</option>{% endfor %}</select></label>
-  <label>Regime<select name="regime">
-    <option value="">Todos</option>
-    {% for k, v in regimes.items() %}<option value="{{ k }}" {{ 'selected' if fp.regime == k }}>{{ v[0] }}</option>{% endfor %}
-    <option value="sem" {{ 'selected' if fp.regime == 'sem' }}>Não informado</option></select></label>
-  <label>Andamento<select name="situacao">
-    <option value="">Todos</option>
-    <option value="tramitando" {{ 'selected' if fp.situacao == 'tramitando' }}>Tramitando</option>
-    <option value="encerrada" {{ 'selected' if fp.situacao == 'encerrada' }}>Tramitação encerrada</option>
-    <option value="norma" {{ 'selected' if fp.situacao == 'norma' }}>Virou norma jurídica</option></select></label>
-  <label style="flex:2 1 220px">Situação atual<select name="sit">
-    <option value="">Todas</option>
-    {% for x in opc.situacoes %}<option {{ 'selected' if fp.sit == x }}>{{ x }}</option>{% endfor %}</select></label>
-  <label>Onde está<select name="orgao">
-    <option value="">Qualquer órgão</option>
-    {% for x in opc.orgaos %}<option {{ 'selected' if fp.orgao == x }}>{{ x }}</option>{% endfor %}</select></label>
+  {{ multi('papel', 'Papel do deputado', papeis.items()|list, papel_sel, todos='Autor ou coautor') }}
+  {{ multi('sigla', 'Tipo', opc.siglas|zip_self, fp.sigla) }}
+  {% set ops_reg = [] %}{% for k, v in regimes.items() %}{% set _ = ops_reg.append((k, v[0])) %}{% endfor %}{% set _ = ops_reg.append(('sem', 'Não informado')) %}
+  {{ multi('regime', 'Regime', ops_reg, fp.regime) }}
+  {{ multi('situacao', 'Andamento', [('tramitando', 'Tramitando'), ('encerrada', 'Tramitação encerrada'), ('norma', 'Virou norma jurídica')], fp.situacao) }}
+  {{ multi('sit', 'Situação atual', opc.situacoes|zip_self, fp.sit, todos='Todas', largo=True) }}
+  {{ multi('orgao', 'Onde está', opc.orgaos|zip_self, fp.orgao, todos='Qualquer órgão') }}
   <label>Apresentada de<input type="date" name="inicio" value="{{ fp.inicio or '' }}"></label>
   <label>até<input type="date" name="fim" value="{{ fp.fim or '' }}"></label>
   <label>Ordenar<select name="ordem">
@@ -42,6 +47,48 @@
   <button class="btn">Filtrar</button>
   <a class="btn sec" href="{{ url_for('proposicoes', deputado=cod, papel=fp.papel or None) }}">Limpar</a>
 </form>
+<script>
+(function () {
+  var f = document.getElementById('form-props');
+  if (!f) return;
+  var ds = f.querySelectorAll('.multi details');
+  // abre um de cada vez e fecha ao clicar fora
+  ds.forEach(function (d) {
+    d.addEventListener('toggle', function () {
+      if (!d.open) return;
+      ds.forEach(function (o) { if (o !== d) o.open = false; });
+      var l = d.querySelector('.multi-lista');        // perto da borda direita: abre para a esquerda
+      l.style.left = '0'; l.style.right = 'auto';
+      if (l.getBoundingClientRect().right > document.documentElement.clientWidth - 8) {
+        l.style.left = 'auto'; l.style.right = '0';
+      }
+    });
+  });
+  document.addEventListener('click', function (e) {
+    ds.forEach(function (d) { if (d.open && !d.contains(e.target)) d.open = false; });
+  });
+  // resumo atualiza ao marcar
+  f.querySelectorAll('.multi').forEach(function (m) {
+    var sum = m.querySelector('summary'), vazio = sum.querySelector('.multi-todos');
+    var txtVazio = vazio ? vazio.textContent : (m.dataset.todos || 'Todos');
+    m.dataset.todos = txtVazio;
+    function atualiza() {
+      var sel = Array.prototype.map.call(m.querySelectorAll('input:checked'), function (i) {
+        return i.parentNode.textContent.trim();
+      });
+      if (!sel.length) sum.innerHTML = '<span class="multi-todos">' + txtVazio + '</span>';
+      else if (sel.length <= 2) sum.textContent = sel.join(', ');
+      else { sum.textContent = sel.slice(0, 2).join(', ') + ' '; var b = document.createElement('b'); b.textContent = '+' + (sel.length - 2); sum.appendChild(b); }
+    }
+    m.addEventListener('change', atualiza);
+    var lb = m.querySelector('.multi-limpar');
+    if (lb) lb.addEventListener('click', function () {
+      m.querySelectorAll('input:checked').forEach(function (i) { i.checked = false; });
+      atualiza();
+    });
+  });
+})();
+</script>
 
 <div class="exportar">
   <span>Exportar ({{ props.total|mil }}{% if extras %} + {{ extras|length }} da pauta{% endif %}):</span>
@@ -52,7 +99,7 @@
 
 <section class="kpis">
   <div class="kpi dest"><b>{{ props.total|mil }}</b><span>Proposições no recorte</span></div>
-  {% if fp.papel in ('relator', 'todos') %}<div class="kpi dest"><b>{{ props.relator|mil }}</b><span>Como relator atual</span></div>
+  {% if 'relator' in papel_sel %}<div class="kpi dest"><b>{{ props.relator|mil }}</b><span>Como relator atual</span></div>
   {% else %}<div class="kpi dest"><b>{{ props.principal|mil }}</b><span>Como 1º autor</span></div>{% endif %}
   <div class="kpi dest"><b>{{ props.projetos|mil }}</b><span>Projetos (PL, PLP, PEC, PDL, PRC)</span></div>
   <div class="kpi dest"><b>{{ props.tramitando|mil }}</b><span>Em tramitação</span></div>
