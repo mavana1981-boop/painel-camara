@@ -11,6 +11,7 @@ Regras (iguais às do painel do Senado e do Power BI da Câmara):
 - Fidelidade = votos iguais à orientação que valeu para o partido do deputado na data do voto
   (do próprio partido; se ele não orientou, da federação; senão, do bloco).
 """
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -284,11 +285,122 @@ def lista_votacoes(f: Filtros, busca: str = "", limite: int = 300):
     sql = text(f"""
         SELECT vt.id, vt.data, vt.sigla_materia, vt.numero_materia, vt.ano_materia,
                vt.descricao_materia, vt.descricao_votacao, vt.dispositivo, vt.secreta,
-               vt.qtd_sim, vt.qtd_nao, vt.aprovacao
+               vt.qtd_sim, vt.qtd_nao, vt.aprovacao, vt.proposicao_id, vt.etapa
         FROM votacoes vt WHERE {where}{cond_busca}
         ORDER BY vt.data DESC LIMIT :lim""")
     with engine.connect() as c:
-        return [dict(r) for r in c.execute(sql, p).mappings()]
+        lista = [dict(r) for r in c.execute(sql, p).mappings()]
+    for v in lista:
+        v["tipo_etapa"] = tipo_etapa(v)
+    return lista
+
+
+# ---------------- etapa e agrupamento por proposição ----------------
+
+def _plano(s):
+    from db import sem_acento
+    return " ".join(sem_acento(s or "").lower().split())
+
+
+# ordem importa: o primeiro padrão encontrado vence
+_ETAPAS = (
+    ("Redação final", ("redacao final",)),
+    ("2º turno", ("segundo turno", "2o turno", "2º turno")),
+    ("1º turno", ("primeiro turno", "1o turno", "1º turno")),
+    ("Urgência", ("urgencia",)),
+    ("Retirada de pauta", ("retirada de pauta", "retirar de pauta")),
+    ("Adiamento", ("adiamento", "adiar", "adia")),
+    ("Encerramento da discussão", ("encerramento da discussao",)),
+    ("Votação por partes", ("votacao por partes", "votacao em globo", "artigo por artigo")),
+    ("Preferência", ("preferencia",)),
+    ("Destaque", ("destaque", "dtq", "dvs", "mantido o texto", "mantida a expressao", "mantido o dispositivo",
+                  "suprimido o texto", "suprimida a expressao", "suprimido o dispositivo")),
+    ("Emenda aglutinativa", ("emenda aglutinativa",)),
+    ("Subemenda", ("subemenda",)),
+    ("Substitutivo", ("substitutivo",)),
+    ("Emenda", ("emenda", "ema")),
+    ("Parecer", ("parecer",)),
+    ("Requerimento", ("requerimento", "req")),
+    ("Texto principal", ("projeto", "proposta", "medida provisoria", "projeto de decreto", "projeto de resolucao")),
+)
+_GENERICAS = (None, "Requerimento", "Texto principal")
+
+
+_ETAPAS_RE = [(rot, re.compile(r"\b(?:" + "|".join(re.escape(k) for k in chaves) + r")\b"))
+              for rot, chaves in _ETAPAS]
+
+
+def _classifica(txt):
+    t = _plano(txt)
+    if not t:
+        return None
+    for rotulo, rx in _ETAPAS_RE:
+        if rx.search(t):
+            return rotulo
+    return None
+
+
+def tipo_etapa(v) -> str:
+    """Rótulo curto da etapa ("Destaque", "1º turno", "Requerimento"...), a partir do que foi votado
+    e, se for genérico, do objeto da votação."""
+    r = _classifica(v.get("descricao_votacao"))
+    if r in _GENERICAS:
+        r2 = _classifica(v.get("etapa"))
+        if r2 not in _GENERICAS or r is None:
+            r = r2
+    return r or "Votação"
+
+
+def chave_proposicao(v):
+    if v.get("proposicao_id"):
+        return ("id", v["proposicao_id"])
+    if v.get("sigla_materia") and v.get("numero_materia"):
+        return ("n", v["sigla_materia"], v["numero_materia"], v.get("ano_materia"))
+    return ("v", v["id"])
+
+
+def agrupar_votacoes(lista):
+    """Junta as votações da mesma proposição (requerimentos, destaques, turnos...) num só item.
+    Grupos na ordem da votação mais recente; dentro do grupo, em ordem cronológica."""
+    grupos = {}
+    for v in lista:
+        g = grupos.setdefault(chave_proposicao(v), {"votacoes": []})
+        g["votacoes"].append(v)
+    saida = []
+    for chave, g in grupos.items():
+        vs = sorted(g["votacoes"], key=lambda v: (v["data"] is None, v["data"]))
+        recente = max(vs, key=lambda v: (v["data"] is not None, v["data"] or datetime.min))
+        padrao = next((v for v in reversed(vs) if not v["secreta"]), recente)
+        saida.append({"chave": chave, "votacoes": vs, "ref": recente, "padrao": padrao,
+                      "ids": {v["id"] for v in vs}, "inicio": vs[0]["data"], "fim": recente["data"]})
+    saida.sort(key=lambda g: (g["fim"] is not None, g["fim"] or datetime.min), reverse=True)
+    return saida
+
+
+def votacoes_da_proposicao(v, f: "Filtros | None" = None):
+    """Todas as votações da mesma proposição (no período do filtro), em ordem cronológica."""
+    chave = chave_proposicao(v)
+    if chave[0] == "v":
+        return [v]
+    base = Filtros(f.inicio, f.fim, opostas=False) if f else Filtros(opostas=False)
+    where, p = base.where_votacoes()
+    if chave[0] == "id":
+        where += " AND vt.proposicao_id = :pid"
+        p["pid"] = chave[1]
+    else:
+        where += " AND vt.proposicao_id IS NULL AND vt.sigla_materia = :sg AND vt.numero_materia = :nm"
+        p.update(sg=chave[1], nm=chave[2])
+    sql = text(f"""SELECT vt.id, vt.data, vt.descricao_votacao, vt.etapa, vt.secreta, vt.qtd_sim, vt.qtd_nao,
+                          vt.aprovacao FROM votacoes vt WHERE {where} ORDER BY vt.data""")
+    with engine.connect() as c:
+        lista = [dict(r) for r in c.execute(sql, p).mappings()]
+    if not any(x["id"] == v["id"] for x in lista):   # votação fora do período do filtro
+        lista.append({k: v.get(k) for k in ("id", "data", "descricao_votacao", "etapa", "secreta",
+                                           "qtd_sim", "qtd_nao", "aprovacao")})
+        lista.sort(key=lambda x: (x["data"] is None, x["data"]))
+    for x in lista:
+        x["tipo_etapa"] = tipo_etapa(x)
+    return lista
 
 
 def detalhe_votacao(vid: str):
@@ -349,5 +461,6 @@ def detalhe_votacao(vid: str):
 
     traidores = [r for r in vts if r["seguiu_partido"] is False]  # contra a orientação do próprio partido
 
+    v["tipo_etapa"] = tipo_etapa(v)
     return {"votacao": v, "orientacoes": oris, "votos": vts, "placar": placar,
             "contagem": contagem, "gov": gov, "opo": opo, "traidores": traidores}

@@ -123,6 +123,12 @@ def _fmt_data(v):
     return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
 
 
+@app.template_filter("hora")
+def _fmt_hora(v):
+    s = str(v or "")
+    return s[11:16] if len(s) >= 16 and s[11:16] != "00:00" else ""
+
+
 @app.template_filter("brl")
 def _fmt_brl(v, casas=2):
     if v is None:
@@ -189,13 +195,15 @@ def rankings():
 def votacoes():
     f, op = _contexto_filtros()
     busca = (request.args.get("busca") or "").strip()
-    lista = metrics.lista_votacoes(f, busca)
+    lista = metrics.lista_votacoes(f, busca, limite=600)
+    grupos = metrics.agrupar_votacoes(lista)
     vid = (request.args.get("id") or "").strip() or None
-    if vid is None and lista:
-        vid = next((v["id"] for v in lista if not v["secreta"]), lista[0]["id"])
+    if vid is None and grupos:
+        vid = next((g["padrao"]["id"] for g in grupos if not g["padrao"]["secreta"]), grupos[0]["padrao"]["id"])
     det = metrics.detalhe_votacao(vid) if vid is not None else None
+    etapas = metrics.votacoes_da_proposicao(det["votacao"], f) if det else []
     return render_template("votacoes.html", aba="votacoes", f=f, op=op, busca=busca,
-                           lista=lista, det=det, vid=vid)
+                           lista=lista, grupos=grupos, det=det, vid=vid, etapas=etapas)
 
 
 # ---------------- abas por deputado ----------------

@@ -46,6 +46,7 @@ votacoes = Table(
     Column("descricao_materia", Text),                # ementa da proposição
     Column("descricao_votacao", Text),                # o que foi votado ("Aprovado o Requerimento...")
     Column("dispositivo", Text),
+    Column("etapa", Text),                            # o que estava em votação (requerimento, destaque, turno...)
     Column("sessao", String(200)),
     Column("presidente", String(120)),
     Column("qtd_sim", Integer),
