@@ -4,39 +4,68 @@
 {% block conteudo %}
 {{ m.seletor(lista, cod, s, 'proposicoes') }}
 
+<nav class="abas-papel">
+  <a href="{{ url_for('proposicoes', deputado=cod) }}" class="{{ 'on' if fp.papel not in ('relator', 'todos') }}">Autoria</a>
+  <a href="{{ url_for('proposicoes', deputado=cod, papel='relator') }}" class="{{ 'on' if fp.papel == 'relator' }}">Relatoria <small>{{ opc.n_relator|mil }}</small></a>
+  <a href="{{ url_for('proposicoes', deputado=cod, papel='todos') }}" class="{{ 'on' if fp.papel == 'todos' }}">Tudo</a>
+</nav>
+
 <form class="filtros" method="get">
   <input type="hidden" name="deputado" value="{{ cod }}">
-  <label style="flex:2 1 200px">Buscar na ementa<input type="search" name="busca" value="{{ fp.busca }}" placeholder="Ex.: segurança, PL 1234"></label>
-  <label>Autoria<select name="papel">
-    <option value="">Autor ou coautor</option>
-    <option value="autor" {{ 'selected' if fp.papel == 'autor' }}>1º autor</option>
-    <option value="coautor" {{ 'selected' if fp.papel == 'coautor' }}>Coautor</option></select></label>
+  <label style="flex:2 1 200px">Buscar na ementa, número ou autoria<input type="search" name="busca" value="{{ fp.busca }}" placeholder="Ex.: segurança, PL 1234"></label>
+  <label>Papel do deputado<select name="papel">
+    {% for k, rot in papeis.items() %}<option value="{{ k }}" {{ 'selected' if fp.papel == k }}>{{ rot }}</option>{% endfor %}</select></label>
   <label>Tipo<select name="sigla"><option value="">Todos</option>
-    {% for x in todas_siglas %}<option {{ 'selected' if fp.sigla == x }}>{{ x }}</option>{% endfor %}</select></label>
-  <label>Situação<select name="situacao">
-    <option value="">Todas</option>
+    {% for x in opc.siglas %}<option {{ 'selected' if fp.sigla == x }}>{{ x }}</option>{% endfor %}</select></label>
+  <label>Regime<select name="regime">
+    <option value="">Todos</option>
+    {% for k, v in regimes.items() %}<option value="{{ k }}" {{ 'selected' if fp.regime == k }}>{{ v[0] }}</option>{% endfor %}
+    <option value="sem" {{ 'selected' if fp.regime == 'sem' }}>Não informado</option></select></label>
+  <label>Andamento<select name="situacao">
+    <option value="">Todos</option>
     <option value="tramitando" {{ 'selected' if fp.situacao == 'tramitando' }}>Tramitando</option>
     <option value="encerrada" {{ 'selected' if fp.situacao == 'encerrada' }}>Tramitação encerrada</option>
     <option value="norma" {{ 'selected' if fp.situacao == 'norma' }}>Virou norma jurídica</option></select></label>
+  <label style="flex:2 1 220px">Situação atual<select name="sit">
+    <option value="">Todas</option>
+    {% for x in opc.situacoes %}<option {{ 'selected' if fp.sit == x }}>{{ x }}</option>{% endfor %}</select></label>
+  <label>Onde está<select name="orgao">
+    <option value="">Qualquer órgão</option>
+    {% for x in opc.orgaos %}<option {{ 'selected' if fp.orgao == x }}>{{ x }}</option>{% endfor %}</select></label>
   <label>Apresentada de<input type="date" name="inicio" value="{{ fp.inicio or '' }}"></label>
   <label>até<input type="date" name="fim" value="{{ fp.fim or '' }}"></label>
+  <label>Ordenar<select name="ordem">
+    <option value="">Mais recentes</option>
+    <option value="movimento" {{ 'selected' if fp.ordem == 'movimento' }}>Última movimentação</option>
+    <option value="urgencia" {{ 'selected' if fp.ordem == 'urgencia' }}>Urgentes primeiro</option>
+    <option value="parado" {{ 'selected' if fp.ordem == 'parado' }}>Mais tempo parado</option></select></label>
   <button class="btn">Filtrar</button>
-  <a class="btn sec" href="{{ url_for('proposicoes', deputado=cod) }}">Limpar</a>
+  <a class="btn sec" href="{{ url_for('proposicoes', deputado=cod, papel=fp.papel or None) }}">Limpar</a>
 </form>
+
+<div class="exportar">
+  <span>Exportar ({{ props.total|mil }}{% if extras %} + {{ extras|length }} da pauta{% endif %}):</span>
+  <a class="btn sec" href="{{ url_for('proposicoes_exportar', deputado=cod, pautas='1' if extras else None, **args_export) }}">Excel</a>
+  <a class="btn sec" href="{{ url_for('proposicoes_exportar', deputado=cod, formato='csv', pautas='1' if extras else None, **args_export) }}">CSV</a>
+</div>
 
 <section class="kpis">
   <div class="kpi dest"><b>{{ props.total|mil }}</b><span>Proposições no recorte</span></div>
-  <div class="kpi dest"><b>{{ props.principal|mil }}</b><span>Como 1º autor</span></div>
+  {% if fp.papel in ('relator', 'todos') %}<div class="kpi dest"><b>{{ props.relator|mil }}</b><span>Como relator atual</span></div>
+  {% else %}<div class="kpi dest"><b>{{ props.principal|mil }}</b><span>Como 1º autor</span></div>{% endif %}
   <div class="kpi dest"><b>{{ props.projetos|mil }}</b><span>Projetos (PL, PLP, PEC, PDL, PRC)</span></div>
   <div class="kpi dest"><b>{{ props.tramitando|mil }}</b><span>Em tramitação</span></div>
+  <div class="kpi dest opo"><a href="{{ url_for('proposicoes', deputado=cod, papel=fp.papel or None, regime='urgencia', situacao='tramitando') }}" style="text-decoration:none;color:inherit"><b>{{ props.urgentes|mil }}</b><span>Em urgência (tramitando)</span></a></div>
   <div class="kpi dest ouro"><b>{{ props.normas|mil }}</b><span>Transformadas em norma jurídica</span></div>
 </section>
 
 <section class="grade">
-  <div class="card neu"><h2>Por tipo</h2>{{ m.hbarras(props.por_tipo, 'sigla', 'n') }}</div>
-  <div class="card neu"><h2>Por situação atual</h2>{{ m.hbarras(props.por_situacao, 'situacao', 'n') }}</div>
-  <div class="card neu"><h2>Por ano</h2>{{ m.hbarras(props.por_ano, 'ano', 'n') }}
+  <div class="card neu"><h2>Por tipo</h2>{{ m.hbarras(props.por_tipo, 'sigla', 'n') }}
+    <h2 style="border-top:1px solid var(--linha)">Por ano</h2>{{ m.hbarras(props.por_ano, 'ano', 'n') }}</div>
+  <div class="card neu"><h2>Por situação atual</h2>{{ m.hbarras(props.por_situacao, 'situacao', 'n') }}
     <h2 style="border-top:1px solid var(--linha)">Por forma de apreciação</h2>{{ m.hbarras(props.por_conteudo, 'conteudo', 'n', limite=6) }}</div>
+  <div class="card neu"><h2>Por regime de tramitação</h2>{{ m.hbarras(props.por_regime, 'regime', 'n', limite=8) }}
+    <h2 style="border-top:1px solid var(--linha)">Onde está agora</h2>{{ m.hbarras(props.por_orgao, 'orgao', 'n', limite=8) }}</div>
 </section>
 
 <section class="card neu">
@@ -49,15 +78,41 @@
       <tr>
         <td style="white-space:nowrap;color:var(--suave)">{{ p.data_apresentacao|data }}</td>
         <td style="white-space:nowrap"><b>{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.identificacao }}</a>{% else %}{{ p.identificacao }}{% endif %}</b>
-          <div style="font-size:11px;color:var(--suave)">{{ '1º autor' if p.principal else 'coautor' }}{% if p.virou_norma %} · <b style="color:#8a6d22">norma</b>{% endif %}</div></td>
+          <div style="font-size:11px;color:var(--suave)">{{ p.papel }}{% if p.virou_norma %} · <b style="color:#8a6d22">norma</b>{% endif %}</div>
+          {% if p.grupo_regime == 'urgencia' %}<span class="regime urg" title="{{ p.regime }}">Urgência</span>{% elif p.grupo_regime == 'prioridade' %}<span class="regime pri" title="{{ p.regime }}">Prioridade</span>{% elif p.grupo_regime == 'especial' %}<span class="regime esp" title="{{ p.regime }}">Especial</span>{% endif %}</td>
         <td style="font-size:13px">{{ p.ementa or '' }}
-          {% if not p.principal and p.autoria %}<div style="font-size:11px;color:var(--suave);margin-top:2px">{{ p.autoria[:120] }}{{ '…' if p.autoria|length > 120 }}</div>{% endif %}</td>
-        <td class="m-esc" style="font-size:12px">{{ p.situacao or '—' }}{% if p.data_situacao %}<div style="color:var(--suave)">{{ p.data_situacao|data }}</div>{% endif %}</td>
+          {% if (not p.principal or p.papel == 'relator') and p.autoria %}<div style="font-size:11px;color:var(--suave);margin-top:2px">{{ p.autoria[:120] }}{{ '…' if p.autoria|length > 120 }}</div>{% endif %}</td>
+        <td class="m-esc" style="font-size:12px">{{ p.situacao or '—' }}
+          <div style="color:var(--suave)">{% if p.orgao %}<b>{{ p.orgao }}</b>{% endif %}{% if p.orgao and p.data_situacao %} · {% endif %}{% if p.data_situacao %}{{ p.data_situacao|data }}{% endif %}{% if p.dias_parado is not none and p.dias_parado > 30 %} · {{ p.dias_parado }} dias parado{% endif %}</div>
+          {% if p.relator_nome and p.papel != 'relator' %}<div style="color:var(--suave)">Relator: {{ p.relator_nome }}{% if p.relator_partido %} ({{ p.relator_partido }}-{{ p.relator_uf }}){% endif %}</div>{% endif %}</td>
       </tr>
     {% else %}<tr><td colspan="4" class="vazio-msg">Nenhuma proposição neste recorte.</td></tr>{% endfor %}
     </tbody>
   </table>
   </div>
-  <p class="nota">Fonte: arquivos de proposições e autores da Câmara (autoria e coautoria; apoiadores não contam). “1º autor” = o deputado é o primeiro signatário. Emendas, substitutivos, pareceres e redações ficam de fora.</p>
+  <p class="nota">Fonte: arquivos de proposições e autores da Câmara (autoria e coautoria; apoiadores não contam). “1º autor” = o deputado é o primeiro signatário. “Relator atual” = relator informado no último andamento da proposição (proposições apresentadas nesta legislatura). Regime: Urgência inclui a urgência regimental (art. 155) e a constitucional. Emendas, substitutivos, pareceres e redações ficam de fora.</p>
 </section>
+
+{% if extras %}
+<section class="card neu">
+  <h2>Outras relatorias vistas nas pautas das comissões <small>{{ extras|length }}</small></h2>
+  <div class="rolagem" style="max-height:420px">
+  <table>
+    <thead><tr><th>Proposição</th><th>Ementa</th><th>Colegiado</th><th class="m-esc">Último resultado na pauta</th></tr></thead>
+    <tbody>
+    {% for r in extras %}
+      <tr {% if r.data_destituicao %}style="opacity:.6"{% endif %}>
+        <td style="white-space:nowrap"><b>{% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.identificacao }}</a>{% else %}{{ r.identificacao }}{% endif %}</b>
+          <div style="font-size:11px;color:var(--suave)">desde {{ r.data_designacao|data }}{% if r.data_destituicao %} · saiu em {{ r.data_destituicao|data }}{% endif %}</div></td>
+        <td style="font-size:13px">{{ r.ementa or '' }}</td>
+        <td>{{ r.colegiado or '—' }}</td>
+        <td class="m-esc" style="font-size:12px">{{ r.situacao or '—' }}{% if r.data_situacao %}<div style="color:var(--suave)">{{ r.data_situacao|data }}</div>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="nota">Relatorias montadas a partir das pautas das reuniões deliberativas: incluem proposições de anos anteriores e relatorias que já mudaram de mãos.</p>
+</section>
+{% endif %}
 {% endblock %}
