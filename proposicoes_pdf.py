@@ -179,8 +179,8 @@ def gerar(parl, props, filtros_txt, titulo_papel, extras=(), agora=None, relator
     import questoes
     sem = sum(1 for p in itens if not p.get("resumo") and (p.get("ementa") or "").strip()) \
         if questoes.configurado() else 0
-    nota_resumo = (" As ementas resumidas foram geradas por IA a partir da ementa oficial, que vem logo abaixo de "
-                   "cada uma; confira antes de citar.")
+    nota_resumo = (" As ementas resumidas foram geradas por IA a partir da ementa oficial (disponível no painel "
+                   "e na exportação em Excel); confira antes de citar.")
     if sem:
         nota_resumo += (f" {sem} proposição(ões) saíram só com a ementa oficial porque o resumo ainda estava "
                         "sendo gerado; exporte de novo em alguns minutos para tê-las completas.")
@@ -205,11 +205,9 @@ def _cartao(p, st, larg, cor_g, fundo_g):
     cab = ident + (f'  <font size="9" color="#5f6b76">{_p(" · ".join(selos))}</font>' if selos else "")
     data_ap = _br(p.get("data_apresentacao"))
     corpo = [Paragraph(cab, st["id"])]
-    if p.get("resumo"):          # ementa resumida (IA) em destaque; a oficial logo abaixo, menor
+    if p.get("resumo"):          # no PDF só a ementa resumida (IA); a oficial fica no app e no Excel
         corpo += [Spacer(1, 1 * mm), Paragraph(_p(p["resumo"]), st["resumo"])]
-        if p.get("ementa"):
-            corpo += [Spacer(1, 0.8 * mm), Paragraph(f"<i>Ementa:</i> {_p(p['ementa'])}", st["meta"])]
-    elif p.get("ementa"):
+    elif p.get("ementa"):        # resumo ainda não gerado: usa a ementa oficial para não ficar vazio
         corpo += [Spacer(1, 1 * mm), Paragraph(_p(p["ementa"]), st["ementa"])]
     if p.get("autoria") and (not p.get("principal") or "relator" in (p.get("papel") or "")):
         aut = p["autoria"][:220] + ("…" if len(p["autoria"]) > 220 else "")
