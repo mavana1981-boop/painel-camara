@@ -64,6 +64,8 @@ def gerar(parl, props, filtros_txt, titulo_papel, extras=(), agora=None, relator
         "mini_n": ParagraphStyle("mini_n", fontName="Helvetica-Bold", fontSize=9.5, leading=12.5,
                                  textColor=TEXTO, alignment=2),
         "id": ParagraphStyle("id", fontName="Helvetica-Bold", fontSize=12.5, leading=16, textColor=TEXTO),
+        "resumo": ParagraphStyle("resumo", fontName="Helvetica", fontSize=11.2, leading=15,
+                                 textColor=colors.HexColor("#1f2933")),
         "ementa": ParagraphStyle("ementa", fontName="Helvetica", fontSize=10.8, leading=14.6,
                                  textColor=colors.HexColor("#2b353d")),
         "meta": ParagraphStyle("meta", fontName="Helvetica", fontSize=9.6, leading=13, textColor=META),
@@ -174,10 +176,18 @@ def gerar(parl, props, filtros_txt, titulo_papel, extras=(), agora=None, relator
                  "situacao": r.get("situacao"), "data_situacao": r.get("data_situacao"), "_meta": meta}
             s.append(KeepTogether([_cartao(p, st, larg, cor, cor_cl), Spacer(1, 2.5 * mm)]))
 
+    import questoes
+    sem = sum(1 for p in itens if not p.get("resumo") and (p.get("ementa") or "").strip()) \
+        if questoes.configurado() else 0
+    nota_resumo = (" As ementas resumidas foram geradas por IA a partir da ementa oficial, que vem logo abaixo de "
+                   "cada uma; confira antes de citar.")
+    if sem:
+        nota_resumo += (f" {sem} proposição(ões) saíram só com a ementa oficial porque o resumo ainda estava "
+                        "sendo gerado; exporte de novo em alguns minutos para tê-las completas.")
     s += [Spacer(1, 4 * mm), Paragraph(
         "Fonte: dados abertos da Câmara dos Deputados (proposições, autores e pautas). “Relator atual” é o "
-        "informado no último andamento da proposição. Emendas, substitutivos, pareceres e redações ficam de fora.",
-        st["nota"])]
+        "informado no último andamento da proposição. Emendas, substitutivos, pareceres e redações ficam de fora."
+        + (nota_resumo if any(p.get("resumo") for p in itens) or sem else ""), st["nota"])]
     doc.build(s, canvasmaker=_Numerado)
     return buf.getvalue()
 
@@ -195,7 +205,11 @@ def _cartao(p, st, larg, cor_g, fundo_g):
     cab = ident + (f'  <font size="9" color="#5f6b76">{_p(" · ".join(selos))}</font>' if selos else "")
     data_ap = _br(p.get("data_apresentacao"))
     corpo = [Paragraph(cab, st["id"])]
-    if p.get("ementa"):
+    if p.get("resumo"):          # ementa resumida (IA) em destaque; a oficial logo abaixo, menor
+        corpo += [Spacer(1, 1 * mm), Paragraph(_p(p["resumo"]), st["resumo"])]
+        if p.get("ementa"):
+            corpo += [Spacer(1, 0.8 * mm), Paragraph(f"<i>Ementa:</i> {_p(p['ementa'])}", st["meta"])]
+    elif p.get("ementa"):
         corpo += [Spacer(1, 1 * mm), Paragraph(_p(p["ementa"]), st["ementa"])]
     if p.get("autoria") and (not p.get("principal") or "relator" in (p.get("papel") or "")):
         aut = p["autoria"][:220] + ("…" if len(p["autoria"]) > 220 else "")

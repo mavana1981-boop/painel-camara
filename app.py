@@ -247,6 +247,9 @@ def proposicoes():
         return render_template("vazio.html", aba="proposicoes", op=op, lista=lista)
     filtros = _filtros_proposicoes()
     props = paineis.proposicoes(cod, **filtros)
+    import resumos
+    if resumos.anexar(props["itens"]):          # adianta os resumos do recorte para o relatório
+        resumos.gerar_em_segundo_plano(props["itens"])
     extras = []
     chave = paineis.papel_chave(filtros["papel"])
     if chave == "relator" and not any(filtros[k] for k in filtros if k not in ("papel", "ordem")):
@@ -270,11 +273,16 @@ def proposicoes_exportar():
     s = paineis.deputado(cod) or {}
     props = paineis.proposicoes(cod, limite=None, **filtros)
     itens = props["itens"]
+    import resumos
+    import proposicoes_pdf
+    alvo = itens[:proposicoes_pdf.LIMITE] if request.args.get("formato") == "pdf" else itens
+    if resumos.anexar(alvo):                     # espera um pouco pelos resumos que faltam
+        resumos.gerar(alvo, prazo=resumos.PRAZO_EXPORTACAO)
+        resumos.anexar(alvo)
     extras = paineis.relatorias_pauta_extras(cod, [p["id"] for p in itens]) \
         if paineis.papel_chave(filtros["papel"]) == "relator" and request.args.get("pautas") == "1" else []
     nome = exportar.nome_arquivo(s.get("nome") or str(cod), paineis.papel_chave(filtros["papel"]))
     if request.args.get("formato") == "pdf":
-        import proposicoes_pdf
         corpo = proposicoes_pdf.gerar(s, props, exportar.descricao_filtros(s, filtros, com_nome=False),
                                       paineis.papel_rotulo(filtros["papel"]), extras,
                                       relatoria=paineis.papel_chave(filtros["papel"]) == "relator")

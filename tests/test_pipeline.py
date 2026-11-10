@@ -295,7 +295,7 @@ def test_proposicoes_tela_e_exportacao():
     assert ws["A4"].value == "Proposição" and ws.max_row == 4 + 5
     assert "Ana Oposição" in ws["A1"].value and "Autor, coautor ou relator" in ws["A1"].value
     linhas = {ws.cell(row=i, column=1).value: i for i in range(5, ws.max_row + 1)}
-    assert ws.cell(row=linhas["PL 2100/2025"], column=5).value == "relator"
+    assert ws.cell(row=linhas["PL 2100/2025"], column=6).value == "relator"
     r = cli.get("/proposicoes/exportar?deputado=101&formato=csv&regime=urgencia&papel=relator")
     txt = r.data.decode("utf-8-sig")
     assert r.mimetype == "text/csv" and txt.startswith("Proposição;") and "PL 2100/2025" in txt
@@ -2683,3 +2683,39 @@ def test_proposicoes_filtros_multiplos():
     r = cli.get("/proposicoes/exportar?deputado=101&formato=csv&sigla=PL&sigla=PDL")
     assert len(r.data.decode("utf-8-sig").strip().splitlines()) == 1 + n_pl_pdl
     assert 'sigla=PL&amp;sigla=PDL' in html                                  # exportação leva a seleção
+
+
+def test_proposicoes_ementa_resumida():
+    import io
+    import json
+    import re
+    from pypdf import PdfReader
+    import questoes
+    import resumos
+    chamadas = []
+
+    def falsa_ia(msg, *a, **k):
+        chamadas.append(msg)
+        ids = [int(x) for x in re.findall(r'"id": (\d+)', msg)]
+        return "```json\n" + json.dumps([{"id": i, "resumo": f"Resumo simples {i}."} for i in ids]) + "\n```"
+
+    orig_cfg, orig_ia = questoes.configurado, questoes.chamar_ia
+    questoes.configurado, questoes.chamar_ia = (lambda: True), falsa_ia
+    try:
+        cli = _cliente()
+        r = cli.get("/proposicoes/exportar?deputado=101&papel=todos&formato=pdf")
+        txt = "".join(p.extract_text() for p in PdfReader(io.BytesIO(r.data)).pages)
+        assert "Resumo simples 2440210." in txt and "Ementa:" in txt and "geradas por IA" in " ".join(txt.split())
+        n = len(chamadas)
+        assert n >= 1
+        # reaproveita: exportar de novo não chama a IA
+        r = cli.get("/proposicoes/exportar?deputado=101&papel=todos&formato=csv")
+        assert len(chamadas) == n and "Resumo simples 2440210." in r.data.decode("utf-8-sig")
+        assert r.data.decode("utf-8-sig").split("\n")[0].split(";")[3] == "Ementa resumida"
+        # ementa mudou → resumo antigo não vale
+        assert resumos.resumos_de([{"id": 2440210, "ementa": "Outra ementa"}]) == {}
+        # resposta sem JSON não quebra nada
+        questoes.chamar_ia = lambda *a, **k: "não sei"
+        assert resumos.gerar([{"id": 1, "ementa": "x"}]) == {}
+    finally:
+        questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia

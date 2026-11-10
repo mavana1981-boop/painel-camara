@@ -11,6 +11,7 @@ COLUNAS = [
     ("Proposição", "identificacao", 16),
     ("Tipo", "tipo_documento", 22),
     ("Apresentação", "data_apresentacao", 13),
+    ("Ementa resumida", "resumo", 50),
     ("Ementa", "ementa", 70),
     ("Papel do deputado", "papel", 16),
     ("Autoria", "autoria", 40),
