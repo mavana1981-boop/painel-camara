@@ -361,7 +361,19 @@ def _ident_proposicao(r: dict):
     return sigla.upper() or None, numero, ano
 
 
-def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_orient, linhas_props=()):
+def _sem_alvo(titulo: str) -> str:
+    """'DTQ 3 => PEC 45/2019' -> 'DTQ 3' (o alvo já aparece como matéria principal)."""
+    return re.split(r"\s*=>\s*", titulo or "", maxsplit=1)[0].strip()
+
+
+def _texto_objeto(r: dict) -> str:
+    titulo = _sem_alvo((r.get("proposicao_titulo") or "").strip())
+    ementa = (r.get("proposicao_ementa") or r.get("descricao") or "").strip()
+    return " — ".join(x for x in (titulo, ementa) if x)
+
+
+def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_orient, linhas_props=(),
+                        linhas_objetos=()):
     """Substitui as votações nominais do Plenário de um ano (os arquivos são revisados todo dia)."""
     vts = {}
     for r in linhas_votacoes:
@@ -380,6 +392,9 @@ def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_or
             "qtd_outros": _int(r.get("votosOutros")), "qtd_abstencao": None,
             "aprovacao": (aprov == "1") if aprov in ("0", "1") else None, "secreta": False,
             "_prop_alt": _int(r.get("ultimaApresentacaoProposicao_idProposicao")),
+            "etapa": None,
+            "_abertura": (r.get("ultimaAberturaVotacao_descricao") or "").strip(),
+            "_apresentacao": (r.get("ultimaApresentacaoProposicao_descricao") or "").strip(),
         }
 
     lista_votos, partidos, presidentes = [], defaultdict(set), {}
@@ -443,6 +458,25 @@ def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_or
         outras = sorted(outras)
         if outras:
             v["dispositivo"] = ", ".join(outras)[:300]
+        acess = [r for r in lista if r is not principal and _ident_proposicao(r) != (sigla, numero, ano_m)]
+        if acess:   # requerimento, destaque, emenda... votado "sobre" a matéria principal
+            v["_acessoria"] = _texto_objeto(acess[0])
+
+    # o objeto da votação (arquivo votacoesObjetos): diz se foi requerimento, destaque, emenda, turno...
+    objetos = defaultdict(list)
+    for r in linhas_objetos:
+        vid = (r.get("idVotacao") or "").strip()
+        if vid in vts:
+            objetos[vid].append(r)
+    for vid, v in vts.items():
+        principal = (v["sigla_materia"], v["numero_materia"], v["ano_materia"])
+        objs = [r for r in objetos.get(vid, ())
+                if _ident_proposicao(r) != principal or "=>" in (r.get("proposicao_titulo") or "")]
+        candidatos = [_texto_objeto(objs[0]) if objs else "", v.get("_acessoria") or "", v["_abertura"],
+                      v["_apresentacao"] if v["_prop_alt"] != v["proposicao_id"] else ""]
+        v["etapa"] = next((c for c in candidatos if c), None)
+        if v["etapa"]:
+            v["etapa"] = v["etapa"][:600]
 
     linhas_ori = [{"votacao_id": vid, "lideranca": rot, "voto": voto}
                   for vid, d in oris.items() for rot, voto in d.items()]
@@ -493,6 +527,11 @@ def coletar_votacoes(anos) -> int:
         try:
             for nome in ("votacoes", "votacoesVotos", "votacoesOrientacoes", "votacoesProposicoes"):
                 arqs[nome] = baixar(arquivo_anual(nome, ano))
+            try:   # opcional: só enriquece a etapa da votação
+                arqs["votacoesObjetos"] = baixar(arquivo_anual("votacoesObjetos", ano))
+            except Exception as e:
+                log.warning("votacoesObjetos %s indisponível (%s)", ano, e)
+                arqs["votacoesObjetos"] = None
             if not arqs["votacoes"] or not arqs["votacoesVotos"]:
                 log.info("votações %s: arquivo ainda não publicado", ano)
                 continue
@@ -500,7 +539,8 @@ def coletar_votacoes(anos) -> int:
                 total += gravar_votacoes_ano(
                     c, ano, ler_csv(arqs["votacoes"]), ler_csv(arqs["votacoesVotos"]),
                     ler_csv(arqs["votacoesOrientacoes"]) if arqs["votacoesOrientacoes"] else [],
-                    ler_csv(arqs["votacoesProposicoes"]) if arqs["votacoesProposicoes"] else [])
+                    ler_csv(arqs["votacoesProposicoes"]) if arqs["votacoesProposicoes"] else [],
+                    ler_csv(arqs["votacoesObjetos"]) if arqs["votacoesObjetos"] else [])
         except Exception as e:
             log.error("votações de %s não carregadas (%s) — ficam para a próxima coleta", ano, e)
             falhas.add(ano)
@@ -881,6 +921,17 @@ def executar(desde: date | None = None, so_deputados=False):
         marcar_coleta(c)
 
 
+def _marcar_recarga_etapas(anos):
+    """Uma vez só: a coluna 'etapa' das votações surgiu depois — os anos antigos (que a rotina não relê)
+    entram como pendentes para serem recarregados com ela."""
+    chave = "votacoes_etapa_v1"
+    with engine.begin() as c:
+        if c.execute(select(meta.c.valor).where(meta.c.chave == chave)).first() is not None:
+            return
+        c.execute(insert(meta).values(chave=chave, valor="1"))
+    _salvar_pendentes("votacoes_anos_pendentes", _anos_pendentes("votacoes_anos_pendentes") | set(anos))
+
+
 def carga_inicial_se_vazio():
     """Usado no primeiro deploy: se o banco estiver vazio, coleta a legislatura inteira."""
     init_db()
@@ -890,6 +941,7 @@ def carga_inicial_se_vazio():
            "perfis": _etapa_concluida("perfis")}
     inicio = int(INICIO_LEGISLATURA[:4])
     todos = list(range(inicio, date.today().year + 1))
+    _marcar_recarga_etapas(todos)
     if not tem_votacoes:
         log.info("banco vazio — carga completa desde %s", INICIO_LEGISLATURA)
         executar(date.fromisoformat(INICIO_LEGISLATURA))

@@ -49,7 +49,8 @@ def _carregar():
     with engine.begin() as c:
         collector.coletar_deputados(conn=c, docs=docs)
         collector.gravar_votacoes_ano(c, 2025, ler("votacoes-2025.csv"), ler("votacoesVotos-2025.csv"),
-                                      ler("votacoesOrientacoes-2025.csv"), ler("votacoesProposicoes-2025.csv"))
+                                      ler("votacoesOrientacoes-2025.csv"), ler("votacoesProposicoes-2025.csv"),
+                                      ler("votacoesObjetos-2025.csv"))
         for ano in (2023, 2025):
             collector.gravar_ceaps(c, ano, collector.parse_ceap_csv(collector.ler_csv(_zip(f"Ano-{ano}.csv"))))
         cad = {r[0] for r in c.execute(text("SELECT codigo FROM deputados"))}
@@ -110,6 +111,40 @@ def test_proposicao_principal_da_votacao():
     assert (sig, num, ano) == ("PL", 1087, 2025)  # a votação é de um REQ, mas a matéria é o PL
     assert disp == "REQ 456/2025"
     assert _q("SELECT sigla_materia FROM votacoes WHERE id=:v", v=V7)[0][0] == "MPV"
+
+
+def test_etapa_da_votacao():
+    et = dict(_q("SELECT id, etapa FROM votacoes"))
+    assert et[V2] == "REQ 456/2025 — Requer a retirada de pauta do PL 1087/2025."   # objeto da votação
+    assert et[V3].startswith("EMA 1 — Emenda Aglutinativa")
+    assert et[V1] is None                                    # votou-se a própria matéria
+    t = metrics.tipo_etapa
+    assert t({"descricao_votacao": "Mantido o texto. Sim: 335"}) == "Destaque"
+    assert t({"descricao_votacao": "Suprimido o texto. Sim: 307; não: 166"}) == "Destaque"
+    assert t({"descricao_votacao": "Aprovada, em segundo turno, a Proposta de Emenda à Constituição"}) == "2º turno"
+    assert t({"descricao_votacao": "Aprovada, em primeiro turno, a PEC, na forma da Emenda Aglutinativa"}) == "1º turno"
+    assert t({"descricao_votacao": "Aprovada a preferência."}) == "Preferência"
+    assert t({"descricao_votacao": "Rejeitado o Requerimento.", "etapa": et[V2]}) == "Retirada de pauta"
+    assert t({"descricao_votacao": "Rejeitado o Requerimento."}) == "Requerimento"
+    assert t({"descricao_votacao": "Altera o sistema tributário"}) == "Votação"   # 'sistema' não é 'EMA'
+    assert t({"descricao_votacao": "Aprovado o Projeto de Lei nº 1.087"}) == "Texto principal"
+
+
+def test_votacoes_agrupadas_por_proposicao():
+    lista = metrics.lista_votacoes(metrics.Filtros())
+    grupos = metrics.agrupar_votacoes(lista)
+    pl = next(g for g in grupos if V1 in g["ids"])
+    assert pl["ids"] == {V1, V2} and [v["id"] for v in pl["votacoes"]] == [V2, V1]   # cronológica
+    assert len(grupos) == len(lista) - 1
+    irmas = metrics.votacoes_da_proposicao(metrics.detalhe_votacao(V2)["votacao"])
+    assert [x["id"] for x in irmas] == [V2, V1]
+    assert [x["tipo_etapa"] for x in irmas] == ["Retirada de pauta", "Texto principal"]
+    cli = _cliente()
+    html = cli.get(f"/votacoes?id={V2}").get_data(as_text=True)
+    assert "2 votações" in html and "Votações desta proposição" in html and "1 de 2" in html
+    assert "Em votação</b>: REQ 456/2025" in html and "Retirada de pauta" in html
+    html = cli.get(f"/votacoes?id={V7}").get_data(as_text=True)
+    assert "Votações desta proposição" not in html                 # proposição com uma votação só
 
 
 def test_orientacoes_normalizadas():
@@ -416,7 +451,7 @@ def test_coleta_recupera_anos_que_falharam():
             collector.coletar_votacoes([2025])
             assert collector._anos_pendentes("votacoes_anos_pendentes") == set()
         finally:
-            for n in ("votacoes", "votacoesVotos", "votacoesOrientacoes", "votacoesProposicoes"):
+            for n in ("votacoes", "votacoesVotos", "votacoesOrientacoes", "votacoesProposicoes", "votacoesObjetos"):
                 (FIX / f"{n}-2024.csv").unlink(missing_ok=True)
     finally:
         collector.baixar = original

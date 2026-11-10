@@ -6,6 +6,14 @@
 {% if v.sigla_materia %}{{ v.sigla_materia }}{% if v.numero_materia %} {{ v.numero_materia }}/{{ v.ano_materia }}{% endif %}{% else %}Votação {{ v.id }}{% endif %}
 {%- endmacro %}
 
+{% macro link_vot(id) -%}
+{% set q = request.args.to_dict() %}{% set _ = q.update({'id': id}) %}{{ url_for('votacoes', **q) }}
+{%- endmacro %}
+
+{% macro placar_curto(x) -%}
+{% if x.qtd_sim is not none or x.qtd_nao is not none %}{{ x.qtd_sim or 0 }} × {{ x.qtd_nao or 0 }}{% endif %}
+{%- endmacro %}
+
 {% block conteudo %}
 <form class="filtros" method="get">
   <label style="flex:2 1 220px">Buscar matéria<input type="search" name="busca" value="{{ busca }}" placeholder="Ex.: PL 1087, PEC 45, destaque, reforma"></label>
@@ -19,16 +27,31 @@
 
 <div class="vot-layout">
   <aside class="card neu vot-lista">
-    <h2>Votações <small>{{ lista|length }}{% if lista|length >= 300 %}+{% endif %}</small></h2>
+    <h2>Votações <small>{{ grupos|length }} proposiç{{ 'ão' if grupos|length == 1 else 'ões' }} · {{ lista|length }}{% if lista|length >= 600 %}+{% endif %} votaç{{ 'ão' if lista|length == 1 else 'ões' }}</small></h2>
     <div class="rolagem" style="max-height:none">
-    {% for v in lista %}
-      {% set q = request.args.to_dict() %}{% set _ = q.update({'id': v.id}) %}
-      <a class="vot-item {{ 'sel' if v.id == vid }}" href="{{ url_for('votacoes', **q) }}">
-        <span class="vot-data">{{ v.data|data }}</span>
-        <b>{{ rotulo(v) }}</b>
-        <span class="vot-desc">{{ (v.descricao_votacao or v.descricao_materia or '')[:120] }}</span>
-        {% if v.secreta %}<span class="tag">secreta</span>{% endif %}
+    {% for g in grupos %}
+      {% set v = g.ref %}{% set n = g.votacoes|length %}{% set aberto = vid in g.ids %}
+      <a class="vot-item {{ 'sel' if aberto }}" href="{{ link_vot(g.padrao.id) }}">
+        <span class="vot-data">{% if n > 1 and (g.inicio|data) != (g.fim|data) %}{{ g.inicio|data }} – {% endif %}{{ g.fim|data }}</span>
+        <b>{{ rotulo(v) }}{% if n > 1 %} <span class="vot-n">{{ n }} votações</span>{% endif %}</b>
+        {% if n == 1 %}
+          <span class="vot-desc"><span class="etapa-tag">{{ v.tipo_etapa }}</span> {{ (v.descricao_votacao or v.descricao_materia or '')[:110] }}</span>
+        {% else %}
+          {% set tipos = [] %}{% for x in g.votacoes %}{% if x.tipo_etapa not in tipos %}{% set _ = tipos.append(x.tipo_etapa) %}{% endif %}{% endfor %}
+          <span class="vot-desc">{{ tipos|join(' · ') }}</span>
+        {% endif %}
+        {% if v.secreta and n == 1 %}<span class="tag">secreta</span>{% endif %}
       </a>
+      {% if aberto and n > 1 %}
+      <div class="vot-sub">
+        {% for x in g.votacoes %}
+        <a class="vot-subitem {{ 'sel' if x.id == vid }}" href="{{ link_vot(x.id) }}">
+          <span class="vot-data">{{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %}{% if placar_curto(x) %} · {{ placar_curto(x) }}{% endif %}{% if x.secreta %} · secreta{% endif %}</span>
+          <span class="vot-desc"><span class="etapa-tag">{{ x.tipo_etapa }}</span> {{ (x.descricao_votacao or '')[:90] }}</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
     {% else %}
       <div class="vazio-msg">Nenhuma votação encontrada.</div>
     {% endfor %}
@@ -40,10 +63,28 @@
     {% set v = det.votacao %}{% set c = det.contagem %}
     <div class="card neu">
       <h2>{{ rotulo(v) }} <small>{{ v.data|data }}{% if v.presidente %} · Pres.: {{ v.presidente }}{% endif %}{% if v.aprovacao is not none %}{% if v.aprovacao %} · <b style="color:#17703a">aprovada</b>{% else %} · <b style="color:#b03021">rejeitada</b>{% endif %}{% endif %}</small></h2>
+      {% if etapas|length > 1 %}
+      {% set pos = namespace(i=0) %}{% for x in etapas %}{% if x.id == v.id %}{% set pos.i = loop.index0 %}{% endif %}{% endfor %}
+      <div class="etapas-nav">
+        <span class="etapas-rot">Votações desta proposição</span>
+        {% if pos.i > 0 %}<a class="btn sec" href="{{ link_vot(etapas[pos.i - 1].id) }}" title="Votação anterior">‹</a>{% else %}<span class="btn sec off">‹</span>{% endif %}
+        <select aria-label="Escolher a votação" onchange="location.href=this.value">
+          {% for x in etapas %}
+          <option value="{{ link_vot(x.id) }}" {{ 'selected' if x.id == v.id }}>{{ loop.index }}. {{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %} · {{ x.tipo_etapa }} · {{ (x.descricao_votacao or '')[:70] }}{% if placar_curto(x) %} ({{ placar_curto(x) }}){% endif %}</option>
+          {% endfor %}
+        </select>
+        {% if pos.i < etapas|length - 1 %}<a class="btn sec" href="{{ link_vot(etapas[pos.i + 1].id) }}" title="Próxima votação">›</a>{% else %}<span class="btn sec off">›</span>{% endif %}
+        <span class="etapas-pos">{{ pos.i + 1 }} de {{ etapas|length }}</span>
+      </div>
+      {% endif %}
       <div style="padding:12px 14px">
+        <div class="etapa-box">
+          <span class="etapa-tag forte">{{ v.tipo_etapa }}</span>
+          <span><b>Em votação</b>{% if v.etapa %}: {{ v.etapa }}{% endif %}{% if v.data|hora %} <span style="color:var(--suave)">· {{ v.data|hora }}</span>{% endif %}</span>
+        </div>
         <div>{{ v.descricao_materia or '' }}</div>
-        {% if v.descricao_votacao %}<div style="color:var(--suave);margin-top:6px;font-size:13px">{{ v.descricao_votacao }}</div>{% endif %}
-        {% if v.dispositivo %}<div style="color:var(--suave);margin-top:4px;font-size:12px">Também afeta: {{ v.dispositivo }}</div>{% endif %}
+        {% if v.descricao_votacao %}<div style="color:var(--suave);margin-top:6px;font-size:13px"><b>Resultado:</b> {{ v.descricao_votacao }}</div>{% endif %}
+        {% if v.dispositivo and v.dispositivo not in (v.etapa or '') %}<div style="color:var(--suave);margin-top:4px;font-size:12px">Também afeta: {{ v.dispositivo }}</div>{% endif %}
         {% if v.proposicao_id %}<div style="margin-top:4px;font-size:12px"><a href="https://www.camara.leg.br/propostas-legislativas/{{ v.proposicao_id }}" target="_blank" rel="noopener">ficha da proposição ↗</a></div>{% endif %}
         {% set tot = c['SIM'] + c['NÃO'] %}
         <div class="placar">
