@@ -170,7 +170,8 @@ class _Numerado(rl_canvas.Canvas):
         super().save()
 
 
-def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R L A M E N T A R"):
+def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R L A M E N T A R",
+                    rodape="Meu Parlamentar"):
     """Função onPage do reportlab: faixa com foto e nome na 1ª página, barra fina nas demais, rodapé."""
     cor, cor_esc, cor_cl = (colors.HexColor(CASA[k]) for k in ("cor", "cor_esc", "cor_cl"))
 
@@ -238,7 +239,7 @@ def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R 
         c.line(16 * mm, 14 * mm, larg - 16 * mm, 14 * mm)
         c.setFont("Helvetica", 9)
         c.setFillColor(SUAVE)
-        c.drawString(16 * mm, 10 * mm, f"Meu Parlamentar · {CASA['painel']} · gerado em "
+        c.drawString(16 * mm, 10 * mm, f"{rodape} · {CASA['painel']} · gerado em "
                                        f"{agora:%d/%m/%Y} às {agora:%H:%M}")
         c.restoreState()
 
