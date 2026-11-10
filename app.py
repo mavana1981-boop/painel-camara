@@ -131,6 +131,12 @@ def _fmt_brl(v, casas=2):
     return f"R$ {s}"
 
 
+@app.template_filter("zip_self")
+def _zip_self(valores):
+    """['PL', 'PEC'] → [('PL', 'PL'), ('PEC', 'PEC')] — opções (valor, texto) dos filtros múltiplos."""
+    return [(v, v) for v in valores or []]
+
+
 @app.template_filter("mil")
 def _fmt_mil(v):
     return "—" if v is None else f"{v:,.0f}".replace(",", ".")
@@ -225,9 +231,10 @@ def perfil():
 
 def _filtros_proposicoes():
     a = request.args
-    return {"papel": a.get("papel", "") if a.get("papel", "") in paineis.PAPEIS else "",
-            "sigla": a.get("sigla", ""), "situacao": a.get("situacao", ""), "sit": a.get("sit", ""),
-            "regime": a.get("regime", ""), "orgao": a.get("orgao", ""), "ordem": a.get("ordem", ""),
+    lst = lambda k: [x for x in a.getlist(k) if x]            # noqa: E731 — seleção múltipla
+    return {"papel": [x for x in lst("papel") if x in paineis.PAPEIS],
+            "sigla": lst("sigla"), "situacao": lst("situacao"), "sit": lst("sit"),
+            "regime": lst("regime"), "orgao": lst("orgao"), "ordem": a.get("ordem", ""),
             "inicio": _data(a.get("inicio")), "fim": _data(a.get("fim")),
             "busca": (a.get("busca") or "").strip()}
 
@@ -241,13 +248,15 @@ def proposicoes():
     filtros = _filtros_proposicoes()
     props = paineis.proposicoes(cod, **filtros)
     extras = []
-    if filtros["papel"] == "relator" and not any(filtros[k] for k in filtros if k not in ("papel", "ordem")):
+    chave = paineis.papel_chave(filtros["papel"])
+    if chave == "relator" and not any(filtros[k] for k in filtros if k not in ("papel", "ordem")):
         extras = paineis.relatorias_pauta_extras(cod, [p["id"] for p in props["itens"]])
     args_export = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in filtros.items() if v}
     return render_template(
         "proposicoes.html", aba="proposicoes", op=op, lista=lista, cod=cod,
         s=paineis.deputado(cod), fp=filtros, props=props, opc=paineis.opcoes_proposicoes(cod),
-        papeis=paineis.PAPEIS, regimes=paineis.REGIMES, extras=extras, args_export=args_export)
+        papeis=paineis.PAPEIS_BASE, papel_sel=paineis.papeis_de(filtros["papel"]), papel_aba=chave,
+        regimes=paineis.REGIMES, extras=extras, args_export=args_export)
 
 
 @app.route("/proposicoes/exportar")
@@ -262,13 +271,13 @@ def proposicoes_exportar():
     props = paineis.proposicoes(cod, limite=None, **filtros)
     itens = props["itens"]
     extras = paineis.relatorias_pauta_extras(cod, [p["id"] for p in itens]) \
-        if filtros["papel"] == "relator" and request.args.get("pautas") == "1" else []
-    nome = exportar.nome_arquivo(s.get("nome") or str(cod), filtros["papel"])
+        if paineis.papel_chave(filtros["papel"]) == "relator" and request.args.get("pautas") == "1" else []
+    nome = exportar.nome_arquivo(s.get("nome") or str(cod), paineis.papel_chave(filtros["papel"]))
     if request.args.get("formato") == "pdf":
         import proposicoes_pdf
         corpo = proposicoes_pdf.gerar(s, props, exportar.descricao_filtros(s, filtros, com_nome=False),
-                                      paineis.PAPEIS.get(filtros["papel"], ""), extras,
-                                      relatoria=filtros["papel"] == "relator")
+                                      paineis.papel_rotulo(filtros["papel"]), extras,
+                                      relatoria=paineis.papel_chave(filtros["papel"]) == "relator")
         mime, ext = "application/pdf", "pdf"
     elif request.args.get("formato") == "csv":
         corpo, mime, ext = exportar.csv_bytes(itens, extras), "text/csv; charset=utf-8", "csv"

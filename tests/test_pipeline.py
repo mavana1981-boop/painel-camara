@@ -2658,3 +2658,28 @@ def test_proposicoes_relatorio_pdf():
     assert txt.index("PL 2100/2025") < txt.index("PL 1087/2025")             # urgência vem primeiro
     r = cli.get("/proposicoes/exportar?deputado=101&papel=relator&formato=pdf&regime=prioridade")
     assert r.status_code == 200 and "Nenhuma proposição" in PdfReader(io.BytesIO(r.data)).pages[0].extract_text()
+
+
+def test_proposicoes_filtros_multiplos():
+    import paineis
+    n_pl_pdl = paineis.proposicoes(101, sigla="PL")["total"] + paineis.proposicoes(101, sigla="PDL")["total"]
+    assert n_pl_pdl >= 2 and paineis.proposicoes(101, sigla=["PL", "PDL"])["total"] == n_pl_pdl
+    assert paineis.proposicoes(101, sigla=["PL", "PDL"], situacao=["tramitando"])["total"] == \
+        paineis.proposicoes(101, sigla=["PL", "PDL"], situacao="tramitando")["total"]
+    assert paineis.proposicoes(101, situacao=["tramitando", "norma"])["total"] == \
+        paineis.proposicoes(101, situacao="tramitando")["total"] + paineis.proposicoes(101, situacao="norma")["total"]
+    # papéis combinados: 1º autor OU relator (sem as coautorias)
+    combo = paineis.proposicoes(101, papel=["autor", "relator"])
+    assert combo["total"] == paineis.proposicoes(101, papel="autor")["total"] + 1
+    assert all(i["papel"] in ("1º autor", "relator") for i in combo["itens"])
+    assert paineis.papel_chave(["autor", "coautor", "relator"]) == "todos"
+    assert paineis.papel_chave(["coautor", "autor"]) == ""
+    assert paineis.papel_rotulo(["autor", "relator"]) == "1º autor ou Relator atual"
+    assert paineis.proposicoes(102, papel="todos", regime=["especial", "urgencia"])["total"] == 1
+    assert paineis.proposicoes(106, orgao=["CESPO", "PLEN"])["total"] == 1
+    cli = _cliente()
+    html = cli.get("/proposicoes?deputado=101&sigla=PL&sigla=PDL&papel=autor&papel=relator").get_data(as_text=True)
+    assert 'value="PDL" checked' in html and 'value="relator" checked' in html and "PDL, PL" in html
+    r = cli.get("/proposicoes/exportar?deputado=101&formato=csv&sigla=PL&sigla=PDL")
+    assert len(r.data.decode("utf-8-sig").strip().splitlines()) == 1 + n_pl_pdl
+    assert 'sigla=PL&amp;sigla=PDL' in html                                  # exportação leva a seleção

@@ -275,6 +275,47 @@ REGIMES = {
 }
 PAPEIS = {"": "Autor ou coautor", "autor": "1º autor", "coautor": "Coautor", "relator": "Relator atual",
           "todos": "Autor, coautor ou relator"}
+PAPEIS_BASE = {"autor": "1º autor", "coautor": "Coautor", "relator": "Relator atual"}
+
+
+def _lista(v):
+    """Aceita valor único ou lista (filtros com seleção múltipla); devolve lista sem vazios/repetidos."""
+    if v is None:
+        return []
+    vals = [v] if isinstance(v, str) else list(v)
+    out = []
+    for x in vals:
+        x = (x or "").strip()
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
+def papeis_de(papel):
+    """"" → autor+coautor; "todos" → os três; lista/valor → conjunto de autor/coautor/relator."""
+    sel = set()
+    for x in _lista(papel):
+        sel |= set(PAPEIS_BASE) if x == "todos" else ({x} & set(PAPEIS_BASE))
+    return sel or {"autor", "coautor"}
+
+
+def papel_chave(papel):
+    """Nome canônico do recorte de papéis (abas, títulos e nome do arquivo)."""
+    sel = papeis_de(papel)
+    if sel == {"autor", "coautor"}:
+        return ""
+    if sel == set(PAPEIS_BASE):
+        return "todos"
+    if len(sel) == 1:
+        return next(iter(sel))
+    return "+".join(k for k in PAPEIS_BASE if k in sel)
+
+
+def papel_rotulo(papel):
+    ch = papel_chave(papel)
+    if ch in PAPEIS:
+        return PAPEIS[ch]
+    return " ou ".join(PAPEIS_BASE[k] for k in PAPEIS_BASE if k in papeis_de(papel))
 
 
 def grupo_regime(regime):
@@ -286,51 +327,61 @@ def grupo_regime(regime):
 
 
 def _base_proposicoes(codigo, papel):
-    """FROM/JOIN conforme o papel do deputado. Uma linha por proposição; `a` é a autoria do
+    """FROM/JOIN conforme os papéis do deputado. Uma linha por proposição; `a` é a autoria do
     próprio deputado (pode faltar quando ele é só o relator)."""
-    if papel == "relator":
-        return ("FROM processos pr LEFT JOIN autorias a ON a.processo_id = pr.id AND a.codigo_deputado = :c",
-                ["pr.relator_id = :c"])
-    if papel == "todos":
-        return ("FROM processos pr LEFT JOIN autorias a ON a.processo_id = pr.id AND a.codigo_deputado = :c",
-                ["(a.codigo_deputado IS NOT NULL OR pr.relator_id = :c)"])
-    cond = ["a.codigo_deputado = :c"]
-    if papel == "autor":
-        cond.append("a.principal = :t")
-    elif papel == "coautor":
-        cond.append("a.principal = :f")
-    return "FROM processos pr JOIN autorias a ON a.processo_id = pr.id", cond
+    sel = papeis_de(papel)
+    if "relator" not in sel:
+        cond = ["a.codigo_deputado = :c"]
+        if sel == {"autor"}:
+            cond.append("a.principal = :t")
+        elif sel == {"coautor"}:
+            cond.append("a.principal = :f")
+        return "FROM processos pr JOIN autorias a ON a.processo_id = pr.id", cond
+    ou = ["pr.relator_id = :c"]
+    if {"autor", "coautor"} <= sel:
+        ou.append("a.codigo_deputado IS NOT NULL")
+    elif "autor" in sel:
+        ou.append("a.principal = :t")
+    elif "coautor" in sel:
+        ou.append("a.principal = :f")
+    return ("FROM processos pr LEFT JOIN autorias a ON a.processo_id = pr.id AND a.codigo_deputado = :c",
+            ["(" + " OR ".join(ou) + ")"])
+
+
+def _em(cond, p, coluna, valores, nome):
+    """coluna IN (:nome0, :nome1, ...) — compatível com SQLite e Postgres."""
+    if not valores:
+        return
+    chaves = []
+    for i, v in enumerate(valores):
+        p[f"{nome}{i}"] = v
+        chaves.append(f":{nome}{i}")
+    cond.append(f"{coluna} IN ({', '.join(chaves)})")
 
 
 def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, busca="", limite=400,
                 ordem="", regime="", sit="", orgao=""):
     """Pesquisa de proposições do deputado.
 
-    papel: ""/autor/coautor (autoria), relator (relator atual) ou todos.
+    Todos os filtros aceitam um valor ou uma lista (seleção múltipla: OU dentro do filtro, E entre filtros).
+    papel: autor/coautor/relator ("" = autor ou coautor; "todos" = os três).
     situacao: andamento (tramitando/encerrada/norma); sit: texto exato da situação atual;
-    regime: urgencia/prioridade/especial/ordinario; orgao: sigla do órgão onde está agora.
+    regime: urgencia/prioridade/especial/ordinario/sem; orgao: sigla do órgão onde está agora.
     limite=None traz tudo (exportação)."""
     frm, cond = _base_proposicoes(codigo, papel)
     p = {"c": codigo, "t": True, "f": False}
-    if sigla:
-        cond.append("pr.sigla = :sigla")
-        p["sigla"] = sigla
-    if situacao == "norma":
-        cond.append("pr.virou_norma = :t")
-    elif situacao == "tramitando":
-        cond.append("pr.tramitando = :t")
-    elif situacao == "encerrada":
-        cond.append("pr.tramitando = :f")
-    if sit:
-        cond.append("pr.situacao = :sit")
-        p["sit"] = sit
-    if regime in REGIMES:
-        cond.append(REGIMES[regime][1])
-    elif regime == "sem":
-        cond.append("pr.regime IS NULL")
-    if orgao:
-        cond.append("pr.orgao = :orgao")
-        p["orgao"] = orgao
+    _em(cond, p, "pr.sigla", _lista(sigla), "sg")
+    _em(cond, p, "pr.situacao", _lista(sit), "st")
+    _em(cond, p, "pr.orgao", _lista(orgao), "og")
+    andamento = {"norma": "pr.virou_norma = :t", "tramitando": "pr.tramitando = :t",
+                 "encerrada": "pr.tramitando = :f"}
+    ands = [andamento[x] for x in _lista(situacao) if x in andamento]
+    if ands:
+        cond.append("(" + " OR ".join(ands) + ")")
+    regs = [REGIMES[x][1] if x in REGIMES else "pr.regime IS NULL" for x in _lista(regime)
+            if x in REGIMES or x == "sem"]
+    if regs:
+        cond.append("(" + " OR ".join(regs) + ")")
     if inicio:
         cond.append("pr.data_apresentacao >= :ini")
         p["ini"] = inicio.isoformat()

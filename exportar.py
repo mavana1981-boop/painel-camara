@@ -108,15 +108,20 @@ def descricao_filtros(s, f, com_nome=True):
     nome = s.get("nome") or ""
     if s.get("partido"):
         nome += f" ({s['partido']}-{s.get('uf') or ''})"
-    partes = [f"Proposições · {nome}" if com_nome else "", paineis.PAPEIS.get(f.get("papel", ""), "")]
+    partes = [f"Proposições · {nome}" if com_nome else "", paineis.papel_rotulo(f.get("papel"))]
     andamento = {"tramitando": "Tramitando", "encerrada": "Tramitação encerrada", "norma": "Virou norma"}
-    if f.get("regime") in paineis.REGIMES:
-        partes.append(f"Regime: {paineis.REGIMES[f['regime']][0]}")
-    for chave, rot in (("sigla", "Tipo"), ("sit", "Situação"), ("orgao", "Órgão"), ("busca", "Busca")):
-        if f.get(chave):
-            partes.append(f"{rot}: {f[chave]}")
-    if f.get("situacao") in andamento:
-        partes.append(andamento[f["situacao"]])
+    regimes = {k: v[0] for k, v in paineis.REGIMES.items()}
+    regimes["sem"] = "Não informado"
+    lst = paineis._lista
+    if lst(f.get("regime")):
+        partes.append("Regime: " + ", ".join(regimes.get(x, x) for x in lst(f["regime"])))
+    for chave, rot in (("sigla", "Tipo"), ("sit", "Situação"), ("orgao", "Órgão")):
+        if lst(f.get(chave)):
+            partes.append(f"{rot}: " + ", ".join(lst(f[chave])))
+    if lst(f.get("situacao")):
+        partes.append(" ou ".join(andamento.get(x, x) for x in lst(f["situacao"])))
+    if f.get("busca"):
+        partes.append(f"Busca: {f['busca']}")
     if f.get("inicio") or f.get("fim"):
         partes.append(f"Apresentadas {_br(f.get('inicio') and f['inicio'].isoformat()) or '…'} a "
                       f"{_br(f.get('fim') and f['fim'].isoformat()) or '…'}")
