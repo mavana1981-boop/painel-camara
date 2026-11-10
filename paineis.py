@@ -240,6 +240,14 @@ ORDENS_PROPOSICOES = {
     "parado_asc": "CASE WHEN pr.tramitando THEN 0 ELSE 1 END, "
                   "CASE WHEN COALESCE(pr.data_situacao, pr.data_apresentacao) IS NULL THEN 1 ELSE 0 END, "
                   "COALESCE(pr.data_situacao, pr.data_apresentacao) DESC, pr.id DESC",
+    # movimentação mais recente primeiro
+    "movimento": "COALESCE(pr.data_situacao, pr.data_apresentacao) DESC, pr.id DESC",
+    # urgência primeiro, depois prioridade, especial e ordinário; dentro do grupo, mais recente
+    "urgencia": "CASE WHEN LOWER(COALESCE(pr.regime,'')) LIKE 'urg%' THEN 0 "
+                "WHEN LOWER(COALESCE(pr.regime,'')) LIKE 'prior%' THEN 1 "
+                "WHEN LOWER(COALESCE(pr.regime,'')) LIKE 'espec%' THEN 2 ELSE 3 END, "
+                "CASE WHEN pr.tramitando THEN 0 ELSE 1 END, "
+                "COALESCE(pr.data_situacao, pr.data_apresentacao) DESC, pr.id DESC",
 }
 
 
@@ -258,27 +266,71 @@ def dias_parado(prop, hoje=None):
     return max(((hoje or date.today()) - d).days, 0)
 
 
-def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, busca="", limite=400,
-                ordem=""):
-    cond, p = ["a.codigo_deputado = :c"], {"c": codigo}
+# Regime de tramitação: o arquivo traz o texto completo ("Urgência (Art. 155, RICD)"); o filtro agrupa
+REGIMES = {
+    "urgencia": ("Urgência", "LOWER(COALESCE(pr.regime,'')) LIKE 'urg%'"),
+    "prioridade": ("Prioridade", "LOWER(COALESCE(pr.regime,'')) LIKE 'prior%'"),
+    "especial": ("Especial", "LOWER(COALESCE(pr.regime,'')) LIKE 'espec%'"),
+    "ordinario": ("Ordinário", "LOWER(COALESCE(pr.regime,'')) LIKE 'ordin%'"),
+}
+PAPEIS = {"": "Autor ou coautor", "autor": "1º autor", "coautor": "Coautor", "relator": "Relator atual",
+          "todos": "Autor, coautor ou relator"}
+
+
+def grupo_regime(regime):
+    r = (regime or "").strip().lower()
+    for chave, (rotulo, _) in REGIMES.items():
+        if r.startswith(rotulo.lower()[:4]):
+            return chave
+    return ""
+
+
+def _base_proposicoes(codigo, papel):
+    """FROM/JOIN conforme o papel do deputado. Uma linha por proposição; `a` é a autoria do
+    próprio deputado (pode faltar quando ele é só o relator)."""
+    if papel == "relator":
+        return ("FROM processos pr LEFT JOIN autorias a ON a.processo_id = pr.id AND a.codigo_deputado = :c",
+                ["pr.relator_id = :c"])
+    if papel == "todos":
+        return ("FROM processos pr LEFT JOIN autorias a ON a.processo_id = pr.id AND a.codigo_deputado = :c",
+                ["(a.codigo_deputado IS NOT NULL OR pr.relator_id = :c)"])
+    cond = ["a.codigo_deputado = :c"]
     if papel == "autor":
         cond.append("a.principal = :t")
-        p["t"] = True
     elif papel == "coautor":
         cond.append("a.principal = :f")
-        p["f"] = False
+    return "FROM processos pr JOIN autorias a ON a.processo_id = pr.id", cond
+
+
+def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, busca="", limite=400,
+                ordem="", regime="", sit="", orgao=""):
+    """Pesquisa de proposições do deputado.
+
+    papel: ""/autor/coautor (autoria), relator (relator atual) ou todos.
+    situacao: andamento (tramitando/encerrada/norma); sit: texto exato da situação atual;
+    regime: urgencia/prioridade/especial/ordinario; orgao: sigla do órgão onde está agora.
+    limite=None traz tudo (exportação)."""
+    frm, cond = _base_proposicoes(codigo, papel)
+    p = {"c": codigo, "t": True, "f": False}
     if sigla:
         cond.append("pr.sigla = :sigla")
         p["sigla"] = sigla
     if situacao == "norma":
-        cond.append("pr.virou_norma = :vn")
-        p["vn"] = True
+        cond.append("pr.virou_norma = :t")
     elif situacao == "tramitando":
-        cond.append("pr.tramitando = :tr")
-        p["tr"] = True
+        cond.append("pr.tramitando = :t")
     elif situacao == "encerrada":
-        cond.append("pr.tramitando = :tr")
-        p["tr"] = False
+        cond.append("pr.tramitando = :f")
+    if sit:
+        cond.append("pr.situacao = :sit")
+        p["sit"] = sit
+    if regime in REGIMES:
+        cond.append(REGIMES[regime][1])
+    elif regime == "sem":
+        cond.append("pr.regime IS NULL")
+    if orgao:
+        cond.append("pr.orgao = :orgao")
+        p["orgao"] = orgao
     if inicio:
         cond.append("pr.data_apresentacao >= :ini")
         p["ini"] = inicio.isoformat()
@@ -286,15 +338,18 @@ def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, 
         cond.append("pr.data_apresentacao <= :fim")
         p["fim"] = fim.isoformat()
     if busca:
-        cond.append("(LOWER(COALESCE(pr.ementa,'')) LIKE :b OR LOWER(pr.identificacao) LIKE :b)")
+        cond.append("(LOWER(COALESCE(pr.ementa,'')) LIKE :b OR LOWER(pr.identificacao) LIKE :b "
+                    "OR LOWER(COALESCE(pr.autoria,'')) LIKE :b)")
         p["b"] = f"%{busca.lower()}%"
-    where = " AND ".join(cond)
-    base = f"FROM processos pr JOIN autorias a ON a.processo_id = pr.id WHERE {where}"
+    base = f"{frm} WHERE {' AND '.join(cond)}"
+    urg = REGIMES["urgencia"][1]
     with engine.connect() as c:
         tot = c.execute(text(f"""SELECT COUNT(*) n,
                  SUM(CASE WHEN pr.virou_norma THEN 1 ELSE 0 END) normas,
                  SUM(CASE WHEN pr.tramitando THEN 1 ELSE 0 END) tram,
                  SUM(CASE WHEN a.principal THEN 1 ELSE 0 END) principal,
+                 SUM(CASE WHEN pr.relator_id = :c THEN 1 ELSE 0 END) relator,
+                 SUM(CASE WHEN {urg} AND pr.tramitando THEN 1 ELSE 0 END) urgentes,
                  SUM(CASE WHEN pr.sigla IN {SIGLAS_PROJETO} THEN 1 ELSE 0 END) projetos,
                  SUM(CASE WHEN a.principal AND pr.sigla IN {SIGLAS_PROJETO} THEN 1 ELSE 0 END) projetos_autor,
                  SUM(CASE WHEN a.principal AND pr.virou_norma AND pr.sigla IN {SIGLAS_PROJETO}
@@ -312,20 +367,69 @@ def proposicoes(codigo, papel="", sigla="", situacao="", inicio=None, fim=None, 
         por_conteudo = [dict(r) for r in c.execute(text(
             f"SELECT COALESCE(pr.tipo_conteudo,'—') conteudo, COUNT(*) n {base} "
             f"GROUP BY COALESCE(pr.tipo_conteudo,'—') ORDER BY n DESC"), p).mappings()]
-        p["lim"] = limite
-        itens = [dict(r) for r in c.execute(text(
-            f"SELECT pr.*, a.principal {base} ORDER BY {ORDENS_PROPOSICOES.get(ordem, ORDENS_PROPOSICOES[''])} "
-            f"LIMIT :lim"), p).mappings()]
+        por_regime = [dict(r) for r in c.execute(text(
+            f"SELECT COALESCE(pr.regime,'(não informado)') regime, COUNT(*) n {base} "
+            f"GROUP BY COALESCE(pr.regime,'(não informado)') ORDER BY n DESC"), p).mappings()]
+        por_orgao = [dict(r) for r in c.execute(text(
+            f"SELECT COALESCE(pr.orgao,'—') orgao, COUNT(*) n {base} "
+            f"GROUP BY COALESCE(pr.orgao,'—') ORDER BY n DESC"), p).mappings()]
+        itens = []
+        if limite is None or limite > 0:
+            sql = (f"SELECT pr.*, a.principal, a.codigo_deputado autor_cod, rd.nome relator_nome, "
+                   f"rd.partido relator_partido, rd.uf relator_uf {base.replace(' WHERE ', ' LEFT JOIN deputados rd ON rd.codigo = pr.relator_id WHERE ', 1)} "
+                   f"ORDER BY {ORDENS_PROPOSICOES.get(ordem, ORDENS_PROPOSICOES[''])}")
+            if limite is not None:
+                sql += " LIMIT :lim"
+                p["lim"] = limite
+            itens = [dict(r) for r in c.execute(text(sql), p).mappings()]
     hoje = date.today()
     for it in itens:
         it["dias_parado"] = dias_parado(it, hoje)
+        it["grupo_regime"] = grupo_regime(it.get("regime"))
+        papeis = []
+        if it.get("autor_cod") is not None:
+            papeis.append("1º autor" if it.get("principal") else "coautor")
+        if it.get("relator_id") == codigo:
+            papeis.append("relator")
+        it["papel"] = " e ".join(papeis)
     siglas = sorted({x["sigla"] for x in por_tipo if x["sigla"]})
     return {"total": tot["n"] or 0, "normas": tot["normas"] or 0, "tramitando": tot["tram"] or 0,
             "principal": tot["principal"] or 0, "projetos": tot["projetos"] or 0,
+            "relator": tot["relator"] or 0, "urgentes": tot["urgentes"] or 0,
             # mesmo critério do ranking: projetos (PL, PLP, PEC, PDL, PRC) como 1º autor
             "projetos_autor": tot["projetos_autor"] or 0, "normas_autor": tot["normas_autor"] or 0,
             "por_tipo": por_tipo, "por_situacao": por_situacao, "por_ano": por_ano,
-            "por_conteudo": por_conteudo, "itens": itens, "siglas": siglas}
+            "por_conteudo": por_conteudo, "por_regime": por_regime, "por_orgao": por_orgao,
+            "itens": itens, "siglas": siglas}
+
+
+def opcoes_proposicoes(codigo):
+    """Valores para os seletores da pesquisa: tudo o que o deputado tem como autor ou relator."""
+    r = proposicoes(codigo, papel="todos", limite=0)
+    so_rel = proposicoes(codigo, papel="relator", limite=0)
+    return {"siglas": r["siglas"],
+            "situacoes": sorted(x["situacao"] for x in r["por_situacao"] if x["situacao"] != "(sem situação)"),
+            "orgaos": sorted(x["orgao"] for x in r["por_orgao"] if x["orgao"] != "—"),
+            "n_relator": so_rel["total"]}
+
+
+def relatorias_pauta_extras(codigo, ids_ja_listados=()):
+    """Relatorias vistas nas pautas das comissões (tabela `relatorias`) que não aparecem na pesquisa
+    — cobrem proposições de anos anteriores à legislatura e relatorias já encerradas."""
+    ja = set(ids_ja_listados)
+    with engine.connect() as c:
+        rows = [dict(r) for r in c.execute(text(
+            "SELECT identificacao, codigo_materia, ementa, colegiado, data_designacao, data_destituicao, "
+            "situacao, data_situacao, url FROM relatorias WHERE codigo_deputado = :c "
+            "ORDER BY data_designacao DESC"), {"c": codigo}).mappings()]
+    vistos, out = set(), []
+    for r in rows:
+        k = r["codigo_materia"] or r["identificacao"]
+        if r["codigo_materia"] in ja or k in vistos:
+            continue
+        vistos.add(k)
+        out.append(r)
+    return out
 
 
 def ranking_proposicoes(inicio=None, fim=None, so_projetos=True, so_autor=True):

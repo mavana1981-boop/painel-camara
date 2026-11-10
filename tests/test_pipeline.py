@@ -249,6 +249,59 @@ def test_proposicoes():
     assert todas[101] == pr["principal"]                 # inclui o REQ
 
 
+def test_proposicoes_regime_orgao_relatoria():
+    import paineis
+    # regime, órgão e relator atual vêm do arquivo de proposições
+    r = _q("SELECT regime, orgao, relator_id FROM processos WHERE id = 2440210")[0]
+    assert tuple(r) == ("Urgência (Art. 155, RICD)", "CESPO", 101)
+    # relator atual: a Ana relata o PL do Fábio (ela só apoiou, não é autora)
+    rel = paineis.proposicoes(101, papel="relator")
+    assert rel["total"] == 1 and rel["itens"][0]["identificacao"] == "PL 2100/2025"
+    assert rel["itens"][0]["papel"] == "relator" and rel["urgentes"] == 1
+    # Bruno: 1º autor da PEC e relator dela
+    tudo = paineis.proposicoes(102, papel="todos")
+    pec = next(i for i in tudo["itens"] if i["identificacao"] == "PEC 45/2025")
+    assert pec["papel"] == "1º autor e relator" and pec["grupo_regime"] == "especial"
+    assert paineis.proposicoes(101, papel="todos")["total"] == 5            # 4 de autoria + 1 relatoria
+    # autoria continua igual (relatoria não entra) e o relator aparece no item
+    assert paineis.proposicoes(101)["total"] == 4
+    assert paineis.proposicoes(106)["itens"][0]["relator_nome"] == "Ana Oposição"
+    # filtros novos
+    assert paineis.proposicoes(106, regime="urgencia")["total"] == 1
+    assert paineis.proposicoes(101, regime="urgencia")["total"] == 0
+    assert paineis.proposicoes(106, orgao="CESPO")["total"] == 1
+    sit = "Aguardando Parecer do Relator na Comissão de Esporte (CESPO)"
+    assert paineis.proposicoes(106, sit=sit)["total"] == 1
+    assert paineis.proposicoes(106, busca="fábio")["total"] == 1             # busca também na autoria
+    assert paineis.proposicoes(101, ordem="urgencia", papel="todos")["itens"][0]["identificacao"] == "PL 2100/2025"
+    assert paineis.proposicoes(101, limite=None)["total"] == len(paineis.proposicoes(101, limite=None)["itens"])
+    opc = paineis.opcoes_proposicoes(101)
+    assert opc["n_relator"] == 1 and "CESPO" in opc["orgaos"] and sit in opc["situacoes"]
+
+
+def test_proposicoes_tela_e_exportacao():
+    import io
+    from openpyxl import load_workbook
+    cli = _cliente()
+    html = cli.get("/proposicoes?deputado=101&papel=relator").get_data(as_text=True)
+    assert "PL 2100/2025" in html and "Urgência" in html and "Relatoria" in html and "Exportar" in html
+    html = cli.get("/proposicoes?deputado=106").get_data(as_text=True)
+    assert "Relator: Ana Oposição" in html and "CESPO" in html
+    assert cli.get("/proposicoes?deputado=101&regime=urgencia&sit=x&orgao=PLEN&ordem=urgencia").status_code == 200
+    r = cli.get("/proposicoes/exportar?deputado=101&papel=todos")
+    assert r.status_code == 200 and "attachment" in r.headers["Content-Disposition"]
+    assert r.headers["Content-Disposition"].endswith('.xlsx"')
+    ws = load_workbook(io.BytesIO(r.data)).active
+    assert ws["A4"].value == "Proposição" and ws.max_row == 4 + 5
+    assert "Ana Oposição" in ws["A1"].value and "Autor, coautor ou relator" in ws["A1"].value
+    linhas = {ws.cell(row=i, column=1).value: i for i in range(5, ws.max_row + 1)}
+    assert ws.cell(row=linhas["PL 2100/2025"], column=5).value == "relator"
+    r = cli.get("/proposicoes/exportar?deputado=101&formato=csv&regime=urgencia&papel=relator")
+    txt = r.data.decode("utf-8-sig")
+    assert r.mimetype == "text/csv" and txt.startswith("Proposição;") and "PL 2100/2025" in txt
+    assert len(txt.strip().splitlines()) == 2
+
+
 def test_perfil():
     import paineis
     pf = paineis.perfil(101)

@@ -223,20 +223,54 @@ def perfil():
         props=paineis.proposicoes(cod, limite=0), cota=paineis.cota_deputado(cod))
 
 
+def _filtros_proposicoes():
+    a = request.args
+    return {"papel": a.get("papel", "") if a.get("papel", "") in paineis.PAPEIS else "",
+            "sigla": a.get("sigla", ""), "situacao": a.get("situacao", ""), "sit": a.get("sit", ""),
+            "regime": a.get("regime", ""), "orgao": a.get("orgao", ""), "ordem": a.get("ordem", ""),
+            "inicio": _data(a.get("inicio")), "fim": _data(a.get("fim")),
+            "busca": (a.get("busca") or "").strip()}
+
+
 @app.route("/proposicoes")
 def proposicoes():
     cod, lista = _deputado_da_requisicao()
     _, op = _contexto_filtros()
     if not cod:
         return render_template("vazio.html", aba="proposicoes", op=op, lista=lista)
-    a = request.args
-    filtros = {"papel": a.get("papel", ""), "sigla": a.get("sigla", ""),
-               "situacao": a.get("situacao", ""), "inicio": _data(a.get("inicio")),
-               "fim": _data(a.get("fim")), "busca": (a.get("busca") or "").strip()}
+    filtros = _filtros_proposicoes()
+    props = paineis.proposicoes(cod, **filtros)
+    extras = []
+    if filtros["papel"] == "relator" and not any(filtros[k] for k in filtros if k not in ("papel", "ordem")):
+        extras = paineis.relatorias_pauta_extras(cod, [p["id"] for p in props["itens"]])
+    args_export = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in filtros.items() if v}
     return render_template(
         "proposicoes.html", aba="proposicoes", op=op, lista=lista, cod=cod,
-        s=paineis.deputado(cod), fp=filtros, props=paineis.proposicoes(cod, **filtros),
-        todas_siglas=paineis.proposicoes(cod, limite=0)["siglas"])
+        s=paineis.deputado(cod), fp=filtros, props=props, opc=paineis.opcoes_proposicoes(cod),
+        papeis=paineis.PAPEIS, regimes=paineis.REGIMES, extras=extras, args_export=args_export)
+
+
+@app.route("/proposicoes/exportar")
+def proposicoes_exportar():
+    """Mesma pesquisa da tela, sem limite de linhas, em Excel (padrão) ou CSV."""
+    import exportar
+    cod, _ = _deputado_da_requisicao()
+    if not cod:
+        abort(404)
+    filtros = _filtros_proposicoes()
+    s = paineis.deputado(cod) or {}
+    itens = paineis.proposicoes(cod, limite=None, **filtros)["itens"]
+    extras = paineis.relatorias_pauta_extras(cod, [p["id"] for p in itens]) \
+        if filtros["papel"] == "relator" and request.args.get("pautas") == "1" else []
+    nome = exportar.nome_arquivo(s.get("nome") or str(cod), filtros["papel"])
+    if request.args.get("formato") == "csv":
+        corpo, mime, ext = exportar.csv_bytes(itens, extras), "text/csv; charset=utf-8", "csv"
+    else:
+        corpo = exportar.xlsx_bytes(itens, extras, exportar.descricao_filtros(s, filtros))
+        mime, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    from flask import Response
+    return Response(corpo, mimetype=mime,
+                    headers={"Content-Disposition": f'attachment; filename="{nome}.{ext}"'})
 
 
 @app.route("/cota")

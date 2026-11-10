@@ -626,7 +626,16 @@ def parse_proposicao(r: dict, ano_carga: int) -> dict:
         "data_situacao": (r.get("ultimoStatus_dataHora") or "")[:10] or None,
         "tramitando": (not any(k in s for k in _ENCERRADA)) if sit else None,
         "virou_norma": norma, "url": f"https://www.camara.leg.br/propostas-legislativas/{pid}",
+        "regime": (r.get("ultimoStatus_regime") or "").strip()[:120] or None,
+        "orgao": (r.get("ultimoStatus_siglaOrgao") or "").strip()[:40] or None,
+        "relator_id": id_da_uri(r.get("ultimoStatus_uriRelator")),
     }
+
+
+def id_da_uri(uri):
+    """".../api/v2/deputados/204554" → 204554."""
+    m = re.search(r"/(\d+)\s*$", (uri or "").strip())
+    return int(m.group(1)) if m else None
 
 
 DIAS_NOTIFICACOES = 180   # notificações mais antigas são apagadas
@@ -654,7 +663,8 @@ def gravar_processos_ano(conn, ano: int, linhas_props, linhas_autores, cadastro:
     linhas, auts = [], []
     for r in linhas_props:
         pid = _int(r.get("id"))
-        if pid not in alvo:
+        # entram as de autoria do cadastro e as relatadas agora (relator atual) por deputado do cadastro
+        if pid is None or (pid not in alvo and id_da_uri(r.get("ultimoStatus_uriRelator")) not in cadastro):
             continue
         p = parse_proposicao(r, ano)
         if p["sigla"] in TIPOS_EXCLUIDOS:
@@ -797,7 +807,9 @@ def limpar_deputados_sem_atividade(conn):
         conn.execute(delete(autorias).where(autorias.c.codigo_deputado.in_(alvo)))
         conn.execute(delete(perfis).where(perfis.c.codigo.in_(alvo)))
         conn.execute(delete(deputados).where(deputados.c.codigo.in_(alvo)))
-        conn.execute(delete(processos).where(~exists().where(autorias.c.processo_id == processos.c.id)))
+        conn.execute(delete(processos).where(
+            ~exists().where(autorias.c.processo_id == processos.c.id),
+            ~exists().where(deputados.c.codigo == processos.c.relator_id)))
     log.info("deputados sem atividade removidos do cadastro: %d", len(alvo))
     return len(alvo)
 

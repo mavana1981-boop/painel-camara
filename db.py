@@ -117,6 +117,9 @@ processos = Table(  # proposições
     Column("tramitando", Boolean),
     Column("virou_norma", Boolean, default=False),
     Column("url", String(300)),
+    Column("regime", String(120)),                    # regime de tramitação (Urgência, Prioridade, Ordinário...)
+    Column("orgao", String(40)),                      # sigla do órgão onde está agora (PLEN, CCJC...)
+    Column("relator_id", Integer, index=True),        # relator atual (último status), se houver
 )
 
 autorias = Table(
