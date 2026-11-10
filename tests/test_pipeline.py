@@ -2644,3 +2644,17 @@ def test_modelo_antigo_da_anthropic_no_railway_e_ignorado(monkeypatch):
     assert radar.modelo() == questoes.MODELO_RAPIDO and questoes.modelo() == questoes.MODELO_PADRAO
     monkeypatch.setenv("RADAR_MODEL", "gemini-outro")
     assert radar.modelo() == "gemini-outro"
+
+
+def test_proposicoes_relatorio_pdf():
+    import io
+    from pypdf import PdfReader
+    cli = _cliente()
+    r = cli.get("/proposicoes/exportar?deputado=101&papel=todos&formato=pdf&ordem=urgencia")
+    assert r.status_code == 200 and r.mimetype == "application/pdf"
+    assert r.headers["Content-Disposition"].endswith('.pdf"')
+    txt = "".join(p.extract_text() for p in PdfReader(io.BytesIO(r.data)).pages)
+    assert "Ana Oposição" in txt and "Em urgência" in txt and "PL 2100/2025" in txt
+    assert txt.index("PL 2100/2025") < txt.index("PL 1087/2025")             # urgência vem primeiro
+    r = cli.get("/proposicoes/exportar?deputado=101&papel=relator&formato=pdf&regime=prioridade")
+    assert r.status_code == 200 and "Nenhuma proposição" in PdfReader(io.BytesIO(r.data)).pages[0].extract_text()
