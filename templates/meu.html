@@ -124,7 +124,7 @@
   <a class="mk az" href="{{ url_for('meu.painel', cod=cod, secao='notificacoes') }}"><span class="mk-ic">{{ ic('notificacoes') }}</span>
     <b>{{ v.notif.recentes }}</b><span>Mudanças de status em 7 dias</span></a>
   <a class="mk ou" href="{{ url_for('meu.painel', cod=cod, secao='clipping') }}"><span class="mk-ic">{{ ic('clipping') }}</span>
-    <b>{{ v.clip.total }}</b><span>Aprovações em 30 dias</span><small>{{ v.clip.autoria }} de autoria · {{ v.clip.relatoria }} de relatoria</small></a>
+    <b>{{ v.clip.total }}</b><span>Aprovações em 30 dias</span><small>{{ v.clip.autoria }} de autoria{% if v.clip.urgencia %} · {{ v.clip.urgencia }} de urgência{% endif %} · {{ v.clip.relatoria }} de relatoria</small></a>
   <a class="mk vd" href="{{ url_for('meu.painel', cod=cod, secao='solicitacoes') }}"><span class="mk-ic">{{ ic('solicitacoes') }}</span>
     <b>{{ v.solic.aberta + v.solic.andamento }}</b><span>Solicitações em aberto</span></a>
 </section>
@@ -966,7 +966,7 @@
   <label>De<input type="date" name="inicio" value="{{ ini }}"></label>
   <label>Até<input type="date" name="fim" value="{{ fim }}"></label>
   <button class="btn">Filtrar</button>
-  <span style="font-size:13px;color:var(--suave);padding-bottom:7px">{{ clip.total }} registro(s): {{ clip.realizacao }} solicitação(ões) atendida(s) · {{ clip.autoria }} de autoria · {{ clip.relatoria }} de relatoria</span>
+  <span style="font-size:13px;color:var(--suave);padding-bottom:7px">{{ clip.total }} registro(s): {{ clip.realizacao }} solicitação(ões) atendida(s) · {{ clip.autoria }} de autoria{% if clip.urgencia %} · {{ clip.urgencia }} urgência(s) aprovada(s){% endif %} · {{ clip.relatoria }} de relatoria</span>
 </form>
 <form class="filtros" method="post" action="{{ url_for('meu.painel', cod=cod, secao='clipping') }}">
   <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="buscar_aprovacoes">
@@ -1014,7 +1014,7 @@
   <h2>Clipping diário <small>solicitações atendidas, projetos aprovados e relatorias aprovadas, por data</small></h2>
   {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for b in d.blocos %}{{ clip_bloco(b) }}{% endfor %}
   {% else %}<div class="vazio-msg">Nenhum registro no período.</div>{% endfor %}
-  <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação da proposição indicou aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião. Toda aprovação é registrada automaticamente assim que aparece e fica no clipping como histórico, mesmo depois que a situação da proposição muda; cada etapa aprovada (comissão, Plenário, sanção…) vira um registro. O histórico desde o início da legislatura (fev/2023) é carregado uma vez, em segundo plano, para cada deputado acompanhado.</p>
+  <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação da proposição indicou aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Urgência: aprovação apenas do requerimento de urgência (o projeto ainda não foi votado), mostrada separada da aprovação do projeto. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião. Toda aprovação é registrada automaticamente assim que aparece e fica no clipping como histórico, mesmo depois que a situação da proposição muda; cada etapa aprovada (comissão, Plenário, sanção…) vira um registro. O histórico desde o início da legislatura (fev/2023) é carregado uma vez, em segundo plano, para cada deputado acompanhado.</p>
 </section>
 <section class="card neu" style="margin-top:14px">
   <h2>Relatorias do deputado <small>{{ rels|length }}</small></h2>

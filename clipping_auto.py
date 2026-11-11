@@ -33,6 +33,28 @@ def eh_aprovacao(situacao):
     return bool(_APROVACAO.search(s)) and "rejeitad" not in s and "nao aprovad" not in s
 
 
+# aprovação da própria matéria (mérito) — prevalece se o texto também falar em urgência
+_MERITO = re.compile(r"aprovad[oa]s?\s+(?:(?:o|a|os|as)\s+)?(?:projeto|proposta|parecer|substitutivo|redacao final|"
+                     r"pec|mensagem|texto|materia|subemenda|emenda)|transformad|sancionad|promulgad|"
+                     r"(?:enviad|remetid)[ao] (?:a|ao) (?:senado|sancao)|aguardando (?:sancao|promulgacao|envio|remessa)")
+_URGENCIA_TXT = "Aprovado o requerimento de urgência"
+
+
+def eh_urgencia(situacao, identificacao=None, ementa=None):
+    """A aprovação é de urgência (requerimento de urgência), não da matéria em si?
+    - texto da situação/despacho fala em urgência e não em aprovação do projeto/parecer; ou
+    - a proposição é um requerimento (REQ) cuja ementa pede urgência."""
+    s = _sem_acento(situacao)
+    if "urgencia" in s and not _MERITO.search(s):
+        return True
+    ident = (identificacao or "").strip().upper()
+    return ident.startswith("REQ") and "urgencia" in _sem_acento(ementa)
+
+
+def natureza(x):
+    return "urgencia" if eh_urgencia(x.get("situacao"), x.get("identificacao"), x.get("ementa")) else "merito"
+
+
 def _candidatos(c, cod):
     """Aprovações visíveis agora: situação atual das proposições, notificações guardadas e relatorias."""
     p = {"c": cod}
@@ -79,10 +101,13 @@ def registrar(cod, extras=()):
     agora = datetime.now()
     with engine.begin() as c:
         linhas = c.execute(select(clipping_aprovacoes.c.tipo, clipping_aprovacoes.c.chave, clipping_aprovacoes.c.situacao,
-                                  clipping_aprovacoes.c.data)
+                                  clipping_aprovacoes.c.data, clipping_aprovacoes.c.identificacao,
+                                  clipping_aprovacoes.c.ementa)
                            .where(clipping_aprovacoes.c.codigo_deputado == cod)).all()
         ja = {(r[0], r[1], r[2]) for r in linhas}
-        no_dia = {(r[0], r[1], r[3]) for r in linhas}
+        # urgência e mérito no mesmo dia (comum no Plenário) são registros diferentes
+        no_dia = {(r[0], r[1], r[3], natureza({"situacao": r[2], "identificacao": r[4], "ementa": r[5]}))
+                  for r in linhas}
         cands = _candidatos(c, cod)
         ordem = {"proposicao": 0, "notificacao": 1, "relatoria": 0, "tramitacao": 2}
         novos = []
@@ -91,10 +116,11 @@ def registrar(cod, extras=()):
             if k in ja:
                 continue
             # da tramitação, só o que ainda não tem registro da mesma proposição no mesmo dia
-            if x["origem"] == "tramitacao" and (x["tipo"], x["chave"], x["data"]) in no_dia:
+            nat = natureza(x)
+            if x["origem"] == "tramitacao" and (x["tipo"], x["chave"], x["data"], nat) in no_dia:
                 continue
             ja.add(k)
-            no_dia.add((x["tipo"], x["chave"], x["data"]))
+            no_dia.add((x["tipo"], x["chave"], x["data"], nat))
             novos.append({**x, "situacao": k[2], "codigo_deputado": cod, "registrado_em": agora,
                           "identificacao": (x["identificacao"] or "")[:60] or None})
         if novos:
@@ -109,6 +135,9 @@ MAX_PROPOSICOES = 150                  # por deputado e por busca
 # despacho de votação que aprova a própria matéria (não um requerimento sobre ela)
 _DESPACHO_APROV = re.compile(r"^\s*aprovad[oa]s?\s+(?:(?:o|a|os|as)\s+)?(?:projeto|proposta|parecer|substitutivo|"
                              r"redacao final|emenda|pec|mensagem|texto|materia|subemenda|em (?:primeiro|segundo|turno))")
+# despacho que aprova o requerimento de urgência da matéria (ex.: "Aprovado o Requerimento n. 1/2025, ... que requer
+# regime de urgência ..." ou "Aprovada a urgência") — vira registro próprio, separado da aprovação do projeto
+_DESPACHO_URG = re.compile(r"^\s*aprovad[oa]s?\s+(?:(?:o|a|os|as)\s+)?(?:requerimentos?|urgencia)\b")
 
 
 def aprovacoes_na_tramitacao(trams, inicio: str, fim: str):
@@ -122,14 +151,17 @@ def aprovacoes_na_tramitacao(trams, inicio: str, fim: str):
         orgao = (t.get("siglaOrgao") or "").strip() or None
         desp = re.sub(r"\s+", " ", t.get("despacho") or "").strip()
         sit = (t.get("descricaoSituacao") or "").strip()
-        if desp and _DESPACHO_APROV.match(_sem_acento(desp)):
+        d = _sem_acento(desp)
+        if desp and _DESPACHO_APROV.match(d):
             texto = re.split(r"(?<=[.;])\s", desp, maxsplit=1)[0].rstrip(".;")[:160]
             texto = f"{texto} ({orgao})" if orgao else texto
+        elif desp and _DESPACHO_URG.match(d) and "urgencia" in d:
+            texto = f"{_URGENCIA_TXT} ({orgao})" if orgao else _URGENCIA_TXT
         elif sit and eh_aprovacao(sit):
             texto = sit
         else:
             continue
-        k = (dt, orgao)
+        k = (dt, orgao, eh_urgencia(texto))
         if k in vistos:
             continue
         vistos.add(k)

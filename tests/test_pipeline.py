@@ -2906,14 +2906,15 @@ def test_clipping_busca_aprovacoes_dos_ultimos_7_dias_na_tramitacao():
         {"dataHora": "2026-11-05T11:00", "siglaOrgao": "CCJC", "descricaoSituacao": "Pronta para Pauta",
          "despacho": "Aprovado o Parecer, com emenda."},                      # mesmo dia e órgão: um registro só
         {"dataHora": "2026-11-06T15:00", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Deliberação",
-         "despacho": "Aprovado o Requerimento n. 10/2026, de urgência."},     # requerimento: não conta
+         "despacho": "Aprovado o Requerimento n. 10/2026, de urgência."},     # urgência: registro próprio
         {"dataHora": "2026-11-09T18:00", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Envio ao Senado Federal",
          "despacho": "Encaminhada à publicação."},
         {"dataHora": "2026-10-01T10:00", "siglaOrgao": "CFT", "despacho": "Aprovado o Parecer."},   # fora dos 7 dias
     ]
     achadas = clipping_auto.aprovacoes_na_tramitacao(trams, "2026-11-03", "2026-11-10")
     assert [(a["data"], a["situacao"]) for a in achadas] == [
-        ("2026-11-05", "Aprovado o Parecer (CCJC)"), ("2026-11-09", "Aguardando Envio ao Senado Federal")]
+        ("2026-11-05", "Aprovado o Parecer (CCJC)"), ("2026-11-06", "Aprovado o requerimento de urgência (PLEN)"),
+        ("2026-11-09", "Aguardando Envio ao Senado Federal")]
     with engine.begin() as c:
         c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
         c.execute(ins(processos).values(id=8901, identificacao="PL 7000/2026", sigla="PL", ementa="Ementa 7000",
@@ -2931,7 +2932,13 @@ def test_clipping_busca_aprovacoes_dos_ultimos_7_dias_na_tramitacao():
     clip = meu.clipping(101, date(2026, 11, 3), date(2026, 11, 10))
     pl = sorted((e["data_situacao"], e["situacao"]) for d in clip["dias"] for e in d["itens"]
                 if e["identificacao"] == "PL 7000/2026")
-    assert pl == [("2026-11-05", "Aprovado o Parecer (CCJC)"), ("2026-11-09", "Aguardando Envio ao Senado Federal")]
+    assert pl == [("2026-11-05", "Aprovado o Parecer (CCJC)"), ("2026-11-06", "Aprovado o requerimento de urgência (PLEN)"),
+                  ("2026-11-09", "Aguardando Envio ao Senado Federal")]
+    rot = {e["situacao"]: (e["tipo"], e["rotulo"]) for d in clip["dias"] for e in d["itens"]
+           if e["identificacao"] == "PL 7000/2026"}
+    assert rot["Aprovado o requerimento de urgência (PLEN)"] == ("urgencia", "Urgência aprovada")
+    assert rot["Aguardando Envio ao Senado Federal"] == ("autoria", "Proposição aprovada")
+    assert clip["urgencia"] == 1
     adm = _cliente()
     html = adm.get("/meu/101?secao=clipping").get_data(as_text=True)
     assert "Buscar aprovações dos últimos 7 dias" in html
@@ -3077,3 +3084,21 @@ def test_clipping_carga_da_legislatura_inteira():
         assert "toda a legislatura (desde fev/2023)" in html
     finally:
         clipping_auto.iniciar_carga_legislatura = orig
+
+
+def test_clipping_diferencia_urgencia_de_aprovacao_do_projeto():
+    import clipping_auto
+    u = clipping_auto.eh_urgencia
+    assert u("Aprovado o requerimento de urgência (PLEN)") and u("Aprovada a Urgência")
+    assert u("Aprovado", "REQ 1234/2026", "Requer, nos termos do art. 155 do RICD, urgência para o PL 10/2026")
+    assert not u("Aguardando Envio ao Senado Federal") and not u("Aprovado o Parecer (CCJC)")
+    assert not u("Aprovado o Projeto, em regime de urgência")              # mérito prevalece
+    assert not u("Aprovado", "PL 10/2026", "Dispõe sobre atendimento de urgência")   # ementa de PL não conta
+    # mérito e urgência no mesmo dia e órgão: dois registros
+    trams = [{"dataHora": "2026-11-04T15:00", "siglaOrgao": "PLEN",
+              "despacho": "Aprovado o Requerimento n. 5/2026, que requer regime de urgência (Art. 155 do RICD)."},
+             {"dataHora": "2026-11-04T19:00", "siglaOrgao": "PLEN", "despacho": "Aprovado o Projeto de Lei."},
+             {"dataHora": "2026-11-04T20:00", "siglaOrgao": "PLEN",
+              "despacho": "Aprovado o Requerimento de retirada de pauta."}]          # outro requerimento: não conta
+    assert [a["situacao"] for a in clipping_auto.aprovacoes_na_tramitacao(trams, "2026-11-01", "2026-11-10")] == [
+        "Aprovado o requerimento de urgência (PLEN)", "Aprovado o Projeto de Lei (PLEN)"]

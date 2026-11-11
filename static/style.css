@@ -402,6 +402,7 @@ details.qo summary{padding:10px 14px;cursor:pointer;font-size:13px}
 .clip-item{display:flex;gap:10px;align-items:flex-start;padding:9px 14px;border-bottom:1px solid #ebf1ed}
 .clip-tipo{flex:none;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;background:#e6f4ea;color:#1d6b34;width:130px;text-align:center}
 .clip-item.relatoria .clip-tipo{background:#fbf1d9;color:#8a6d22}
+.clip-item.urgencia .clip-tipo{background:#fde2e1;color:#b42318}
 .clip-txt{flex:1;min-width:0;font-size:13px}
 .clip-txt a{color:var(--pri);text-decoration:none}
 .clip-sit{font-size:12px;color:var(--suave);margin-left:4px}
@@ -1139,6 +1140,7 @@ details.rn-acomp .rn-form{margin-top:6px}
 .clip-mini{display:inline-block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;
   padding:1px 5px;margin-right:4px;background:#e6f4ea;color:#1d6b34;vertical-align:1px}
 .clip-mini.relatoria{background:#fbf1d9;color:#8a6d22}
+.clip-mini.urgencia{background:#fde2e1;color:#b42318}
 .clip-ementa{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .meu .clip-grupo{align-items:flex-start}
 .meu .clip-grupo .clip-tipo{border-radius:10px;background:var(--pri-cl);color:var(--pri-esc)}

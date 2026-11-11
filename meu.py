@@ -520,7 +520,11 @@ def clipping(cod, inicio, fim):
     eventos = []
     for x in clipping_auto.do_periodo(cod, inicio, fim):
         x["data_situacao"] = x["data"]
-        if x["tipo"] == "autoria":
+        if clipping_auto.natureza(x) == "urgencia":
+            # aprovação só da urgência (requerimento), não do projeto: tipo de exibição próprio
+            x["tipo"] = "urgencia"
+            x["rotulo"] = "Urgência aprovada" if x["principal"] is not False else "Urgência (coautoria) aprovada"
+        elif x["tipo"] == "autoria":
             x["rotulo"] = "Proposição aprovada" if x["principal"] else "Proposição (coautoria) aprovada"
         else:
             x["rotulo"] = "Relatoria aprovada"
@@ -531,13 +535,14 @@ def clipping(cod, inicio, fim):
     dias = {}
     for e in eventos:
         dias.setdefault(e["data_situacao"], []).append(e)
-    ordem = {"realizacao": 0, "autoria": 1, "relatoria": 2}
+    ordem = {"realizacao": 0, "autoria": 1, "urgencia": 2, "relatoria": 3}
     saida = []
     for d in sorted(dias, reverse=True):
         itens = sorted(dias[d], key=lambda e: ordem[e["tipo"]])
         saida.append({"data": d, "itens": itens, "blocos": blocos_clipping(itens)})
     return {"dias": saida,
             "total": len(eventos), "autoria": sum(e["tipo"] == "autoria" for e in eventos),
+            "urgencia": sum(e["tipo"] == "urgencia" for e in eventos),
             "relatoria": sum(e["tipo"] == "relatoria" for e in eventos),
             "realizacao": sum(e["tipo"] == "realizacao" for e in eventos)}
 
@@ -551,7 +556,8 @@ def agrupar_iguais(itens):
     (ex.: 15 relatorias "Aprovado o Parecer" com o mesmo parecer → uma linha)."""
     linhas, idx = [], {}
     for e in itens:
-        mini = "Relatoria" if e["tipo"] == "relatoria" else ("Autoria" if e.get("principal") else "Coautoria")
+        mini = ("Relatoria" if e["tipo"] == "relatoria" else "Urgência" if e["tipo"] == "urgencia"
+                else "Autoria" if e.get("principal") else "Coautoria")
         k = (mini, _norm_txt(e.get("situacao_curta") or e.get("situacao")), _norm_txt(e.get("ementa")))
         if k not in idx:
             sit = (e.get("situacao_curta") or e.get("situacao") or "").strip().rstrip(".").strip()

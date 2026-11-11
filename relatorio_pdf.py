@@ -18,8 +18,9 @@ from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, PageTempla
 from agenda_pdf import (CASA, LINHA, MESES, META, OURO, SUAVE, TEXTO, _Numerado, _p, fazer_cabecalho,
                         foto_redonda)
 
-ROTULOS = {"realizacao": "Solicitação atendida", "autoria": "Proposição aprovada", "relatoria": "Relatoria aprovada"}
-CORES = {"realizacao": "#8a6d22", "autoria": CASA["cor"], "relatoria": "#2563c9"}
+ROTULOS = {"realizacao": "Solicitação atendida", "autoria": "Proposição aprovada", "urgencia": "Urgência aprovada",
+           "relatoria": "Relatoria aprovada"}
+CORES = {"realizacao": "#8a6d22", "autoria": CASA["cor"], "urgencia": "#b42318", "relatoria": "#2563c9"}
 
 
 def _data_br(iso):
@@ -93,7 +94,8 @@ def gerar(parl, eventos, inicio, fim, rotulo, agora=None):
     tipos = [k for k in ROTULOS if cont[k] or k == "realizacao"]
     caixas = [[Paragraph(str(cont[k]), st["num"]), Paragraph(ROTULOS[k].replace("Solicitação atendida",
               "Solicitações atendidas").replace("Proposição aprovada", "Proposições aprovadas")
-              .replace("Relatoria aprovada", "Relatorias aprovadas"), st["numrot"])] for k in tipos]
+              .replace("Relatoria aprovada", "Relatorias aprovadas").replace("Urgência aprovada", "Urgências aprovadas"),
+              st["numrot"])] for k in tipos]
     t = Table([[Table([[c[0]], [c[1]]], colWidths=[larg / len(caixas) - 6 * mm]) for c in caixas]],
               colWidths=[larg / len(caixas)] * len(caixas))
     t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), cor_cl), ("LINEBELOW", (0, 0), (-1, -1), 2, OURO),
@@ -131,9 +133,11 @@ def gerar(parl, eventos, inicio, fim, rotulo, agora=None):
             if e["tipo"] != "realizacao":          # aprovação: compacta, números corridos e texto numa linha
                 rot = e.get("rotulo") or ROTULOS[e["tipo"]]
                 if e.get("n", 1) > 1:
-                    rot = {"relatoria": "Relatorias aprovadas", "autoria": "Proposições aprovadas"}.get(e["tipo"], rot)
+                    rot = {"relatoria": "Relatorias aprovadas", "autoria": "Proposições aprovadas",
+                           "urgencia": "Urgências aprovadas"}.get(e["tipo"], rot)
                     if e.get("coautoria"):
-                        rot = "Proposições (coautoria) aprovadas"
+                        rot = ("Urgências (coautoria) aprovadas" if e["tipo"] == "urgencia"
+                               else "Proposições (coautoria) aprovadas")
                     rot = f"{e['n']} {rot.lower()}"
                 if e.get("colegiado"):
                     rot += " · " + ("Plenário" if e["colegiado"] == "PLEN" else e["colegiado"])
