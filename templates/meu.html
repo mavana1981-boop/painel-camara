@@ -962,16 +962,23 @@
 <form class="filtros rel-form" method="get" action="{{ url_for('meu.realizacoes_pdf', cod=cod) }}" target="_blank">
   <span class="rel-tit">{{ ic("imprimir") }} Relatório de realizações</span>
   <label>Período<select name="ano" id="rel-periodo">{% for a in anos_relatorio %}<option value="{{ a }}">Ano de {{ a }}</option>{% endfor %}<option value="">Escolher datas…</option></select></label>
-  <label class="rel-datas" hidden>De<input type="date" name="de" value="{{ ini }}" disabled required></label>
-  <label class="rel-datas" hidden>Até<input type="date" name="ate" value="{{ fim }}" disabled required></label>
+  <label class="rel-datas">De<input type="date" name="de" value="{{ ini }}"></label>
+  <label class="rel-datas">Até<input type="date" name="ate" value="{{ fim }}"></label>
   <label>Conteúdo<select name="aprovacoes"><option value="1">Solicitações atendidas e aprovações legislativas</option><option value="0">Só solicitações atendidas</option></select></label>
   <button class="btn">Gerar PDF</button>
 </form>
 <script>
 (function(){var s=document.getElementById('rel-periodo');if(!s)return;
-  var ls=s.form.querySelectorAll('.rel-datas');
-  function at(){var datas=s.value==='';ls.forEach(function(l){l.hidden=!datas;l.querySelector('input').disabled=!datas;});}
-  s.addEventListener('change',at);at();})();
+  var f=s.form,de=f.querySelector('input[name=de]'),ate=f.querySelector('input[name=ate]'),hoje='{{ hoje }}';
+  // datas sempre editáveis: mexer numa data passa o período para "Escolher datas…"
+  [de,ate].forEach(function(i){i.addEventListener('input',function(){s.value='';});});
+  // escolher um ano preenche as datas com o ano (até hoje, no ano corrente)
+  s.addEventListener('change',function(){if(!s.value)return;de.value=s.value+'-01-01';
+    var fim=s.value+'-12-31';ate.value=fim>hoje?hoje:fim;});
+  // com um ano escolhido, o relatório sai como "Ano de …" (as datas não vão junto)
+  f.addEventListener('submit',function(){var ano=!!s.value;de.disabled=ano;ate.disabled=ano;
+    setTimeout(function(){de.disabled=ate.disabled=false;},0);});
+  s.value='';})();
 </script>
 <section class="card neu">
   <h2>Clipping diário <small>solicitações atendidas, projetos aprovados e relatorias aprovadas, por data</small></h2>
