@@ -3102,3 +3102,46 @@ def test_clipping_diferencia_urgencia_de_aprovacao_do_projeto():
               "despacho": "Aprovado o Requerimento de retirada de pauta."}]          # outro requerimento: não conta
     assert [a["situacao"] for a in clipping_auto.aprovacoes_na_tramitacao(trams, "2026-11-01", "2026-11-10")] == [
         "Aprovado o requerimento de urgência (PLEN)", "Aprovado o Projeto de Lei (PLEN)"]
+
+
+def test_clipping_pl_3240_urgencia_em_marco_aprovacao_em_maio():
+    """Caso real: em 02/03 só a urgência (a API trouxe "Aguardando Envio ao Senado" nessa linha);
+    o projeto foi aprovado em 21/05, com o despacho começando por "Votação em turno único"."""
+    from datetime import date
+    import clipping_auto
+    import meu
+    from db import autorias, clipping_aprovacoes, meta, processos
+    from sqlalchemy import insert as ins, delete as dele
+    trams = [
+        {"dataHora": "2026-03-02T18:00", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Envio ao Senado Federal",
+         "despacho": "Aprovado o requerimento nº 1158/2026, que solicita urgência (art. 155 do RICD) para o PL 5764/2025."},
+        {"dataHora": "2026-03-02T18:01", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Envio ao Senado Federal",
+         "despacho": "Alteração do Regime de Tramitação desta proposição em virtude da alteração do regime do PL 5764/2025."},
+        {"dataHora": "2026-05-21T16:00", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Envio ao Senado Federal",
+         "despacho": "Votação em turno único. Aprovado o Substitutivo ao Projeto de Lei nº 3.240, de 2025, adotado pelo relator."},
+        {"dataHora": "2026-05-21T16:30", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Envio ao Senado Federal",
+         "despacho": "A matéria vai ao Senado Federal (PL 3.240-A/2025)."},
+    ]
+    achadas = clipping_auto.aprovacoes_na_tramitacao(trams, "2026-01-01", "2026-06-30")
+    assert [(a["data"], a["situacao"]) for a in achadas] == [
+        ("2026-03-02", "Aprovado o requerimento de urgência (PLEN)"),
+        ("2026-05-21", "Aprovado o Substitutivo ao Projeto de Lei nº 3.240, de 2025, adotado pelo relator (PLEN)")]
+    # registro antigo e errado no banco (02/03 como aprovação do projeto) é apagado pela correção
+    with engine.begin() as c:
+        c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
+        c.execute(dele(meta).where(meta.c.chave == clipping_auto.CHAVE_CORRECAO_TRAM))
+        c.execute(ins(processos).values(id=8902, identificacao="PL 3240/2025", sigla="PL", ementa="Sigilo de gastos",
+                                        situacao="Aguardando Apreciação pelo Senado Federal", data_situacao="2026-06-09"))
+        c.execute(ins(autorias).values(processo_id=8902, codigo_deputado=101, principal=True))
+    clipping_auto.registrar(101, [{"tipo": "autoria", "chave": "p:8902", "identificacao": "PL 3240/2025",
+                                   "ementa": "Sigilo de gastos", "url": None, "principal": True, "origem": "tramitacao",
+                                   "data": "2026-03-02", "situacao": "Aguardando Envio ao Senado Federal",
+                                   "colegiado": "PLEN"}])
+    assert clipping_auto.corrigir_registros_da_tramitacao() == 1
+    assert clipping_auto.corrigir_registros_da_tramitacao() == 0                     # uma vez só
+    clipping_auto.carga_legislatura_deputado(101, hoje=date(2026, 6, 30),
+                                             ler=lambda pid, i, f: trams if pid == 8902 else [])
+    clip = meu.clipping(101, date(2026, 1, 1), date(2026, 6, 30))
+    pl = sorted((e["data_situacao"], e["tipo"]) for d in clip["dias"] for e in d["itens"]
+                if e["identificacao"] == "PL 3240/2025")
+    assert pl == [("2026-03-02", "urgencia"), ("2026-05-21", "autoria")]

@@ -140,32 +140,55 @@ _DESPACHO_APROV = re.compile(r"^\s*aprovad[oa]s?\s+(?:(?:o|a|os|as)\s+)?(?:proje
 _DESPACHO_URG = re.compile(r"^\s*aprovad[oa]s?\s+(?:(?:o|a|os|as)\s+)?(?:requerimentos?|urgencia)\b")
 
 
+_VAI_ADIANTE = re.compile(r"^\s*a materia vai (?:ao senado|a sancao|a promulgacao|a camara)")
+
+
+def _frases(desp):
+    # frase nova só depois de ponto + maiúscula ("Requerimento n. 10/2026" não quebra)
+    return [f.strip() for f in re.split(r"(?<=[.;])\s+(?=[A-ZÀ-Ý])", desp) if f.strip()]
+
+
 def aprovacoes_na_tramitacao(trams, inicio: str, fim: str):
     """Tramitações (formato da API v2) → aprovações entre inicio e fim (AAAA-MM-DD).
-    Aprovação = situação nova de aprovação ou despacho que aprova a matéria (ex.: "Aprovado o Parecer.")."""
-    out, vistos = [], set()
+    Lê cada dia/órgão como um todo:
+    - mérito: despacho que aprova a matéria (ex.: "Aprovado o Substitutivo...", "Aprovado o Parecer."), em qualquer
+      frase do despacho, ou "A matéria vai ao Senado/à sanção"; sem isso, a situação nova de aprovação;
+    - urgência: despacho que aprova requerimento de urgência — registro próprio. Num dia em que só houve urgência,
+      a situação informada não vale como aprovação do projeto (a API às vezes traz nessas linhas uma situação
+      posterior, ex.: "Aguardando Envio ao Senado Federal" no dia em que só se aprovou a urgência)."""
+    grupos, ordem = {}, []
     for t in sorted((t for t in trams or [] if isinstance(t, dict)), key=lambda t: t.get("dataHora") or ""):
         dt = (t.get("dataHora") or "")[:10]
         if not dt or not inicio <= dt <= fim:
             continue
         orgao = (t.get("siglaOrgao") or "").strip() or None
+        k = (dt, orgao)
+        if k not in grupos:
+            grupos[k] = {"merito": None, "vai": None, "urg": False, "sit": None}
+            ordem.append(k)
+        g = grupos[k]
         desp = re.sub(r"\s+", " ", t.get("despacho") or "").strip()
+        for f in _frases(desp):
+            fs = _sem_acento(f)
+            if _DESPACHO_APROV.match(fs):
+                g["merito"] = g["merito"] or f.rstrip(".;")[:160]
+            elif _DESPACHO_URG.match(fs) and "urgencia" in fs:
+                g["urg"] = True
+            elif _VAI_ADIANTE.match(fs):
+                g["vai"] = g["vai"] or f.rstrip(".;")[:160]
         sit = (t.get("descricaoSituacao") or "").strip()
-        d = _sem_acento(desp)
-        if desp and _DESPACHO_APROV.match(d):
-            texto = re.split(r"(?<=[.;])\s", desp, maxsplit=1)[0].rstrip(".;")[:160]
-            texto = f"{texto} ({orgao})" if orgao else texto
-        elif desp and _DESPACHO_URG.match(d) and "urgencia" in d:
-            texto = f"{_URGENCIA_TXT} ({orgao})" if orgao else _URGENCIA_TXT
-        elif sit and eh_aprovacao(sit):
-            texto = sit
-        else:
-            continue
-        k = (dt, orgao, eh_urgencia(texto))
-        if k in vistos:
-            continue
-        vistos.add(k)
-        out.append({"data": dt, "situacao": texto[:200], "colegiado": orgao})
+        if sit and eh_aprovacao(sit):
+            g["sit"] = g["sit"] or sit
+    out = []
+    for dt, orgao in ordem:
+        g = grupos[(dt, orgao)]
+        suf = f" ({orgao})" if orgao else ""
+        if g["urg"]:
+            out.append({"data": dt, "situacao": (_URGENCIA_TXT + suf)[:200], "colegiado": orgao})
+        texto = (g["merito"] + suf if g["merito"] else g["vai"] + suf if g["vai"]
+                 else g["sit"] if g["sit"] and not g["urg"] else None)
+        if texto:
+            out.append({"data": dt, "situacao": texto[:200], "colegiado": orgao})
     return out
 
 
@@ -462,10 +485,37 @@ def carga_inicial_se_preciso():
     return n
 
 
+CHAVE_CORRECAO_TRAM = "clipping:correcao_tramitacao_v2"
+
+
+def corrigir_registros_da_tramitacao():
+    """Uma vez: apaga os registros da tramitação que vieram só da situação informada (podiam cair no dia em que
+    só se aprovou a urgência — ex.: PL 3240/2025 em 02/03/2026 com "Aguardando Envio ao Senado Federal") e manda
+    reler a legislatura de todos os deputados com a leitura nova. Devolve quantos registros saíram."""
+    from sqlalchemy import delete
+    from db import meta
+    if _meta_get(CHAVE_CORRECAO_TRAM):
+        return 0
+    with engine.begin() as c:
+        rows = c.execute(select(clipping_aprovacoes.c.id, clipping_aprovacoes.c.situacao)
+                         .where(clipping_aprovacoes.c.origem == "tramitacao")).all()
+        ids = [i for i, sit in rows if not _sem_acento(sit).lstrip().startswith(("aprovad", "a materia vai"))]
+        for i in range(0, len(ids), 500):
+            c.execute(delete(clipping_aprovacoes).where(clipping_aprovacoes.c.id.in_(ids[i:i + 500])))
+        c.execute(delete(meta).where(meta.c.chave.like(f"{CHAVE_LEG_DEP}%")))
+    _meta_set(CHAVE_CORRECAO_TRAM)
+    log.info("clipping: %d registro(s) da tramitação refeitos; legislatura será relida", len(ids))
+    return len(ids)
+
+
 def carga_legislatura_ao_iniciar(espera=300):
     """Logo após o deploy (com folga para o app subir): retoma/inicia a carga da legislatura."""
     import time
     time.sleep(espera)
+    try:
+        corrigir_registros_da_tramitacao()
+    except Exception:
+        log.exception("correção dos registros da tramitação")
     try:
         iniciar_carga_legislatura()
     except Exception:
