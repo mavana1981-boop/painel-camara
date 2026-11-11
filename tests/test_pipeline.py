@@ -20,7 +20,8 @@ os.environ["ADMIN_USER"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "senha-de-teste-123"
 os.environ["SECRET_KEY"] = "teste"
 os.environ["GEMINI_INTERVALO"] = "0"        # sem espera entre chamadas da IA nos testes
-os.environ["AGENDA_AO_ACESSAR"] = "0"     # a tela da agenda não chama a API da Câmara nos testes
+os.environ["AGENDA_AO_ACESSAR"] = "0"
+os.environ["CLIPPING_TRAMITACAO"] = "0"     # a coleta não lê tramitações na API da Câmara nos testes     # a tela da agenda não chama a API da Câmara nos testes
 os.environ.pop("RAILWAY_ENVIRONMENT", None)
 os.environ.pop("CEAP_REAJUSTES", None)
 sys.path.insert(0, str(RAIZ))
@@ -2855,7 +2856,7 @@ def test_aprovacao_fica_no_clipping_mesmo_depois_que_a_situacao_muda():
                                            detectado_em=datetime(2026, 9, 11, 8)))
         c.execute(ins(relatorias).values(codigo_deputado=101, chave="PL 555/2026|CCJC", identificacao="PL 555/2026",
                                          colegiado="CCJC", situacao="Aprovado o Parecer", data_situacao="2026-10-01"))
-    assert clipping_auto.registrar_todos() >= 0 and clipping_auto.registrar(101) == 0     # coleta diária já gravou
+    assert clipping_auto.registrar_todos(com_tramitacao=False) >= 0 and clipping_auto.registrar(101) == 0     # coleta diária já gravou
     ini, fim = date(2026, 9, 1), date(2026, 10, 31)
     itens = {(e["tipo"], e["identificacao"], e["data_situacao"]) for d in meu.clipping(101, ini, fim)["dias"]
              for e in d["itens"]}
@@ -2882,3 +2883,56 @@ def test_aprovacao_fica_no_clipping_mesmo_depois_que_a_situacao_muda():
     assert clipping_auto.registrar(101) == 0                                 # sem duplicar
     html = _cliente().get("/meu/101?secao=clipping&inicio=2026-09-01&fim=2026-10-31").get_data(as_text=True)
     assert "PL 4321/2026" in html and "PL 99/2026" in html and "Proposição (coautoria) aprovada" in html
+
+
+def test_clipping_busca_aprovacoes_dos_ultimos_7_dias_na_tramitacao():
+    """Aprovada e já seguida de outra etapa na mesma semana: a tramitação recupera a aprovação."""
+    from datetime import date
+    import clipping_auto
+    import meu
+    from db import autorias, clipping_aprovacoes, processos
+    from sqlalchemy import insert as ins, delete as dele
+    trams = [
+        {"dataHora": "2026-11-05T10:00", "siglaOrgao": "CCJC", "descricaoSituacao": "Pronta para Pauta",
+         "despacho": "Aprovado o Parecer. Encaminhe-se."},
+        {"dataHora": "2026-11-05T11:00", "siglaOrgao": "CCJC", "descricaoSituacao": "Pronta para Pauta",
+         "despacho": "Aprovado o Parecer, com emenda."},                      # mesmo dia e órgão: um registro só
+        {"dataHora": "2026-11-06T15:00", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Deliberação",
+         "despacho": "Aprovado o Requerimento n. 10/2026, de urgência."},     # requerimento: não conta
+        {"dataHora": "2026-11-09T18:00", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Envio ao Senado Federal",
+         "despacho": "Encaminhada à publicação."},
+        {"dataHora": "2026-10-01T10:00", "siglaOrgao": "CFT", "despacho": "Aprovado o Parecer."},   # fora dos 7 dias
+    ]
+    achadas = clipping_auto.aprovacoes_na_tramitacao(trams, "2026-11-03", "2026-11-10")
+    assert [(a["data"], a["situacao"]) for a in achadas] == [
+        ("2026-11-05", "Aprovado o Parecer (CCJC)"), ("2026-11-09", "Aguardando Envio ao Senado Federal")]
+    with engine.begin() as c:
+        c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
+        c.execute(ins(processos).values(id=8901, identificacao="PL 7000/2026", sigla="PL", ementa="Ementa 7000",
+                                        situacao="Aguardando Apreciação pelo Senado Federal", data_situacao="2026-11-10"))
+        c.execute(ins(autorias).values(processo_id=8901, codigo_deputado=101, principal=True))
+    lidos = []
+
+    def ler(pid, ini, fim):
+        lidos.append((pid, ini, fim))
+        return trams if pid == 8901 else []
+    extras = clipping_auto.buscar_tramitacoes(101, 7, date(2026, 11, 10), ler)
+    assert (8901, "2026-11-03", "2026-11-10") in lidos
+    assert clipping_auto.registrar(101, extras) >= 2
+    assert clipping_auto.registrar(101, extras) == 0                         # sem duplicar
+    clip = meu.clipping(101, date(2026, 11, 3), date(2026, 11, 10))
+    pl = sorted((e["data_situacao"], e["situacao"]) for d in clip["dias"] for e in d["itens"]
+                if e["identificacao"] == "PL 7000/2026")
+    assert pl == [("2026-11-05", "Aprovado o Parecer (CCJC)"), ("2026-11-09", "Aguardando Envio ao Senado Federal")]
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=clipping").get_data(as_text=True)
+    assert "Buscar aprovações dos últimos 7 dias" in html
+    orig = clipping_auto.buscar_tramitacoes
+    clipping_auto.buscar_tramitacoes = lambda cod, dias=7: []
+    try:
+        tok = _tok(adm, "/meu/101?secao=clipping")
+        html = adm.post("/meu/101?secao=clipping", data={"_csrf": tok, "acao": "buscar_aprovacoes"},
+                        follow_redirects=True).get_data(as_text=True)
+        assert "aprovações dos últimos 7 dias" in html
+    finally:
+        clipping_auto.buscar_tramitacoes = orig

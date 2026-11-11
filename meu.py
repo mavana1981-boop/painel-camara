@@ -1060,6 +1060,7 @@ def painel(cod):
     elif secao == "clipping":
         ini = _data(request.args.get("inicio")) or hoje - timedelta(days=30)
         fim = _data(request.args.get("fim")) or hoje
+        ctx["buscando_aprov"] = __import__("clipping_auto").buscando(cod)
         ctx.update(clip=clipping(cod, ini, fim), ini=ini, fim=fim, rels=lista_relatorias(cod),
                    anos_relatorio=list(range(hoje.year, 2022, -1)))
     return render_template("meu.html", **ctx)
@@ -1085,6 +1086,13 @@ def _post(cod, secao, s, autor, pleno=True):
             salvar_pref("notif_modo", f["valor"])
             flash("Padrão salvo para as notificações.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="notificacoes", periodo=request.args.get("periodo") or None)
+        elif secao == "clipping" and acao == "buscar_aprovacoes":
+            import clipping_auto
+            if clipping_auto.buscar_em_segundo_plano(cod):
+                flash("Buscando na Câmara as aprovações dos últimos 7 dias. Recarregue a página em alguns minutos.", "ok")
+            else:
+                flash("A busca das aprovações já está em andamento.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="clipping")
         elif acao == "atualizar":
             ok = atualizar_em_segundo_plano(cod)
             flash("Atualização iniciada. Recarregue a página em alguns minutos." if ok else

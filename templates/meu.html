@@ -954,6 +954,11 @@
   <button class="btn">Filtrar</button>
   <span style="font-size:13px;color:var(--suave);padding-bottom:7px">{{ clip.total }} registro(s): {{ clip.realizacao }} solicitação(ões) atendida(s) · {{ clip.autoria }} de autoria · {{ clip.relatoria }} de relatoria</span>
 </form>
+<form class="filtros" method="post" action="{{ url_for('meu.painel', cod=cod, secao='clipping') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="buscar_aprovacoes">
+  <button class="btn sec com-ic"{% if buscando_aprov %} disabled{% endif %}>{{ ic("refresh") }} {{ 'Buscando aprovações…' if buscando_aprov else 'Buscar aprovações dos últimos 7 dias' }}</button>
+  <span style="font-size:12.5px;color:var(--suave);padding-bottom:7px">Lê na Câmara a tramitação recente das proposições do deputado. A coleta diária já faz isso sozinha.</span>
+</form>
 <form class="filtros rel-form" method="get" action="{{ url_for('meu.realizacoes_pdf', cod=cod) }}" target="_blank">
   <span class="rel-tit">{{ ic("imprimir") }} Relatório de realizações</span>
   <label>Ano<select name="ano">{% for a in anos_relatorio %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
