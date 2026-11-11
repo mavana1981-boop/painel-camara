@@ -1118,3 +1118,13 @@ details.rn-acomp .rn-form{margin-top:6px}
 .filtros .multi-lista input{width:auto;flex:none;margin:0}
 .filtros .multi-lista label{justify-content:flex-start;gap:9px}
 .filtros .multi-lista input[type=checkbox]{width:16px;min-width:16px;height:16px;padding:0}
+
+/* navegação da agenda por dia */
+.ag-nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--linha);font-size:13px}
+.ag-nav-rot{font-weight:700;color:var(--suave);margin-right:4px}
+.ag-nav input[type=date]{font:inherit;font-size:13px;padding:4px 8px;border:1px solid var(--linha);border-radius:6px;background:#fff}
+.ag-nav-bt{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 6px;border:1px solid var(--linha);
+  border-radius:6px;background:#fff;text-decoration:none;color:var(--pri-esc);font-size:16px;line-height:1}
+.ag-nav-bt:hover{border-color:var(--pri);color:var(--pri)}
+.ag-nav a.mini{text-decoration:none;color:inherit}
+@media (max-width:640px){ .ag-nav-rot{width:100%} }

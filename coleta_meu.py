@@ -29,6 +29,7 @@ DIAS_AGENDA_PASSADO, DIAS_AGENDA_FUTURO = 7, 45
 DIAS_HISTORICO = int(os.environ.get("MEU_DIAS_HISTORICO", "180"))
 CHAVE_HISTORICO = "meu:historico_pautas"
 CHAVE_AGENDA_PROXIMA = "meu:agenda_proxima"
+CHAVE_DIA_LIDO = "meu:agenda_dia:"           # + AAAA-MM-DD: quando aquele dia foi lido na API
 
 # ---------------- utilitários ----------------
 
@@ -191,6 +192,28 @@ def eventos_do_dia(d: date):
     return out
 
 
+def _ler_e_gravar_dia(d: date, ler_dia=None):
+    """Lê um dia na API e substitui a agenda gravada dele. None se a API falhou (fica como estava)."""
+    try:
+        evs = (ler_dia or eventos_do_dia)(d)
+    except Exception as e:
+        log.warning("agenda de %s: %s", d, e)
+        evs = None
+    if evs is None:
+        return None
+    linhas = []
+    for ev in evs:
+        itens = pauta(ev["id"]) if deliberativo(ev) else []
+        linhas.append(parse_evento(ev, itens))
+        if itens:
+            with engine.begin() as c:
+                gravar_relatorias_pauta(c, ev, itens)
+    with engine.begin() as c:
+        n = gravar_agenda_camara(c, linhas, d, d)
+    _gravar_meta(CHAVE_DIA_LIDO + d.isoformat(), datetime.now().isoformat(timespec="seconds"))
+    return n
+
+
 def atualizar_agenda_proxima(hoje=None, dias=None, ler_dia=None):
     """Atualização leve e frequente: de hoje até `dias` à frente, um dia por vez.
 
@@ -204,23 +227,11 @@ def atualizar_agenda_proxima(hoje=None, dias=None, ler_dia=None):
     with _agenda_lock:
         for i in range(dias + 1):
             d = hoje + timedelta(days=i)
-            try:
-                evs = ler_dia(d)
-            except Exception as e:
-                log.warning("agenda de %s: %s", d, e)
-                evs = None
-            if evs is None:
+            n = _ler_e_gravar_dia(d, ler_dia)
+            if n is None:
                 falhas.append(d.isoformat())
-                continue
-            linhas = []
-            for ev in evs:
-                itens = pauta(ev["id"]) if deliberativo(ev) else []
-                linhas.append(parse_evento(ev, itens))
-                if itens:
-                    with engine.begin() as c:
-                        gravar_relatorias_pauta(c, ev, itens)
-            with engine.begin() as c:
-                total += gravar_agenda_camara(c, linhas, d, d)
+            else:
+                total += n
     _gravar_meta(CHAVE_AGENDA_PROXIMA, datetime.now().isoformat(timespec="seconds"))
     if falhas:
         log.warning("agenda próxima: API falhou em %s — esses dias ficaram como estavam", ", ".join(falhas))
@@ -263,6 +274,70 @@ def reler_agenda_ao_acessar(agora=None):
             _releitura.clear()
     threading.Thread(target=rodar, daemon=True).start()
     return True
+
+
+# ---------------- consulta de um dia qualquer (navegação da agenda) ----------------
+
+_lendo_dias = set()                   # dias sendo lidos sob demanda agora
+_lendo_lock = threading.Lock()
+DIAS_RELER_FUTURO_H = 6               # dia futuro fora da coleta automática: relê se a leitura tem mais de 6 h
+
+
+def dia_lido_em(d: date):
+    v = _meta(CHAVE_DIA_LIDO + d.isoformat())
+    try:
+        return datetime.fromisoformat(v) if v else None
+    except ValueError:
+        return None
+
+
+def dia_coberto(d: date, hoje=None) -> bool:
+    """Dias que a coleta automática já mantém: 7 para trás e 45 para a frente (os próximos 7 a cada 30 min)."""
+    hoje = hoje or hoje_brt()
+    return hoje - timedelta(days=DIAS_AGENDA_PASSADO) <= d <= hoje + timedelta(days=DIAS_AGENDA_FUTURO)
+
+
+def precisa_ler_dia(d: date, hoje=None, agora=None) -> bool:
+    """Um dia fora da janela automática é lido na API na primeira consulta. Dia passado lido depois de
+    terminado não muda mais; dia futuro é relido se a última leitura tem mais de DIAS_RELER_FUTURO_H horas."""
+    hoje = hoje or hoje_brt()
+    if dia_coberto(d, hoje):
+        return False
+    ult = dia_lido_em(d)
+    if ult is None:
+        return True
+    if d < hoje:
+        return ult.date() <= d                # lido no próprio dia (ou antes): ainda podia mudar
+    return (agora or datetime.now()) - ult >= timedelta(hours=DIAS_RELER_FUTURO_H)
+
+
+def ler_dia_ao_acessar(d: date, hoje=None):
+    """Chamado quando alguém navega até um dia: lê esse dia na Câmara em segundo plano, se preciso.
+    Devolve True se a leitura está rodando (a tela mostra o aviso e se recarrega quando terminar)."""
+    if os.environ.get("AGENDA_AO_ACESSAR") == "0":
+        return False
+    with _lendo_lock:
+        if d in _lendo_dias:
+            return True
+        if not precisa_ler_dia(d, hoje):
+            return False
+        _lendo_dias.add(d)
+
+    def rodar():
+        try:
+            _ler_e_gravar_dia(d)
+        except Exception:
+            log.exception("leitura da agenda de %s", d)
+        finally:
+            with _lendo_lock:
+                _lendo_dias.discard(d)
+    threading.Thread(target=rodar, daemon=True).start()
+    return True
+
+
+def status_dia(d: date):
+    ult = dia_lido_em(d)
+    return {"rodando": d in _lendo_dias, "atualizado": ult.isoformat(timespec="seconds") if ult else None}
 
 
 def status_agenda_proxima():

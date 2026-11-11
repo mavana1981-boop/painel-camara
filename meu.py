@@ -216,6 +216,22 @@ def ja_passou(r, agora=None):
     return inicio + folga <= agora
 
 
+DIA_MINIMO = date(2019, 2, 1)                 # início da 56ª legislatura
+DIAS_MAX_FUTURO = 365
+
+
+def dia_consultado(hoje):
+    """?dia=AAAA-MM-DD da navegação da agenda (None = visão normal: próximos + histórico)."""
+    v = (request.args.get("dia") or "").strip()
+    if not v:
+        return None
+    try:
+        d = date.fromisoformat(v)
+    except ValueError:
+        return None
+    return min(max(d, DIA_MINIMO), hoje + timedelta(days=DIAS_MAX_FUTURO))
+
+
 def separar_agenda(dias, agora=None):
     """Divide a agenda (agrupada por dia) em próximos (ordem cronológica) e histórico (mais recente primeiro)."""
     agora = agora or agora_brt()
@@ -950,9 +966,29 @@ def painel(cod):
         ctx["agenda_lida_min"] = int((datetime.now() - ult).total_seconds() // 60) if ult else None
         so_dele = request.args.get("todos") != "1"
         ocultar = ocultar_solenes()
-        ini_ag, fim_ag = hoje - timedelta(days=DIAS_HISTORICO), hoje + timedelta(days=45)
-        ctx["agenda"], ctx["historico"] = separar_agenda(agenda_deputado(cod, ini_ag, fim_ag, so_dele, ocultar))
-        if ocultar:   # quantas ficaram de fora (só as que ainda vão acontecer)
+        dia = dia_consultado(hoje)
+        ctx["dia"] = dia
+        ref = dia or hoje
+        ctx["dia_nav"] = {k: (ref + timedelta(days=n)).isoformat()
+                          for k, n in (("sem_ant", -7), ("ant", -1), ("prox", 1), ("sem_prox", 7))}
+        if dia:   # navegação: um dia qualquer, para trás ou para a frente
+            ctx["dia_lendo"] = coleta_meu.ler_dia_ao_acessar(dia, hoje)
+            ult_dia = coleta_meu.dia_lido_em(dia)
+            ctx["dia_lido_em"] = ult_dia.isoformat(timespec="seconds") if ult_dia else ""
+            ctx["dia_coberto"] = coleta_meu.dia_coberto(dia, hoje)
+            agora = agora_brt()
+            itens = [e for d in agenda_deputado(cod, dia, dia, so_dele, ocultar) for e in d["itens"]]
+            for e in itens:
+                e["passou"] = ja_passou(e, agora)
+            ctx["itens_dia"] = itens
+            if ocultar:
+                ctx["n_solenes"] = sum(1 for d in agenda_deputado(cod, dia, dia, so_dele) for e in d["itens"]
+                                       if e["origem"] != "equipe" and eh_solene(e))
+            ctx["agenda"], ctx["historico"] = [], []
+        else:
+            ini_ag, fim_ag = hoje - timedelta(days=DIAS_HISTORICO), hoje + timedelta(days=45)
+            ctx["agenda"], ctx["historico"] = separar_agenda(agenda_deputado(cod, ini_ag, fim_ag, so_dele, ocultar))
+        if ocultar and not dia:   # quantas ficaram de fora (só as que ainda vão acontecer)
             futuras = separar_agenda(agenda_deputado(cod, ini_ag, fim_ag, so_dele))[0]
             ctx["n_solenes"] = sum(1 for d in futuras for e in d["itens"] if e["origem"] != "equipe" and eh_solene(e))
         ctx["ocultar_solenes"] = ocultar
@@ -1051,7 +1087,8 @@ def _post(cod, secao, s, autor, pleno=True):
             ocultar = f.get("valor") == "ocultar"
             salvar_pref("agenda_ocultar_solenes", ocultar)
             flash("Padrão salvo: sessões solenes " + ("ocultas" if ocultar else "visíveis") + " na agenda.", "ok")
-            destino = url_for("meu.painel", cod=cod, secao="agenda", todos=request.args.get("todos") or None)
+            destino = url_for("meu.painel", cod=cod, secao="agenda", todos=request.args.get("todos") or None,
+                              dia=request.args.get("dia") or None)
         elif acao == "pref_notif" and f.get("valor") in ("tipo", "data"):
             salvar_pref("notif_modo", f["valor"])
             flash("Padrão salvo para as notificações.", "ok")
@@ -1304,6 +1341,12 @@ def agenda_status(cod):
     """A tela da agenda consulta isto enquanto a releitura roda, para se recarregar quando terminar."""
     import coleta_meu
     _exigir_acesso(cod)
+    v = request.args.get("dia")
+    if v:
+        try:
+            return coleta_meu.status_dia(date.fromisoformat(v))
+        except ValueError:
+            pass
     return coleta_meu.status_agenda_proxima()
 
 

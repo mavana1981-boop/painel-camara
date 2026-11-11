@@ -2755,3 +2755,78 @@ def test_proposicoes_ementa_resumida():
         assert resumos.gerar([{"id": 1, "ementa": "x"}]) == {}
     finally:
         questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
+
+
+def test_agenda_consulta_dia_para_tras_e_para_frente():
+    """?dia=AAAA-MM-DD mostra só aquele dia (passado ou futuro), com navegação ‹ › e volta à lista."""
+    from datetime import date, timedelta
+    from db import agenda
+    from sqlalchemy import insert as ins
+    import meu
+    hoje = meu.agora_brt().date()
+    passado, futuro = hoje - timedelta(days=90), hoje + timedelta(days=100)
+    with engine.begin() as c:
+        c.execute(ins(agenda).values(origem="equipe", codigo_deputado=101, data=passado.isoformat(), hora="09:00",
+                                     titulo="Café com prefeitos (antigo)", criado_por="admin"))
+        c.execute(ins(agenda).values(origem="equipe", codigo_deputado=101, data=futuro.isoformat(), hora="15:00",
+                                     titulo="Audiência marcada lá na frente", criado_por="admin"))
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=agenda").get_data(as_text=True)
+    assert "Consultar dia" in html and "Café com prefeitos (antigo)" not in html     # fora dos 60 dias do histórico
+    assert f"dia={(hoje + timedelta(days=1)).isoformat()}" in html
+    html = adm.get(f"/meu/101?secao=agenda&dia={passado.isoformat()}").get_data(as_text=True)
+    assert "Café com prefeitos (antigo)" in html and "Audiência marcada lá na frente" not in html
+    assert "ag-item" in html and "passado" in html and "Voltar à lista" in html and ">Hoje<" in html
+    assert f"dia={(passado - timedelta(days=1)).isoformat()}" in html and f"dia={(passado + timedelta(days=7)).isoformat()}" in html
+    assert f'value="{passado.isoformat()}"' in html                                  # impressão já vem com o dia
+    html = adm.get(f"/meu/101?secao=agenda&dia={futuro.isoformat()}").get_data(as_text=True)
+    assert "Audiência marcada lá na frente" in html and "Café com prefeitos (antigo)" not in html
+    vazio = futuro + timedelta(days=3)
+    html = adm.get(f"/meu/101?secao=agenda&dia={vazio.isoformat()}").get_data(as_text=True)
+    assert "Nenhum compromisso do deputado" in html and "Ver toda a Câmara nesse dia" in html
+    assert adm.get("/meu/101?secao=agenda&dia=lixo").status_code == 200              # data inválida: lista normal
+
+
+def test_agenda_dia_lido_na_camara_sob_demanda():
+    import time
+    from datetime import date, datetime, timedelta
+    import coleta_meu
+    hoje = date(2026, 11, 11)
+    assert not coleta_meu.precisa_ler_dia(hoje - timedelta(days=3), hoje)            # coleta automática cobre
+    assert not coleta_meu.precisa_ler_dia(hoje + timedelta(days=30), hoje)
+    antigo = hoje - timedelta(days=200)
+    assert coleta_meu.precisa_ler_dia(antigo, hoje)
+    lidos = []
+
+    def falso(d):
+        lidos.append(d)
+        return [{"id": 777001, "dataHoraInicio": f"{d}T10:00", "situacao": "Encerrada",
+                 "descricaoTipo": "Audiência Pública", "orgaos": [{"sigla": "CCJC", "nome": "Comissão de Constituição e Justiça"}],
+                 "descricao": "Debate antigo"}]
+    orig = coleta_meu.eventos_do_dia
+    coleta_meu.eventos_do_dia = falso
+    os.environ["AGENDA_AO_ACESSAR"] = "1"
+    try:
+        assert coleta_meu.ler_dia_ao_acessar(antigo, hoje) is True
+        for _ in range(100):
+            if not coleta_meu.status_dia(antigo)["rodando"]:
+                break
+            time.sleep(0.02)
+        st = coleta_meu.status_dia(antigo)
+        assert lidos == [antigo] and st["rodando"] is False and st["atualizado"]
+        assert not coleta_meu.precisa_ler_dia(antigo, hoje)                          # dia passado: não relê
+        assert coleta_meu.ler_dia_ao_acessar(antigo, hoje) is False and lidos == [antigo]
+        with engine.connect() as c:
+            n = c.execute(text("SELECT COUNT(*) FROM agenda WHERE data = :d AND origem = 'camara'"),
+                          {"d": antigo.isoformat()}).scalar()
+        assert n == 1
+        longe = hoje + timedelta(days=120)                                           # futuro: relê depois de 6 h
+        coleta_meu._gravar_meta(coleta_meu.CHAVE_DIA_LIDO + longe.isoformat(), datetime.now().isoformat())
+        assert not coleta_meu.precisa_ler_dia(longe, hoje)
+        assert coleta_meu.precisa_ler_dia(longe, hoje, datetime.now() + timedelta(hours=7))
+        adm = _cliente()
+        st = adm.get(f"/meu/101/agenda/status?dia={antigo.isoformat()}").get_json()
+        assert st["rodando"] is False and st["atualizado"]
+    finally:
+        coleta_meu.eventos_do_dia = orig
+        os.environ["AGENDA_AO_ACESSAR"] = "0"

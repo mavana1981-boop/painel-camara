@@ -144,21 +144,48 @@
     </div>
     <div class="pilulas">
       {% set sol_arg = 'ocultar' if ocultar_solenes else 'mostrar' %}
-      <a class="{{ 'sel' if so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', solenes=sol_arg) }}">Do deputado</a>
-      <a class="{{ 'sel' if not so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=1, solenes=sol_arg) }}">Toda a Câmara</a>
+      <a class="{{ 'sel' if so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', solenes=sol_arg, dia=dia) }}">Do deputado</a>
+      <a class="{{ 'sel' if not so_dele }}" href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=1, solenes=sol_arg, dia=dia) }}">Toda a Câmara</a>
     </div>
     <div class="ag-opcoes">
       <a class="ag-toggle {{ 'on' if ocultar_solenes }}" role="switch" aria-checked="{{ 'true' if ocultar_solenes else 'false' }}"
-         href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=None if so_dele else 1, solenes='mostrar' if ocultar_solenes else 'ocultar') }}">
+         href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=None if so_dele else 1, solenes='mostrar' if ocultar_solenes else 'ocultar', dia=dia) }}">
         <span class="tg"></span> Ocultar sessões solenes</a>
       {% if ocultar_solenes and n_solenes %}<small class="ag-ocultas">{{ n_solenes }} sessão{{ 'ões' if n_solenes != 1 }} solene{{ 's' if n_solenes != 1 }} oculta{{ 's' if n_solenes != 1 }}</small>{% endif %}
       {% if ocultar_solenes != padrao_solenes %}
-      <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=None if so_dele else 1) }}">
+      <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=None if so_dele else 1, dia=dia) }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="pref_solenes">
         <input type="hidden" name="valor" value="{{ 'ocultar' if ocultar_solenes else 'mostrar' }}">
         <button class="mini">Salvar como padrão</button></form>
       {% else %}<small class="ag-padrao">✓ seu padrão</small>{% endif %}
     </div>
+    {% set nav_args = {'cod': cod, 'secao': 'agenda', 'todos': None if so_dele else 1, 'solenes': 'ocultar' if ocultar_solenes else 'mostrar'} %}
+    {% set ref = dia or hoje %}
+    <form method="get" class="ag-nav" action="{{ url_for('meu.painel', cod=cod) }}">
+      <input type="hidden" name="secao" value="agenda">{% if not so_dele %}<input type="hidden" name="todos" value="1">{% endif %}
+      <input type="hidden" name="solenes" value="{{ 'ocultar' if ocultar_solenes else 'mostrar' }}">
+      <span class="ag-nav-rot">Consultar dia</span>
+      <a class="ag-nav-bt" title="7 dias antes" href="{{ url_for('meu.painel', dia=dia_nav.sem_ant, **nav_args) }}">«</a>
+      <a class="ag-nav-bt" title="Dia anterior" href="{{ url_for('meu.painel', dia=dia_nav.ant, **nav_args) }}">‹</a>
+      <input type="date" name="dia" value="{{ ref.isoformat() }}" min="2019-02-01" aria-label="Data" onchange="this.form.submit()">
+      <a class="ag-nav-bt" title="Dia seguinte" href="{{ url_for('meu.painel', dia=dia_nav.prox, **nav_args) }}">›</a>
+      <a class="ag-nav-bt" title="7 dias depois" href="{{ url_for('meu.painel', dia=dia_nav.sem_prox, **nav_args) }}">»</a>
+      {% if dia %}{% if dia != hoje %}<a class="mini" href="{{ url_for('meu.painel', dia=hoje.isoformat(), **nav_args) }}">Hoje</a>{% endif %}
+      <a class="mini" href="{{ url_for('meu.painel', **nav_args) }}">Voltar à lista</a>{% endif %}
+      <noscript><button class="mini">Ver</button></noscript>
+    </form>
+    {% if dia %}
+    <div class="ag-sync {{ 'on' if dia_lendo }}" id="ag-sync-dia" data-status="{{ url_for('meu.agenda_status', cod=cod, dia=dia.isoformat()) }}"
+         data-lida="{{ dia_lido_em }}" data-rodando="{{ '1' if dia_lendo else '0' }}">
+      {% if dia_lendo %}<span class="ag-sync-pt"></span> Buscando a agenda de {{ (dia|string)|data }} na Câmara… a página se atualiza sozinha.{% endif %}
+    </div>
+    <div class="rolagem" style="max-height:none">
+      <div class="ag-dia {{ 'hoje' if dia == hoje }}">{{ dia_rotulo(dia|string) }}</div>
+      {% for e in itens_dia %}{{ evento(e, passado=e.passou) }}
+      {% else %}<div class="vazio-msg">{% if dia_lendo %}Aguardando a resposta da Câmara…{% else %}Nenhum compromisso {{ 'do deputado ' if so_dele }}em {{ (dia|string)|data }}.{% if so_dele %} <a href="{{ url_for('meu.painel', cod=cod, secao='agenda', todos=1, dia=dia.isoformat(), solenes='ocultar' if ocultar_solenes else 'mostrar') }}">Ver toda a Câmara nesse dia</a>.{% endif %}{% endif %}</div>{% endfor %}
+    </div>
+    {% if not dia_coberto and not dia_lendo and dia_lido_em %}<p class="nota">Agenda desse dia lida na Câmara em {{ dia_lido_em[:10]|data }} às {{ dia_lido_em[11:16] }}.</p>{% endif %}
+    {% else %}
     {% set fut = agenda|sum(attribute='itens', start=[]) %}
     {% set n_pauta = fut|selectattr('na_pauta')|list|length %}{% set n_sens = fut|selectattr('alertas')|list|length %}
     {% if n_pauta or n_sens %}<div class="ag-resumo-alertas">
@@ -174,6 +201,7 @@
       {% for d in historico %}<div class="ag-dia">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ evento(e, passado=True) }}{% endfor %}
       {% else %}<div class="vazio-msg">Nenhum compromisso passado nos últimos {{ dias_historico }} dias.</div>{% endfor %}
     </details>
+    {% endif %}
     <p class="nota">Reuniões dos órgãos de que o deputado participa (comissões, CPIs, comissões especiais) e sessões do Plenário vêm da API de Dados Abertos da Câmara (45 dias para a frente). O que já passou sai da lista e fica no Histórico. “Deputado na pauta” = ele é relator de um item da pauta ou o nome dele aparece na descrição do evento. A Câmara costuma publicar a pauta completa perto da reunião.</p>
   </div>
   <div class="card neu lado">
@@ -189,9 +217,9 @@
     <form method="get" class="meu-form imp-form" action="{{ url_for('meu.agenda_pdf', cod=cod) }}" target="_blank" style="border-top:1px solid var(--linha)">
       <h3 class="imp-tit">{{ ic("imprimir") }} Imprimir agenda</h3>
       <label>Período<select name="periodo" id="imp-periodo">
-        {% for v, r in periodos_impressao %}<option value="{{ v }}"{% if v == 'semana' %} selected{% endif %}>{{ r }}</option>{% endfor %}
+        {% for v, r in periodos_impressao %}<option value="{{ v }}"{% if v == ('data' if dia else 'semana') %} selected{% endif %}>{{ r }}</option>{% endfor %}
       </select></label>
-      <div class="lin imp-datas" hidden><label class="imp-de"><span>Data</span><input type="date" name="de" value="{{ hoje }}"></label><label class="imp-ate">Até<input type="date" name="ate" value="{{ hoje }}"></label></div>
+      <div class="lin imp-datas" hidden><label class="imp-de"><span>Data</span><input type="date" name="de" value="{{ dia or hoje }}"></label><label class="imp-ate">Até<input type="date" name="ate" value="{{ dia or hoje }}"></label></div>
       <label class="chk"><input type="checkbox" name="todos" value="1"{% if not so_dele %} checked{% endif %}> Incluir toda a agenda da Casa</label>
       <label class="chk"><input type="checkbox" name="descricao" value="1" checked> Incluir pautas e observações</label>
       <label class="chk"><input type="checkbox" name="solenes" value="ocultar"{% if ocultar_solenes %} checked{% endif %} onchange="this.value=this.checked?'ocultar':'mostrar'"> Ocultar sessões solenes</label>
@@ -219,7 +247,8 @@
 </section>
 <script>
 (function () {
-  var el = document.getElementById("ag-sync");
+  var el = document.getElementById("ag-sync-dia");
+  if (!el || el.dataset.rodando !== "1") el = document.getElementById("ag-sync");
   if (!el || el.dataset.rodando !== "1") return;
   var inicial = el.dataset.lida, tentativas = 0;
   function checar() {
