@@ -20,7 +20,7 @@ from db import engine, usuarios
 log = logging.getLogger("auth")
 bp = Blueprint("auth", __name__)
 
-ROTAS_PUBLICAS = {"auth.login", "static", "saude", "api_coletar", "api_tarefas",
+ROTAS_PUBLICAS = {"auth.login", "static", "manifest", "service_worker", "saude", "api_coletar", "api_tarefas",
                   "prelista_publica.pagina", "prelista_publica.imagem_publica"}   # link secreto da pré-lista
 MAX_TENTATIVAS, JANELA = 5, 15 * 60
 _falhas = defaultdict(deque)

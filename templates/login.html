@@ -6,6 +6,9 @@
 <meta name="theme-color" content="#052817">
 <title>Entrar · Painel da Câmara</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="manifest" href="{{ url_for('manifest') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+<script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("/sw.js", {scope: "/"}).catch(() => {}));</script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=versao_css) }}">
 </head>
 <body class="login-pg">
