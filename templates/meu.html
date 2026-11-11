@@ -56,12 +56,11 @@
 {% if not b.grupo %}{{ clip_item(b.item) }}{% else %}
 <div class="clip-item clip-grupo">
   <span class="clip-tipo">{% if b.colegiado == 'PLEN' %}Plenário{% elif b.colegiado %}{{ b.colegiado }}{% else %}Câmara dos Deputados{% endif %}<small>{{ b.itens|length }} aprovações</small></span>
-  <div class="clip-txt">{% for e in b.itens %}
+  <div class="clip-txt">{% for l in b.linhas %}
     <div class="clip-linha">
-      <span class="clip-mini {{ e.tipo }}">{{ 'Relatoria' if e.tipo == 'relatoria' else ('Autoria' if e.principal else 'Coautoria') }}</span>
-      <b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.identificacao }}</a>{% else %}{{ e.identificacao }}{% endif %}</b>
-      <span class="clip-sit">{{ e.situacao_curta }}</span>
-      {% if e.ementa %}<div class="notif-ementa clip-ementa" title="{{ e.ementa }}">{{ e.ementa }}</div>{% endif %}
+      <span class="clip-mini {{ l.tipo }}">{{ l.mini }}{% if l.itens|length > 1 %} · {{ l.itens|length }}{% endif %}</span>
+      <span class="clip-nums">{% for e in l.itens %}<b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.identificacao }}</a>{% else %}{{ e.identificacao }}{% endif %}</b>{{ ', ' if not loop.last }}{% endfor %}</span>
+      <div class="notif-ementa clip-ementa" title="{{ l.detalhe }}"><span class="clip-sit-l">{{ l.sit }}</span>{% if l.ementa %} — {{ l.ementa }}{% endif %}</div>
     </div>{% endfor %}
   </div>
 </div>{% endif %}

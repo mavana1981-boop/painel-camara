@@ -542,6 +542,27 @@ def clipping(cod, inicio, fim):
             "realizacao": sum(e["tipo"] == "realizacao" for e in eventos)}
 
 
+def _norm_txt(s):
+    return re.sub(r"\s+", " ", (s or "")).strip().rstrip(".").strip().lower()
+
+
+def agrupar_iguais(itens):
+    """Aprovações de um quadro com o mesmo tipo, situação e texto viram uma linha só com a lista de números
+    (ex.: 15 relatorias "Aprovado o Parecer" com o mesmo parecer → uma linha)."""
+    linhas, idx = [], {}
+    for e in itens:
+        mini = "Relatoria" if e["tipo"] == "relatoria" else ("Autoria" if e.get("principal") else "Coautoria")
+        k = (mini, _norm_txt(e.get("situacao_curta") or e.get("situacao")), _norm_txt(e.get("ementa")))
+        if k not in idx:
+            sit = (e.get("situacao_curta") or e.get("situacao") or "").strip().rstrip(".").strip()
+            idx[k] = {"mini": mini, "tipo": e["tipo"], "situacao": e.get("situacao_curta") or e.get("situacao"),
+                      "sit": sit, "ementa": e.get("ementa"),
+                      "detalhe": " — ".join(x for x in (sit, e.get("ementa")) if x), "itens": []}
+            linhas.append(idx[k])
+        idx[k]["itens"].append(e)
+    return linhas
+
+
 def blocos_clipping(itens):
     """Itens de um dia → blocos da tela: cada solicitação atendida sozinha; aprovações do mesmo
     colegiado (comissão, Plenário…) num quadro só. Aprovação sem colegiado conhecido vai para um
@@ -560,6 +581,9 @@ def blocos_clipping(itens):
             grupos[col] = {"grupo": True, "colegiado": col, "itens": []}
             blocos.append(grupos[col])
         grupos[col]["itens"].append(e)
+    for b in blocos:
+        if b["grupo"]:
+            b["linhas"] = agrupar_iguais(b["itens"])
     out = []
     for b in blocos:
         if b["grupo"] and len(b["itens"]) == 1:
@@ -614,9 +638,14 @@ def eventos_relatorio(cod, inicio, fim, com_aprovacoes=True):
                             "responsavel": (resp or {}).get("nome") or e.get("responsavel"),
                             "anexos": [a["nome"] for a in e["anexos"]]})
             else:
-                titulo = e["identificacao"] + (f" ({e['colegiado']})" if e.get("colegiado") else "")
+                col = (e.get("colegiado") or "").strip() or None
+                sit = e.get("situacao") or ""
+                if col and sit.endswith(f" ({col})"):
+                    sit = sit[: -len(col) - 3]
+                titulo = e["identificacao"] + (f" ({col})" if col else "")
                 out.append({"tipo": e["tipo"], "data": e["data_situacao"], "titulo": titulo, "rotulo": e["rotulo"],
-                            "resumo": e.get("situacao"), "ementa": e.get("ementa")})
+                            "resumo": sit or None, "ementa": e.get("ementa"), "ident": e["identificacao"],
+                            "colegiado": col})
     return out
 
 

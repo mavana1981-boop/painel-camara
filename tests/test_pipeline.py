@@ -2971,3 +2971,36 @@ def test_clipping_agrupa_aprovacoes_do_mesmo_dia_e_colegiado():
     assert {e["situacao_curta"] for e in ccjc["itens"]} == {"Aprovado o Parecer"}
     html = _cliente().get("/meu/101?secao=clipping&inicio=2026-08-12&fim=2026-08-12").get_data(as_text=True)
     assert html.count('class="clip-item clip-grupo"') == 2 and "3 aprovações" in html and "Coautoria" in html
+
+
+def test_clipping_e_pdf_juntam_aprovacoes_iguais():
+    """15 relatorias com o mesmo parecer no mesmo dia e comissão: uma linha com os números (tela e PDF)."""
+    import io
+    from datetime import date
+    from pypdf import PdfReader
+    import meu
+    from db import clipping_aprovacoes
+    from sqlalchemy import insert as ins, delete as dele
+    parecer = "Parecer do Relator, Dep. Gustavo Gayer (PL-GO), pela aprovação."
+    nums = [787, 788, 799, 800, 804, 823, 1130]
+    with engine.begin() as c:
+        c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
+        for n in nums:
+            c.execute(ins(clipping_aprovacoes).values(codigo_deputado=101, tipo="relatoria", chave=f"TVR {n}/2025|CCOM",
+                                                      identificacao=f"TVR {n}/2025", situacao="Aprovado o Parecer.",
+                                                      ementa=parecer, data="2026-07-08", colegiado="CCOM", origem="teste"))
+        c.execute(ins(clipping_aprovacoes).values(codigo_deputado=101, tipo="relatoria", chave="PL 9/2026|CCOM",
+                                                  identificacao="PL 9/2026", situacao="Aprovado o Parecer.",
+                                                  ementa="Outro parecer", data="2026-07-08", colegiado="CCOM", origem="teste"))
+    dia = meu.clipping(101, date(2026, 7, 8), date(2026, 7, 8))["dias"][0]
+    q = [b for b in dia["blocos"] if b["grupo"]][0]
+    assert [len(l["itens"]) for l in q["linhas"]] == [7, 1]
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=clipping&inicio=2026-07-08&fim=2026-07-08").get_data(as_text=True)
+    assert html.count(parecer.replace("(", "(")) >= 1 and html.count("Gustavo Gayer") == 2      # texto + title, uma vez só
+    assert "Relatoria · 7" in html and "TVR 1130/2025" in html
+    pdf = adm.get("/meu/101/realizacoes.pdf?ano=&de=2026-07-08&ate=2026-07-08")
+    txt = " ".join(" ".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.data)).pages).split())
+    assert "7 RELATORIAS APROVADAS · CCOM" in txt and txt.count("Gustavo Gayer") == 1
+    assert "TVR 787/2025, TVR 788/2025" in txt and "8 registros" in txt and "RELATORIA APROVADA · CCOM" in txt
+    assert len(PdfReader(io.BytesIO(pdf.data)).pages) == 1

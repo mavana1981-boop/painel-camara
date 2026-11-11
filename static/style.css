@@ -1142,3 +1142,6 @@ details.rn-acomp .rn-form{margin-top:6px}
 .clip-ementa{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .meu .clip-grupo{align-items:flex-start}
 .meu .clip-grupo .clip-tipo{border-radius:10px;background:var(--pri-cl);color:var(--pri-esc)}
+.clip-nums{line-height:1.6}
+.clip-nums b{white-space:nowrap}
+.clip-sit-l{color:var(--tinta);font-weight:600}

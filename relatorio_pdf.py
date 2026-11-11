@@ -5,6 +5,7 @@ se pedido, as aprovações legislativas do clipping (proposições de autoria e 
 Usa o mesmo cabeçalho do PDF da agenda.
 """
 import io
+import re
 from datetime import datetime
 
 from reportlab.lib import colors
@@ -28,6 +29,29 @@ def _data_br(iso):
         return str(iso or "")
 
 
+def _norm(s):
+    return re.sub(r"\s+", " ", s or "").strip().rstrip(".").strip().lower()
+
+
+def compactar(eventos):
+    """Aprovações do mesmo dia, colegiado, tipo, situação e texto viram um item só com a lista de números
+    (ex.: 15 relatorias com o mesmo parecer aprovadas na CCOM no mesmo dia)."""
+    out, idx = [], {}
+    for e in eventos:
+        if e["tipo"] == "realizacao":
+            out.append(e)
+            continue
+        coaut = "coautoria" in (e.get("rotulo") or "").lower()
+        k = (e["data"], e["tipo"], coaut, e.get("colegiado"), _norm(e.get("resumo")), _norm(e.get("ementa")))
+        if k not in idx:
+            idx[k] = {**e, "idents": [], "n": 0, "coautoria": coaut}
+            out.append(idx[k])
+        g = idx[k]
+        g["idents"].append(e.get("ident") or e.get("titulo"))
+        g["n"] += 1
+    return out
+
+
 def gerar(parl, eventos, inicio, fim, rotulo, agora=None):
     """eventos: dicts com tipo (realizacao/autoria/relatoria), data, titulo, resumo, ementa, anexos, rotulo."""
     agora = agora or datetime.now()
@@ -46,6 +70,8 @@ def gerar(parl, eventos, inicio, fim, rotulo, agora=None):
         "meta": ParagraphStyle("meta", fontName="Helvetica", fontSize=10.5, leading=14, textColor=META),
         "num": ParagraphStyle("num", fontName="Helvetica-Bold", fontSize=26, leading=30, textColor=cor_esc),
         "numrot": ParagraphStyle("numrot", fontName="Helvetica", fontSize=10.5, leading=13.5, textColor=META),
+        "tit_ap": ParagraphStyle("tit_ap", fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=TEXTO),
+        "meta_ap": ParagraphStyle("meta_ap", fontName="Helvetica", fontSize=9.5, leading=12.5, textColor=META),
         "vazio": ParagraphStyle("vazio", fontName="Helvetica-Oblique", fontSize=11.5, leading=15, textColor=SUAVE),
     }
 
@@ -63,6 +89,7 @@ def gerar(parl, eventos, inicio, fim, rotulo, agora=None):
 
     s = []
     cont = {k: sum(1 for e in eventos if e["tipo"] == k) for k in ROTULOS}
+    eventos = compactar(eventos)
     tipos = [k for k in ROTULOS if cont[k] or k == "realizacao"]
     caixas = [[Paragraph(str(cont[k]), st["num"]), Paragraph(ROTULOS[k].replace("Solicitação atendida",
               "Solicitações atendidas").replace("Proposição aprovada", "Proposições aprovadas")
@@ -79,13 +106,15 @@ def gerar(parl, eventos, inicio, fim, rotulo, agora=None):
         s.append(Paragraph("Nenhuma realização registrada no período.", st["vazio"]))
 
     meses = {}
-    for e in sorted(eventos, key=lambda e: (e["data"], e["tipo"] != "realizacao")):
+    for e in sorted(eventos, key=lambda e: (e["data"], e["tipo"] != "realizacao", e.get("colegiado") != "PLEN",
+                                            e.get("colegiado") or "~", e["tipo"])):
         meses.setdefault(e["data"][:7], []).append(e)
     for chave in sorted(meses):
         itens = meses[chave]
         ano, mes = int(chave[:4]), int(chave[5:7])
         n_r = sum(1 for e in itens if e["tipo"] == "realizacao")
-        resumo = f"{len(itens)} registro{'s' if len(itens) != 1 else ''}" + (
+        n_tot = sum(e.get("n", 1) for e in itens)
+        resumo = f"{n_tot} registro{'s' if n_tot != 1 else ''}" + (
             f" · {n_r} solicitaç{'ões' if n_r != 1 else 'ão'} atendida{'s' if n_r != 1 else ''}" if n_r else "")
         cab = Table([[Paragraph(f"{MESES[mes - 1].capitalize()} de {ano}", st["sec"]), Paragraph(resumo, st["secsub"])]],
                     colWidths=[70 * mm, larg - 70 * mm])
@@ -94,10 +123,33 @@ def gerar(parl, eventos, inicio, fim, rotulo, agora=None):
                                  ("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 0)]))
         linhas, estilo = [], [("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, -1), 0),
                               ("LEFTPADDING", (1, 0), (1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                              ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                              ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                               ("LINEBELOW", (0, 0), (-1, -2), 0.5, LINHA)]
+        data_ant = None
         for j, e in enumerate(itens):
             corx = CORES[e["tipo"]]
+            if e["tipo"] != "realizacao":          # aprovação: compacta, números corridos e texto numa linha
+                rot = e.get("rotulo") or ROTULOS[e["tipo"]]
+                if e.get("n", 1) > 1:
+                    rot = {"relatoria": "Relatorias aprovadas", "autoria": "Proposições aprovadas"}.get(e["tipo"], rot)
+                    if e.get("coautoria"):
+                        rot = "Proposições (coautoria) aprovadas"
+                    rot = f"{e['n']} {rot.lower()}"
+                if e.get("colegiado"):
+                    rot += " · " + ("Plenário" if e["colegiado"] == "PLEN" else e["colegiado"])
+                titulo = (", ".join(_p(x).replace(" ", "&nbsp;") for x in e["idents"]) if e.get("idents")
+                          else _p(e.get("titulo")))          # "TVR 823/2025" não se parte na quebra de linha
+                cel = [Paragraph(f'<font color="{corx}">{_p(rot).upper()}</font>', st["rot"]),
+                       Paragraph(titulo, st["tit_ap"])]
+                det = " — ".join(_p(x).rstrip(".") for x in (e.get("resumo"), e.get("ementa")) if x)
+                if det:
+                    cel.append(Paragraph(det + ".", st["meta_ap"]))
+                rotulo_data = "" if e["data"] == data_ant else _data_br(e["data"])
+                data_ant = e["data"]
+                linhas.append([Paragraph(rotulo_data, st["data"]), cel])
+                estilo.append(("LINEBEFORE", (1, j), (1, j), 2.5, colors.HexColor(corx)))
+                continue
+            data_ant = e["data"]
             cel = [Paragraph(f'<font color="{corx}">{_p(e.get("rotulo") or ROTULOS[e["tipo"]]).upper()}</font>', st["rot"]),
                    Paragraph(_p(e.get("titulo")), st["tit"])]
             if e.get("resumo"):
