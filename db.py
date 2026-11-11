@@ -4,7 +4,7 @@ import re
 import unicodedata
 
 from sqlalchemy import (BigInteger, Boolean, Column, DateTime, Float, Integer, LargeBinary, MetaData,
-                        String, Table, Text, create_engine)
+                        String, Table, Text, UniqueConstraint, create_engine)
 
 
 def _db_url():
@@ -389,6 +389,24 @@ relatorias = Table(  # montadas a partir das pautas das reuniões (o relator de 
     Column("data_situacao", String(10)),
     Column("url", String(300)),
     Column("atualizado", DateTime),
+)
+
+clipping_aprovacoes = Table(  # histórico permanente das aprovações do parlamentar (entra no clipping)
+    "clipping_aprovacoes", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("codigo_deputado", Integer, index=True),
+    Column("tipo", String(20)),                       # "autoria" ou "relatoria"
+    Column("chave", String(160)),                     # p:<id da proposição> ou a chave da relatoria
+    Column("identificacao", String(60)),
+    Column("ementa", Text),
+    Column("situacao", String(200)),                  # situação que indicou a aprovação
+    Column("data", String(10), index=True),           # data da aprovação (segundo a Câmara)
+    Column("url", String(300)),
+    Column("colegiado", String(30)),
+    Column("principal", Boolean),                     # autoria: 1º signatário
+    Column("origem", String(20)),                     # proposicao | notificacao | relatoria
+    Column("registrado_em", DateTime),
+    UniqueConstraint("codigo_deputado", "tipo", "chave", "situacao", name="uq_clipping_aprovacao"),
 )
 
 plenario_pautas = Table(  # cópia das últimas pautas do app Minha Pauta, com as notas da equipe

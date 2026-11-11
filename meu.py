@@ -131,14 +131,10 @@ def _sem_acento(s):
     return "".join(c for c in s if not unicodedata.combining(c))
 
 
-_APROVACAO = re.compile(r"(aprovad|transformad[ao] em norma|remetid[ao] (a|ao) (senado|camara|sancao)|"
-                        r"enviad[ao] (a|ao) (senado|sancao)|aguardando (sancao|promulgacao)|"
-                        r"aguardando (envio|remessa) ao senado|promulgad|sancionad)")
-
 
 def eh_aprovacao(situacao):
-    s = _sem_acento(situacao)
-    return bool(_APROVACAO.search(s)) and "rejeitad" not in s and "nao aprovad" not in s
+    from clipping_auto import eh_aprovacao as f
+    return f(situacao)
 
 
 def _data(v):
@@ -514,25 +510,21 @@ def alterar_temas(cod, acao, termo):
 
 def clipping(cod, inicio, fim):
     """Aprovações por data: proposições do deputado (autor/coautor) e matérias que ele relatou
-    (item da pauta com parecer aprovado, na data da reunião)."""
-    p = {"c": cod, "ini": inicio.isoformat(), "fim": fim.isoformat()}
-    with engine.connect() as c:
-        props = [dict(r) for r in c.execute(text("""
-            SELECT pr.id, pr.identificacao, pr.ementa, pr.situacao, pr.data_situacao, pr.url, pr.virou_norma,
-                   a.principal
-            FROM processos pr JOIN autorias a ON a.processo_id = pr.id
-            WHERE a.codigo_deputado = :c AND pr.data_situacao BETWEEN :ini AND :fim"""), p).mappings()]
-        rels = [dict(r) for r in c.execute(text("""
-            SELECT identificacao, ementa, situacao, data_situacao, url, colegiado
-            FROM relatorias WHERE codigo_deputado = :c AND data_situacao BETWEEN :ini AND :fim"""), p).mappings()]
+    (item da pauta com parecer aprovado, na data da reunião). Vêm do histórico permanente
+    (clipping_auto): uma aprovação continua no clipping mesmo depois que a situação muda."""
+    import clipping_auto
+    try:
+        clipping_auto.registrar(cod)        # o que apareceu desde a última coleta entra já
+    except Exception:
+        logging.getLogger(__name__).exception("clipping automático")
     eventos = []
-    for x in props:
-        if eh_aprovacao(x["situacao"]):
-            eventos.append({**x, "tipo": "autoria", "rotulo": "Proposição aprovada" if x["principal"]
-                            else "Proposição (coautoria) aprovada"})
-    for x in rels:
-        if eh_aprovacao(x["situacao"]):
-            eventos.append({**x, "tipo": "relatoria", "rotulo": "Relatoria aprovada"})
+    for x in clipping_auto.do_periodo(cod, inicio, fim):
+        x["data_situacao"] = x["data"]
+        if x["tipo"] == "autoria":
+            x["rotulo"] = "Proposição aprovada" if x["principal"] else "Proposição (coautoria) aprovada"
+        else:
+            x["rotulo"] = "Relatoria aprovada"
+        eventos.append(x)
     for x in realizacoes(cod, inicio, fim):
         eventos.append({**x, "tipo": "realizacao", "rotulo": "Solicitação atendida", "data_situacao": x["data_solucao"],
                         "identificacao": x["titulo"]})

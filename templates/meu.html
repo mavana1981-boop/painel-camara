@@ -964,7 +964,7 @@
   <h2>Clipping diário <small>solicitações atendidas, projetos aprovados e relatorias aprovadas, por data</small></h2>
   {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
   {% else %}<div class="vazio-msg">Nenhum registro no período.</div>{% endfor %}
-  <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação atual da proposição indica aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião.</p>
+  <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação da proposição indicou aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião. Toda aprovação é registrada automaticamente assim que aparece e fica no clipping como histórico, mesmo depois que a situação da proposição muda; cada etapa aprovada (comissão, Plenário, sanção…) vira um registro.</p>
 </section>
 <section class="card neu" style="margin-top:14px">
   <h2>Relatorias do deputado <small>{{ rels|length }}</small></h2>

@@ -493,6 +493,11 @@ def executar(codigos=None, agenda_tambem=True):
                 fn()
             except Exception:
                 log.exception(fn.__name__)
+    try:                                   # aprovações do dia entram no histórico do clipping
+        import clipping_auto
+        clipping_auto.registrar_todos()
+    except Exception:
+        log.exception("clipping automático")
     import radar
     try:
         radar.ciclo(codigos)

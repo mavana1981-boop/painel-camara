@@ -2830,3 +2830,55 @@ def test_agenda_dia_lido_na_camara_sob_demanda():
     finally:
         coleta_meu.eventos_do_dia = orig
         os.environ["AGENDA_AO_ACESSAR"] = "0"
+
+
+def test_aprovacao_fica_no_clipping_mesmo_depois_que_a_situacao_muda():
+    """Aprovou → registrado no clipping; a proposição segue tramitando e o registro continua lá."""
+    from datetime import date, datetime
+    import clipping_auto
+    import meu
+    from db import autorias, clipping_aprovacoes, notificacoes, processos, relatorias
+    from sqlalchemy import insert as ins, update as upd, delete as dele
+    with engine.begin() as c:
+        c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
+        c.execute(ins(processos).values(id=8801, identificacao="PL 4321/2026", sigla="PL", ementa="Cria o programa X",
+                                        situacao="Aprovado o Projeto", data_situacao="2026-10-05",
+                                        url="https://camara.leg.br/8801"))
+        c.execute(ins(autorias).values(processo_id=8801, codigo_deputado=101, principal=True))
+        # aprovação antiga que só ficou na notificação (a situação já mudou de novo)
+        c.execute(ins(processos).values(id=8802, identificacao="PL 99/2026", sigla="PL", ementa="Ementa do PL 99",
+                                        situacao="Aguardando Apreciação pelo Senado Federal", data_situacao="2026-09-20"))
+        c.execute(ins(autorias).values(processo_id=8802, codigo_deputado=101, principal=False))
+        c.execute(ins(notificacoes).values(codigo_deputado=101, processo_id=8802, identificacao="PL 99/2026",
+                                           tipo="situacao", situacao_anterior="Pronta para Pauta",
+                                           situacao_nova="Aprovada a Redação Final", data_situacao="2026-09-10",
+                                           detectado_em=datetime(2026, 9, 11, 8)))
+        c.execute(ins(relatorias).values(codigo_deputado=101, chave="PL 555/2026|CCJC", identificacao="PL 555/2026",
+                                         colegiado="CCJC", situacao="Aprovado o Parecer", data_situacao="2026-10-01"))
+    assert clipping_auto.registrar_todos() >= 0 and clipping_auto.registrar(101) == 0     # coleta diária já gravou
+    ini, fim = date(2026, 9, 1), date(2026, 10, 31)
+    itens = {(e["tipo"], e["identificacao"], e["data_situacao"]) for d in meu.clipping(101, ini, fim)["dias"]
+             for e in d["itens"]}
+    assert ("autoria", "PL 4321/2026", "2026-10-05") in itens
+    assert ("autoria", "PL 99/2026", "2026-09-10") in itens                 # recuperado da notificação
+    assert ("relatoria", "PL 555/2026", "2026-10-01") in itens
+
+    with engine.begin() as c:                                                # a tramitação seguiu
+        c.execute(upd(processos).where(processos.c.id == 8801).values(
+            situacao="Aguardando Apreciação pelo Senado Federal", data_situacao="2026-10-20"))
+        c.execute(upd(relatorias).where(relatorias.c.chave == "PL 555/2026|CCJC").values(
+            situacao="Retirado de pauta", data_situacao="2026-10-15"))
+    itens = {(e["tipo"], e["identificacao"], e["data_situacao"]) for d in meu.clipping(101, ini, fim)["dias"]
+             for e in d["itens"]}
+    assert ("autoria", "PL 4321/2026", "2026-10-05") in itens and ("relatoria", "PL 555/2026", "2026-10-01") in itens
+
+    with engine.begin() as c:                                                # nova etapa aprovada = novo registro
+        c.execute(upd(processos).where(processos.c.id == 8801).values(
+            situacao="Transformado em Norma Jurídica", data_situacao="2026-10-28"))
+    clip = meu.clipping(101, ini, fim)
+    pl = [e for d in clip["dias"] for e in d["itens"] if e["identificacao"] == "PL 4321/2026"]
+    assert sorted(e["data_situacao"] for e in pl) == ["2026-10-05", "2026-10-28"]
+    assert {e["rotulo"] for e in pl} == {"Proposição aprovada"}
+    assert clipping_auto.registrar(101) == 0                                 # sem duplicar
+    html = _cliente().get("/meu/101?secao=clipping&inicio=2026-09-01&fim=2026-10-31").get_data(as_text=True)
+    assert "PL 4321/2026" in html and "PL 99/2026" in html and "Proposição (coautoria) aprovada" in html
