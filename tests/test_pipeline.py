@@ -2944,3 +2944,30 @@ def test_clipping_busca_aprovacoes_dos_ultimos_7_dias_na_tramitacao():
         assert "aprovações dos últimos 7 dias" in html
     finally:
         clipping_auto.buscar_tramitacoes = orig
+
+
+def test_clipping_agrupa_aprovacoes_do_mesmo_dia_e_colegiado():
+    from datetime import date
+    import meu
+    from db import clipping_aprovacoes
+    from sqlalchemy import insert as ins, delete as dele
+    linhas = [("autoria", "p:1", "PL 1/2026", "Aprovado o Parecer (CCJC)", "CCJC", True),
+              ("relatoria", "PL 2/2026|CCJC", "PL 2/2026", "Aprovado o Parecer", "CCJC", None),
+              ("autoria", "p:3", "PL 3/2026", "Aprovado o Parecer (CCJC)", "CCJC", False),
+              ("relatoria", "PL 4/2026|CFT", "PL 4/2026", "Aprovado o Parecer", "CFT", None),
+              ("autoria", "p:5", "PL 5/2026", "Aprovado o Projeto (PLEN)", "PLEN", True),
+              ("autoria", "p:6", "PL 6/2026", "Aprovado o Projeto (PLEN)", "PLEN", True)]
+    with engine.begin() as c:
+        c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
+        for tipo, chave, ident, sit, col, princ in linhas:
+            c.execute(ins(clipping_aprovacoes).values(codigo_deputado=101, tipo=tipo, chave=chave, identificacao=ident,
+                                                      situacao=sit, data="2026-08-12", colegiado=col, principal=princ,
+                                                      ementa=f"Ementa de {ident}", origem="teste"))
+    dia = [d for d in meu.clipping(101, date(2026, 8, 12), date(2026, 8, 12))["dias"] if d["data"] == "2026-08-12"][0]
+    bl = [b for b in dia["blocos"] if b["grupo"] or b["item"]["tipo"] != "realizacao"]
+    assert [(b.get("colegiado"), len(b["itens"])) if b["grupo"] else ("só", b["item"]["identificacao"]) for b in bl] == [
+        ("PLEN", 2), ("CCJC", 3), ("só", "PL 4/2026")]
+    ccjc = next(b for b in bl if b.get("colegiado") == "CCJC")
+    assert {e["situacao_curta"] for e in ccjc["itens"]} == {"Aprovado o Parecer"}
+    html = _cliente().get("/meu/101?secao=clipping&inicio=2026-08-12&fim=2026-08-12").get_data(as_text=True)
+    assert html.count('class="clip-item clip-grupo"') == 2 and "3 aprovações" in html and "Coautoria" in html

@@ -532,11 +532,47 @@ def clipping(cod, inicio, fim):
     for e in eventos:
         dias.setdefault(e["data_situacao"], []).append(e)
     ordem = {"realizacao": 0, "autoria": 1, "relatoria": 2}
-    return {"dias": [{"data": d, "itens": sorted(dias[d], key=lambda e: ordem[e["tipo"]])}
-                     for d in sorted(dias, reverse=True)],
+    saida = []
+    for d in sorted(dias, reverse=True):
+        itens = sorted(dias[d], key=lambda e: ordem[e["tipo"]])
+        saida.append({"data": d, "itens": itens, "blocos": blocos_clipping(itens)})
+    return {"dias": saida,
             "total": len(eventos), "autoria": sum(e["tipo"] == "autoria" for e in eventos),
             "relatoria": sum(e["tipo"] == "relatoria" for e in eventos),
             "realizacao": sum(e["tipo"] == "realizacao" for e in eventos)}
+
+
+def blocos_clipping(itens):
+    """Itens de um dia → blocos da tela: cada solicitação atendida sozinha; aprovações do mesmo
+    colegiado (comissão, Plenário…) num quadro só. Aprovação sem colegiado conhecido vai para um
+    quadro "Câmara dos Deputados" quando há mais de uma."""
+    blocos, grupos = [], {}
+    for e in itens:
+        if e["tipo"] == "realizacao":
+            blocos.append({"grupo": False, "item": e})
+            continue
+        col = (e.get("colegiado") or "").strip() or None
+        sit = e.get("situacao") or ""
+        if col and sit.endswith(f" ({col})"):             # o colegiado já está no cabeçalho do quadro
+            sit = sit[: -len(col) - 3]
+        e["situacao_curta"] = sit
+        if col not in grupos:
+            grupos[col] = {"grupo": True, "colegiado": col, "itens": []}
+            blocos.append(grupos[col])
+        grupos[col]["itens"].append(e)
+    out = []
+    for b in blocos:
+        if b["grupo"] and len(b["itens"]) == 1:
+            out.append({"grupo": False, "item": b["itens"][0]})
+        else:
+            out.append(b)
+    # quadros de colegiado: Plenário primeiro, depois as comissões em ordem alfabética, sem colegiado por último
+    def chave(b):
+        if not b["grupo"] and b["item"]["tipo"] == "realizacao":
+            return (0, "")
+        c = b["colegiado"] if b["grupo"] else ((b["item"].get("colegiado") or "").strip() or None)
+        return (1, "") if c == "PLEN" else (2, c) if c else (3, "")
+    return sorted(out, key=chave)
 
 
 def realizacoes(cod, inicio, fim):

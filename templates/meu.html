@@ -52,6 +52,21 @@
 </div>
 {%- endmacro %}
 
+{% macro clip_bloco(b) -%}
+{% if not b.grupo %}{{ clip_item(b.item) }}{% else %}
+<div class="clip-item clip-grupo">
+  <span class="clip-tipo">{% if b.colegiado == 'PLEN' %}Plenário{% elif b.colegiado %}{{ b.colegiado }}{% else %}Câmara dos Deputados{% endif %}<small>{{ b.itens|length }} aprovações</small></span>
+  <div class="clip-txt">{% for e in b.itens %}
+    <div class="clip-linha">
+      <span class="clip-mini {{ e.tipo }}">{{ 'Relatoria' if e.tipo == 'relatoria' else ('Autoria' if e.principal else 'Coautoria') }}</span>
+      <b>{% if e.url %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.identificacao }}</a>{% else %}{{ e.identificacao }}{% endif %}</b>
+      <span class="clip-sit">{{ e.situacao_curta }}</span>
+      {% if e.ementa %}<div class="notif-ementa clip-ementa" title="{{ e.ementa }}">{{ e.ementa }}</div>{% endif %}
+    </div>{% endfor %}
+  </div>
+</div>{% endif %}
+{%- endmacro %}
+
 {% macro clip_item(e) -%}
 {% if e.tipo == 'realizacao' %}
 <div class="clip-item realizacao">
@@ -123,7 +138,7 @@
 </section>
 <section class="grade">
   <div class="card neu"><h2>Clipping de aprovações <a class="mc-link" href="{{ url_for('meu.painel', cod=cod, secao='clipping') }}">ver {{ ic("seta") }}</a></h2>
-    {% for d in v.clip.dias[:4] %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
+    {% for d in v.clip.dias[:4] %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }}</div>{% for b in d.blocos %}{{ clip_bloco(b) }}{% endfor %}
     {% else %}<div class="vazio-msg">Nenhuma aprovação nos últimos 30 dias.</div>{% endfor %}</div>
   <div class="card neu"><h2>Radar de notícias <a class="mc-link" href="{{ url_for('meu.painel', cod=cod, secao='radar') }}">ver {{ ic("seta") }}</a></h2>
     {% for n in v.radar %}<a class="news" href="{{ n.link }}" target="_blank" rel="noopener noreferrer"><b>{{ n.titulo }}</b><span>{% if n.relevante %}<i class="rn-mini">{{ n.tipo_acao or 'Relevante' }}</i> {% endif %}{{ n.fonte or 'Google Notícias' }}{% if n.publicado %} · {{ n.publicado|data }}{% endif %}</span></a>
@@ -982,7 +997,7 @@
 </script>
 <section class="card neu">
   <h2>Clipping diário <small>solicitações atendidas, projetos aprovados e relatorias aprovadas, por data</small></h2>
-  {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
+  {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for b in d.blocos %}{{ clip_bloco(b) }}{% endfor %}
   {% else %}<div class="vazio-msg">Nenhum registro no período.</div>{% endfor %}
   <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação da proposição indicou aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião. Toda aprovação é registrada automaticamente assim que aparece e fica no clipping como histórico, mesmo depois que a situação da proposição muda; cada etapa aprovada (comissão, Plenário, sanção…) vira um registro.</p>
 </section>
