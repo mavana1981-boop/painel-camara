@@ -968,6 +968,14 @@ def test_solicitacao_concluida_vai_para_clipping_e_relatorio():
     assert "PDL para sustar" in texto0 and "Proposição aprovada".upper() not in texto0.upper()
     vazio = adm.get("/meu/101/realizacoes.pdf?ano=2023")
     assert "Nenhuma realização" in " ".join(p.extract_text() for p in PdfReader(io.BytesIO(vazio.data)).pages)
+    de, ate = hoje - timedelta(days=3), hoje                              # datas escolhidas pelo usuário
+    assert "Escolher datas" in html and 'name="de"' in html and 'name="ate"' in html
+    per = adm.get(f"/meu/101/realizacoes.pdf?ano=&de={de.isoformat()}&ate={ate.isoformat()}&aprovacoes=1")
+    tper = " ".join(p.extract_text() for p in PdfReader(io.BytesIO(per.data)).pages)
+    assert f"Período de {de:%d/%m/%Y} a {ate:%d/%m/%Y}" in tper and "PDL para sustar" in tper
+    fora = adm.get(f"/meu/101/realizacoes.pdf?ano=&de={(hoje - timedelta(days=30)).isoformat()}"
+                   f"&ate={(hoje - timedelta(days=20)).isoformat()}")
+    assert "PDL para sustar" not in " ".join(p.extract_text() for p in PdfReader(io.BytesIO(fora.data)).pages)
 
     # tirar do clipping pela edição
     adm.post("/meu/101?secao=solicitacoes", data={"_csrf": tok, "acao": "editar", "id": sid,

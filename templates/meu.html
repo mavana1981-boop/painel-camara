@@ -961,10 +961,18 @@
 </form>
 <form class="filtros rel-form" method="get" action="{{ url_for('meu.realizacoes_pdf', cod=cod) }}" target="_blank">
   <span class="rel-tit">{{ ic("imprimir") }} Relatório de realizações</span>
-  <label>Ano<select name="ano">{% for a in anos_relatorio %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+  <label>Período<select name="ano" id="rel-periodo">{% for a in anos_relatorio %}<option value="{{ a }}">Ano de {{ a }}</option>{% endfor %}<option value="">Escolher datas…</option></select></label>
+  <label class="rel-datas" hidden>De<input type="date" name="de" value="{{ ini }}" disabled required></label>
+  <label class="rel-datas" hidden>Até<input type="date" name="ate" value="{{ fim }}" disabled required></label>
   <label>Conteúdo<select name="aprovacoes"><option value="1">Solicitações atendidas e aprovações legislativas</option><option value="0">Só solicitações atendidas</option></select></label>
   <button class="btn">Gerar PDF</button>
 </form>
+<script>
+(function(){var s=document.getElementById('rel-periodo');if(!s)return;
+  var ls=s.form.querySelectorAll('.rel-datas');
+  function at(){var datas=s.value==='';ls.forEach(function(l){l.hidden=!datas;l.querySelector('input').disabled=!datas;});}
+  s.addEventListener('change',at);at();})();
+</script>
 <section class="card neu">
   <h2>Clipping diário <small>solicitações atendidas, projetos aprovados e relatorias aprovadas, por data</small></h2>
   {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for e in d.itens %}{{ clip_item(e) }}{% endfor %}
