@@ -515,6 +515,7 @@ if os.environ.get("AUTO_CARGA") != "0" and (os.environ.get("RAILWAY_ENVIRONMENT"
     threading.Thread(target=usuarios_mp.importar_se_preciso, daemon=True).start()   # usuários do Minha Pauta (1x)
     import clipping_auto  # noqa: E402
     threading.Thread(target=clipping_auto.carga_inicial_se_preciso, daemon=True).start()  # aprovações 7 dias (1x)
+    threading.Thread(target=clipping_auto.carga_legislatura_ao_iniciar, daemon=True).start()  # desde fev/2023
     if os.environ.get("AUTO_COLETA") != "0":
         threading.Thread(target=_agendador_diario, daemon=True).start()
         threading.Thread(target=_agendador_agenda, daemon=True).start()

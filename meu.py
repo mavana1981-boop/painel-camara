@@ -1126,6 +1126,7 @@ def painel(cod):
         ini = _data(request.args.get("inicio")) or hoje - timedelta(days=30)
         fim = _data(request.args.get("fim")) or hoje
         ctx["buscando_aprov"] = __import__("clipping_auto").buscando(cod)
+        ctx["carga_leg"] = __import__("clipping_auto").estado_carga_legislatura(cod)
         ctx.update(clip=clipping(cod, ini, fim), ini=ini, fim=fim, rels=lista_relatorias(cod),
                    anos_relatorio=list(range(hoje.year, 2022, -1)))
     return render_template("meu.html", **ctx)
@@ -1157,6 +1158,14 @@ def _post(cod, secao, s, autor, pleno=True):
                 flash("Buscando na Câmara as aprovações dos últimos 7 dias. Recarregue a página em alguns minutos.", "ok")
             else:
                 flash("A busca das aprovações já está em andamento.", "ok")
+            destino = url_for("meu.painel", cod=cod, secao="clipping")
+        elif secao == "clipping" and acao == "buscar_legislatura":
+            import clipping_auto
+            if clipping_auto.iniciar_carga_legislatura([cod]):
+                flash("Buscando na Câmara as aprovações de toda a legislatura (desde fev/2023). Leva de alguns "
+                      "minutos a algumas horas; o clipping vai se preenchendo — recarregue a página depois.", "ok")
+            else:
+                flash("Já há uma busca da legislatura em andamento. Aguarde terminar e recarregue a página.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="clipping")
         elif acao == "atualizar":
             ok = atualizar_em_segundo_plano(cod)

@@ -496,6 +496,7 @@ def executar(codigos=None, agenda_tambem=True):
     try:                                   # aprovações do dia entram no histórico do clipping
         import clipping_auto
         clipping_auto.registrar_todos()
+        clipping_auto.iniciar_carga_legislatura()     # deputado recém-acompanhado: histórico desde 2023 (2º plano)
     except Exception:
         log.exception("clipping automático")
     import radar

@@ -10,7 +10,7 @@ import logging
 import os
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, text
 
@@ -232,6 +232,183 @@ def buscando(cod):
     return cod in _buscando
 
 
+# ---------------- carga da legislatura inteira ----------------
+# A coleta diária só enxerga os últimos 7 dias. Esta carga roda uma vez (em segundo plano) e preenche o
+# histórico desde o início da legislatura:
+#   1) autoria: a tramitação completa (desde fev/2023) de cada proposição do deputado acompanhado;
+#   2) relatoria: as pautas de todas as reuniões deliberativas da legislatura, mês a mês — cada item com
+#      parecer aprovado vira registro do relator (de todos os deputados, para servir a quem for acompanhado depois).
+# É retomável: deputado concluído e mês de pautas lido ficam anotados em meta.
+
+INICIO_LEGISLATURA = os.environ.get("INICIO_LEGISLATURA", "2023-02-01")
+CHAVE_LEG_DEP = "clipping:legislatura:dep:"          # + código do deputado
+CHAVE_LEG_MES = "clipping:legislatura:pautas:"       # + AAAA-MM
+SIGLAS_SEM_VOTACAO = {"RIC", "INC"}                  # requerimento de informação e indicação não são votados
+LOTE = 50
+
+_leg_lock = threading.Lock()
+_leg_estado = {"rodando": False, "fase": None, "cod": None, "feito": 0, "total": 0, "fila": []}
+
+
+def _meta_get(chave):
+    from db import meta
+    with engine.connect() as c:
+        return c.execute(select(meta.c.valor).where(meta.c.chave == chave)).scalar()
+
+
+def _meta_set(chave, valor=None):
+    from sqlalchemy import delete, insert
+    from db import meta
+    with engine.begin() as c:
+        c.execute(delete(meta).where(meta.c.chave == chave))
+        c.execute(insert(meta).values(chave=chave, valor=valor or datetime.now().isoformat(timespec="seconds")))
+
+
+def legislatura_concluida(cod):
+    return _meta_get(f"{CHAVE_LEG_DEP}{cod}")
+
+
+def carga_legislatura_deputado(cod, hoje=None, ler=None):
+    """Tramitação desde o início da legislatura de todas as proposições de autoria do deputado →
+    aprovações no histórico do clipping. Grava em lotes (o que já foi lido não se perde se o servidor reiniciar)."""
+    hoje = hoje or date.today()
+    ini, fim = INICIO_LEGISLATURA, hoje.isoformat()
+    ler = ler or _ler_tramitacoes
+    with engine.connect() as c:
+        props = [dict(r) for r in c.execute(text("""
+            SELECT pr.id, pr.sigla, pr.identificacao, pr.ementa, pr.url, a.principal
+            FROM processos pr JOIN autorias a ON a.processo_id = pr.id
+            WHERE a.codigo_deputado = :c AND (pr.data_situacao IS NULL OR pr.data_situacao >= :ini)
+            ORDER BY pr.data_situacao DESC"""), {"c": cod, "ini": ini}).mappings()]
+    props = [p for p in props if (p["sigla"] or "").upper() not in SIGLAS_SEM_VOTACAO]
+    _leg_estado.update(fase="autoria", cod=cod, feito=0, total=len(props))
+    n, lote = 0, []
+    for i, p in enumerate(props, 1):
+        try:
+            trams = ler(p["id"], ini, fim)
+        except Exception as e:
+            log.warning("tramitação de %s: %s", p["identificacao"], e)
+            trams = []
+        for a in aprovacoes_na_tramitacao(trams, ini, fim):
+            lote.append({"tipo": "autoria", "chave": f"p:{p['id']}", "identificacao": p["identificacao"],
+                         "ementa": p["ementa"], "url": p["url"], "principal": bool(p["principal"]),
+                         "origem": "tramitacao", **a})
+        _leg_estado["feito"] = i
+        if i % LOTE == 0:
+            n += registrar(cod, lote)
+            lote = []
+    n += registrar(cod, lote)
+    _meta_set(f"{CHAVE_LEG_DEP}{cod}")
+    log.info("clipping da legislatura do deputado %s: %d proposição(ões) lidas, %d aprovação(ões) nova(s)",
+             cod, len(props), n)
+    return n
+
+
+def _meses(ini: date, fim: date):
+    d = ini.replace(day=1)
+    while d <= fim:
+        prox = (d + timedelta(days=32)).replace(day=1)
+        yield max(d, ini), min(prox - timedelta(days=1), fim)
+        d = prox
+
+
+def relatorias_aprovadas_da_pauta(ev, itens):
+    """Itens da pauta com relator e parecer aprovado → [(codigo_deputado, registro do clipping)]."""
+    from coleta_meu import relatorias_da_pauta
+    out = []
+    for cod, r in relatorias_da_pauta(ev, itens):
+        if r["situacao"] and r["data_situacao"] and eh_aprovacao(r["situacao"]):
+            out.append((cod, {"tipo": "relatoria", "chave": r["chave"], "identificacao": r["identificacao"],
+                              "ementa": r["ementa"], "situacao": r["situacao"], "data": r["data_situacao"],
+                              "url": r["url"], "colegiado": r["colegiado"], "principal": None,
+                              "origem": "relatoria"}))
+    return out
+
+
+def carga_legislatura_pautas(hoje=None, eventos=None, ler_pauta=None):
+    """Pautas das reuniões deliberativas desde o início da legislatura (mês a mês, retomável):
+    completa a tabela de relatorias e registra cada parecer aprovado no clipping do relator."""
+    import coleta_meu
+    from db import deputados
+    hoje = hoje or date.today()
+    eventos = eventos or coleta_meu.eventos_periodo
+    ler_pauta = ler_pauta or coleta_meu.pauta
+    with engine.connect() as c:
+        cad = {r[0] for r in c.execute(select(deputados.c.codigo))}
+    meses = [m for m in _meses(date.fromisoformat(INICIO_LEGISLATURA), hoje)
+             if not _meta_get(f"{CHAVE_LEG_MES}{m[0]:%Y-%m}")]
+    _leg_estado.update(fase="relatoria", cod=None, feito=0, total=len(meses))
+    n = 0
+    for i, (ini, fim) in enumerate(meses, 1):
+        por_dep = {}
+        for ev in eventos(ini, fim):
+            if not coleta_meu.deliberativo(ev):
+                continue
+            itens = ler_pauta(ev["id"])
+            if not itens:
+                continue
+            with engine.begin() as c:
+                coleta_meu.gravar_relatorias_pauta(c, ev, itens, cad)
+            for cod, x in relatorias_aprovadas_da_pauta(ev, itens):
+                if cod in cad:
+                    por_dep.setdefault(cod, []).append(x)
+        for cod, extras in por_dep.items():
+            n += registrar(cod, extras)
+        if fim < hoje.replace(day=1):                # mês corrente fica para a próxima carga
+            _meta_set(f"{CHAVE_LEG_MES}{ini:%Y-%m}")
+        _leg_estado["feito"] = i
+    log.info("clipping da legislatura (pautas): %d mês(es) lido(s), %d relatoria(s) aprovada(s) nova(s)", len(meses), n)
+    return n
+
+
+def _rodar_fila():
+    try:
+        while _leg_estado["fila"]:
+            item = _leg_estado["fila"].pop(0)
+            _leg_estado.update(cod=None if item == "pautas" else item, feito=0, total=0,
+                               fase="relatoria" if item == "pautas" else "autoria")
+            try:
+                if item == "pautas":
+                    carga_legislatura_pautas()
+                else:
+                    carga_legislatura_deputado(item)
+            except Exception:
+                log.exception("carga da legislatura (%s)", item)
+    finally:
+        _leg_estado.update(rodando=False, fase=None, cod=None, feito=0, total=0)
+        _leg_lock.release()
+
+
+def iniciar_carga_legislatura(cods=None, pautas=None):
+    """Põe na fila (em segundo plano) os deputados ainda sem a legislatura carregada — ou `cods`, à força —
+    e, se faltar algum mês, as pautas. Devolve False se já há uma carga rodando."""
+    with engine.connect() as c:
+        if not c.execute(text("SELECT 1 FROM processos LIMIT 1")).first():
+            return False                                 # proposições ainda não carregadas (primeiro deploy)
+        if cods is None:
+            todos = sorted({r[0] for r in c.execute(select(usuario_deputados.c.codigo_deputado))})
+    if cods is None:
+        cods = [x for x in todos if not legislatura_concluida(x)]
+    if pautas is None:
+        fim_ant = date.today().replace(day=1) - timedelta(days=1)    # o mês corrente nunca fica anotado
+        pautas = any(not _meta_get(f"{CHAVE_LEG_MES}{m[0]:%Y-%m}")
+                     for m in _meses(date.fromisoformat(INICIO_LEGISLATURA), fim_ant))
+    fila = list(cods) + (["pautas"] if pautas else [])
+    if not fila or not _leg_lock.acquire(blocking=False):
+        return False
+    _leg_estado.update(rodando=True, fila=fila)
+    threading.Thread(target=_rodar_fila, daemon=True).start()
+    return True
+
+
+def estado_carga_legislatura(cod=None):
+    e = dict(_leg_estado)
+    e["fila"] = list(_leg_estado["fila"])
+    e["deste"] = bool(e["rodando"] and cod is not None and (e["cod"] == cod or cod in e["fila"]))
+    e["concluida"] = legislatura_concluida(cod) if cod is not None else None
+    return e
+
+
 CHAVE_CARGA_INICIAL = "clipping:tramitacao_inicial"
 
 
@@ -251,3 +428,13 @@ def carga_inicial_se_preciso():
         c.execute(delete(meta).where(meta.c.chave == CHAVE_CARGA_INICIAL))
         c.execute(insert(meta).values(chave=CHAVE_CARGA_INICIAL, valor=datetime.now().isoformat(timespec="seconds")))
     return n
+
+
+def carga_legislatura_ao_iniciar(espera=300):
+    """Logo após o deploy (com folga para o app subir): retoma/inicia a carga da legislatura."""
+    import time
+    time.sleep(espera)
+    try:
+        iniciar_carga_legislatura()
+    except Exception:
+        log.exception("carga da legislatura do clipping")

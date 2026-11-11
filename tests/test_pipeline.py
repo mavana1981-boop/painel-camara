@@ -3004,3 +3004,76 @@ def test_clipping_e_pdf_juntam_aprovacoes_iguais():
     assert "7 RELATORIAS APROVADAS · CCOM" in txt and txt.count("Gustavo Gayer") == 1
     assert "TVR 787/2025, TVR 788/2025" in txt and "8 registros" in txt and "RELATORIA APROVADA · CCOM" in txt
     assert len(PdfReader(io.BytesIO(pdf.data)).pages) == 1
+
+
+def test_clipping_carga_da_legislatura_inteira():
+    """Aprovações de anos anteriores: tramitação desde fev/2023 (autoria) e pautas antigas (relatoria)."""
+    from datetime import date
+    import clipping_auto
+    import meu
+    from db import autorias, clipping_aprovacoes, meta, processos, relatorias
+    from sqlalchemy import insert as ins, delete as dele, select
+    with engine.begin() as c:
+        c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
+        c.execute(dele(meta).where(meta.c.chave.like("clipping:legislatura:%")))
+        c.execute(ins(processos).values(id=9101, identificacao="PL 100/2023", sigla="PL", ementa="Ementa 100/2023",
+                                        situacao="Aguardando Apreciação pelo Senado Federal", data_situacao="2024-06-01"))
+        c.execute(ins(autorias).values(processo_id=9101, codigo_deputado=101, principal=True))
+        c.execute(ins(processos).values(id=9102, identificacao="RIC 5/2023", sigla="RIC", ementa="Informações",
+                                        situacao="Aguardando Resposta", data_situacao="2023-05-01"))
+        c.execute(ins(autorias).values(processo_id=9102, codigo_deputado=101, principal=True))
+    trams = [
+        {"dataHora": "2023-09-12T10:00", "siglaOrgao": "CCJC", "descricaoSituacao": "Pronta para Pauta",
+         "despacho": "Aprovado o Parecer."},
+        {"dataHora": "2024-05-20T18:00", "siglaOrgao": "PLEN", "descricaoSituacao": "Aguardando Envio ao Senado Federal",
+         "despacho": "Encaminhada à publicação."},
+        {"dataHora": "2022-12-01T10:00", "siglaOrgao": "CFT", "despacho": "Aprovado o Parecer."},   # legislatura anterior
+    ]
+    lidos = []
+
+    def ler(pid, ini, fim):
+        lidos.append((pid, ini, fim))
+        return trams if pid == 9101 else []
+    assert clipping_auto.carga_legislatura_deputado(101, date(2026, 11, 11), ler) >= 2
+    assert (9101, "2023-02-01", "2026-11-11") in lidos and not any(p == 9102 for p, *_ in lidos)  # RIC não é votado
+    assert clipping_auto.legislatura_concluida(101)
+    assert clipping_auto.carga_legislatura_deputado(101, date(2026, 11, 11), ler) == 0           # sem duplicar
+
+    # relatorias: pautas de reuniões antigas
+    ev = {"id": 77001, "dataHoraInicio": "2023-10-04T10:00", "descricaoTipo": "Reunião Deliberativa",
+          "orgaos": [{"sigla": "CSAUDE"}]}
+    itens = [{"relator": {"id": 101}, "situacaoItem": "Aprovado o Parecer",
+              "proposicao_": {"id": 9201, "siglaTipo": "PL", "numero": 321, "ano": 2023, "ementa": "Ementa 321"}},
+             {"relator": {"id": 101}, "situacaoItem": "Retirado de pauta",
+              "proposicao_": {"id": 9202, "siglaTipo": "PL", "numero": 322, "ano": 2023, "ementa": "Ementa 322"}}]
+    meses = []
+
+    def eventos(ini, fim):
+        meses.append(ini)
+        return [ev] if ini <= date(2023, 10, 4) <= fim else []
+    n = clipping_auto.carga_legislatura_pautas(date(2023, 12, 15), eventos, lambda i: itens if i == 77001 else [])
+    assert n >= 1 and meses[0] == date(2023, 2, 1) and len(meses) == 11
+    with engine.connect() as c:
+        assert c.execute(select(relatorias.c.chave).where(relatorias.c.codigo_deputado == 101,
+                                                          relatorias.c.codigo_materia == 9201)).first()
+    meses.clear()        # retomada: só o mês corrente (não anotado) é relido
+    clipping_auto.carga_legislatura_pautas(date(2023, 12, 15), eventos, lambda i: [])
+    assert meses == [date(2023, 12, 1)]
+
+    clip = meu.clipping(101, date(2023, 2, 1), date(2026, 11, 11))
+    achados = {(e["identificacao"], e["data_situacao"], e["tipo"]) for d in clip["dias"] for e in d["itens"]}
+    assert {("PL 100/2023", "2023-09-12", "autoria"), ("PL 100/2023", "2024-05-20", "autoria"),
+            ("PL 321/2023", "2023-10-04", "relatoria")} <= achados
+    assert not any(i == "PL 322/2023" for i, *_ in achados)
+    adm = _cliente()
+    html = adm.get("/meu/101?secao=clipping").get_data(as_text=True)
+    assert "Buscar aprovações de toda a legislatura" in html and "Ver toda a legislatura" in html
+    orig = clipping_auto.iniciar_carga_legislatura
+    clipping_auto.iniciar_carga_legislatura = lambda cods=None, pautas=None: True
+    try:
+        tok = _tok(adm, "/meu/101?secao=clipping")
+        html = adm.post("/meu/101?secao=clipping", data={"_csrf": tok, "acao": "buscar_legislatura"},
+                        follow_redirects=True).get_data(as_text=True)
+        assert "toda a legislatura (desde fev/2023)" in html
+    finally:
+        clipping_auto.iniciar_carga_legislatura = orig

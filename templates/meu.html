@@ -973,6 +973,22 @@
   <button class="btn sec com-ic"{% if buscando_aprov %} disabled{% endif %}>{{ ic("refresh") }} {{ 'Buscando aprovações…' if buscando_aprov else 'Buscar aprovações dos últimos 7 dias' }}</button>
   <span style="font-size:12.5px;color:var(--suave);padding-bottom:7px">Lê na Câmara a tramitação recente das proposições do deputado. A coleta diária já faz isso sozinha.</span>
 </form>
+<form class="filtros" method="post" action="{{ url_for('meu.painel', cod=cod, secao='clipping') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="buscar_legislatura">
+  <button class="btn sec com-ic"{% if carga_leg.rodando %} disabled{% endif %}>{{ ic("refresh") }} {{ 'Buscando a legislatura…' if carga_leg.rodando else 'Buscar aprovações de toda a legislatura' }}</button>
+  <span style="font-size:12.5px;color:var(--suave);padding-bottom:7px">
+  {%- if carga_leg.rodando -%}
+    {% if carga_leg.fase == 'autoria' %}Lendo a tramitação desde fev/2023 das proposições {% if carga_leg.cod == cod %}deste deputado{% else %}de outro deputado acompanhado{% endif %}: {{ carga_leg.feito }} de {{ carga_leg.total }}.
+    {% elif carga_leg.fase == 'relatoria' %}Lendo as pautas das reuniões da legislatura (relatorias): mês {{ carga_leg.feito }} de {{ carga_leg.total }}.
+    {% else %}Em andamento.{% endif %}
+    {% if carga_leg.fila %}Ainda na fila: {{ carga_leg.fila|length }} etapa(s).{% endif %} O clipping vai se preenchendo — recarregue a página.
+  {%- elif carga_leg.concluida -%}
+    Histórico desde fev/2023 carregado em {{ carga_leg.concluida[:10]|data }}. <a href="?secao=clipping&inicio=2023-02-01&fim={{ hoje }}">Ver toda a legislatura</a>
+  {%- else -%}
+    Lê na Câmara a tramitação desde fev/2023 das proposições do deputado e as pautas das reuniões (relatorias). Roda em segundo plano.
+  {%- endif -%}
+  </span>
+</form>
 <form class="filtros rel-form" method="get" action="{{ url_for('meu.realizacoes_pdf', cod=cod) }}" target="_blank">
   <span class="rel-tit">{{ ic("imprimir") }} Relatório de realizações</span>
   <label>Período<select name="ano" id="rel-periodo">{% for a in anos_relatorio %}<option value="{{ a }}">Ano de {{ a }}</option>{% endfor %}<option value="">Escolher datas…</option></select></label>
@@ -998,7 +1014,7 @@
   <h2>Clipping diário <small>solicitações atendidas, projetos aprovados e relatorias aprovadas, por data</small></h2>
   {% for d in clip.dias %}<div class="ag-dia {{ 'hoje' if (d.data|isodata) == hoje }}">{{ dia_rotulo(d.data) }} <small>{{ d.itens|length }}</small></div>{% for b in d.blocos %}{{ clip_bloco(b) }}{% endfor %}
   {% else %}<div class="vazio-msg">Nenhum registro no período.</div>{% endfor %}
-  <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação da proposição indicou aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião. Toda aprovação é registrada automaticamente assim que aparece e fica no clipping como histórico, mesmo depois que a situação da proposição muda; cada etapa aprovada (comissão, Plenário, sanção…) vira um registro.</p>
+  <p class="nota">Solicitação atendida: solicitação do parlamentar concluída pela equipe, na data da solução, com o resumo do que foi feito e os anexos. Autoria: a situação da proposição indicou aprovação, remessa ao Senado ou à sanção, promulgação ou transformação em norma, na data informada pela Câmara. Relatoria: o item relatado pelo deputado teve o parecer aprovado na pauta da reunião, na data da reunião. Toda aprovação é registrada automaticamente assim que aparece e fica no clipping como histórico, mesmo depois que a situação da proposição muda; cada etapa aprovada (comissão, Plenário, sanção…) vira um registro. O histórico desde o início da legislatura (fev/2023) é carregado uma vez, em segundo plano, para cada deputado acompanhado.</p>
 </section>
 <section class="card neu" style="margin-top:14px">
   <h2>Relatorias do deputado <small>{{ rels|length }}</small></h2>
