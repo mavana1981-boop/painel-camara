@@ -378,10 +378,10 @@ def gerar_em_segundo_plano(cod, autor="Seleção da IA", esperar=ESPERA_BOTAO):
     return estado(cod)
 
 
-def _descartar(ruins, quem, modelo_sel):
-    """Resposta inutilizável de uma IA de reserva: a próxima tentativa vai para a seguinte da cadeia. O modelo
-    principal ganha uma segunda chance (com o aviso de formato)."""
-    if quem and quem != f"gemini:{modelo_sel}" and quem not in ruins:
+def _descartar(ruins, quem, principal):
+    """Resposta inutilizável: a próxima tentativa vai para a IA seguinte da cadeia. O Gemini principal ganha uma
+    segunda chance (com o aviso de formato); a Z.ai, quando vem na frente, passa a vez para o Gemini."""
+    if quem and not (quem == principal and quem.startswith("gemini:")) and quem not in ruins:
         ruins.append(quem)
 
 
@@ -402,6 +402,9 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                                 com_resumo=False, total=RESERVA_TOTAL)
     dados, erro, provedor = None, None, None
     modelo_sel = questoes.modelo_env("SELECAO_MODEL", questoes.modelo())
+    preferidas = questoes.preferidas_radar()
+    cad = questoes.cadeia(modelo_sel, preferidas)
+    principal = cad[0][0] if cad else f"gemini:{modelo_sel}"
     aviso = ""
     ruins = []                                      # IAs de reserva que já devolveram resposta inutilizável
     for tentativa in range(3):                      # novas tentativas se a resposta vier quebrada ou genérica
@@ -412,7 +415,8 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
             questoes.ULTIMA.provedor = None
             texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA, modelo_=modelo_sel,
                                        max_tokens=MAX_TOKENS, timeout=240, pular=ruins,
-                                       mensagem_reserva=msg_curta + aviso, max_tokens_reserva=RESERVA_MAX_TOKENS)
+                                       mensagem_reserva=msg_curta + aviso, max_tokens_reserva=RESERVA_MAX_TOKENS,
+                                       preferir=preferidas)
             quem = getattr(questoes.ULTIMA, "provedor", None)
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
@@ -421,7 +425,7 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                 break
             log.warning("seleção da IA (tentativa %d, %s): tópicos inválidos | início da resposta: %r",
                         tentativa + 1, quem, (texto or "")[:500])
-            _descartar(ruins, quem, modelo_sel)
+            _descartar(ruins, quem, principal)
             erro = "a resposta não trouxe tópicos com providências concretas"
             aviso = ("\n\nATENÇÃO: a resposta anterior veio com providências genéricas ou sem tópicos válidos. "
                      "Siga o formato e as regras à risca.")
@@ -432,7 +436,7 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                 aviso = ("\n\nATENÇÃO: a resposta anterior ficou longa demais e foi cortada. Seja CONCISO: no máximo "
                          "2 tópicos por tema, resumo de UMA frase e 2 alternativas por tópico.")
             elif texto:                              # respondeu fora do formato: na próxima, outra IA de reserva
-                _descartar(ruins, quem or getattr(questoes.ULTIMA, "provedor", None), modelo_sel)
+                _descartar(ruins, quem or getattr(questoes.ULTIMA, "provedor", None), principal)
                 inicio = re.sub(r"\s+", " ", texto)[:120]
                 erro = f"a IA não respondeu em JSON — começou com: {inicio!r}"
                 aviso = ("\n\nATENÇÃO: a resposta anterior não veio em JSON. Responda SOMENTE com o objeto JSON, "
@@ -478,7 +482,7 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                 noticias=json.dumps(t["noticias"]), status="pendente", criado_em=marca)).inserted_primary_key[0]
     log.info("seleção da IA do deputado %s: lote %s com %d tópico(s) pendentes de abertura", cod, lote, len(topicos))
     return {"lote": lote, "gerado_em": agora, "topicos": topicos, "provedor": provedor,
-            "reserva": bool(provedor) and provedor != f"gemini:{modelo_sel}"}
+            "reserva": bool(provedor) and provedor != principal}
 
 
 # ---------------- confirmação humana ----------------

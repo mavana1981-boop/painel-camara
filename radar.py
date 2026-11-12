@@ -400,7 +400,8 @@ def _analisar_um(it, p, sessao=None):
            f"Título: {it['titulo']}\n"
            f"Resumo: {it.get('resumo') or 'Sem resumo'}\n\n"
            f"Responda APENAS com JSON puro conforme o formato solicitado.")
-    texto = questoes.chamar_ia(msg, sessao, sistema=SISTEMA, modelo_=modelo(), max_tokens=700, timeout=60)
+    texto = questoes.chamar_ia(msg, sessao, sistema=SISTEMA, modelo_=modelo(), max_tokens=700, timeout=60,
+                               preferir=questoes.preferidas_radar())
     try:
         r = extrair_json(texto)
         alts = normalizar_alternativas(r.get("alternativas"))

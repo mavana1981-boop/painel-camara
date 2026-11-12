@@ -420,6 +420,13 @@ def _zai_ok():
     return bool(os.environ.get("ZAI_API_KEY"))
 
 
+def preferidas_radar():
+    """IA que vem ANTES do Gemini no radar de notícias (triagem e Seleção da IA). Padrão: Z.ai.
+    RADAR_IA_PREFERIDA=gemini volta o Gemini para a frente; aceita lista separada por vírgulas."""
+    v = os.environ.get("RADAR_IA_PREFERIDA", "zai").strip().lower()
+    return tuple(x.strip() for x in v.split(",") if x.strip() and x.strip() != "gemini")
+
+
 def _zai(mensagem_usuario, sessao, sistema, max_tokens, timeout):
     k = os.environ["ZAI_API_KEY"]
     fixo = (os.environ.get("ZAI_MODEL") or "").strip()
@@ -519,8 +526,15 @@ def _modelos_reserva_gemini(mod):
     return out
 
 
-def cadeia(modelo_=None):
-    """Ordem de tentativa: [(nome, função)]."""
+def cadeia(modelo_=None, preferir=()):
+    """Ordem de tentativa: [(nome, função)]. `preferir`: provedores (ex.: "zai") que passam para a frente, antes do
+    Gemini, quando configurados."""
+    passos = _cadeia_padrao(modelo_)
+    frente = [p for nome in preferir for p in passos if p[0] == nome]
+    return frente + [p for p in passos if p not in frente]
+
+
+def _cadeia_padrao(modelo_=None):
     mod = modelo_ or modelo()
     passos = []
     if chave():
@@ -536,13 +550,13 @@ def cadeia(modelo_=None):
 
 
 def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180, pular=(),
-              mensagem_reserva=None, max_tokens_reserva=None):
+              mensagem_reserva=None, max_tokens_reserva=None, preferir=()):
     """Envia a mensagem à IA e devolve o texto. Tenta o Gemini (modelo pedido e depois os outros modelos do
     plano gratuito); se a cota acabar ou a API cair, passa para Groq e Cloudflare, quando configurados.
     O provedor que respondeu fica em ULTIMA.provedor. `pular`: provedores a não tentar nesta chamada (ex.: o que
     acabou de devolver uma resposta inutilizável). `mensagem_reserva`/`max_tokens_reserva`: versão enxuta do pedido
     para Groq/Cloudflare, cujos limites de tokens por minuto e tempo de resposta são bem menores."""
-    passos = [p for p in cadeia(modelo_) if p[0] not in set(pular)] or cadeia(modelo_)
+    passos = [p for p in cadeia(modelo_, preferir) if p[0] not in set(pular)] or cadeia(modelo_, preferir)
     if not passos:
         raise RuntimeError("GEMINI_API_KEY não configurada no Railway.")
     sistema = sistema or SISTEMA

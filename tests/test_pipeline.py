@@ -3382,3 +3382,22 @@ def test_zai_vem_logo_depois_do_gemini_e_recebe_o_pedido_completo(monkeypatch):
     assert corpos[-1]["messages"][1]["content"] == "curta"
     questoes._esgotado.clear()
     questoes._groq_cache["modelo"] = None
+
+
+def test_radar_e_selecao_usam_zai_antes_do_gemini(monkeypatch):
+    import questoes
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.delenv("GEMINI_FALLBACK", raising=False)
+    monkeypatch.setenv("ZAI_API_KEY", "z")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CF_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("RADAR_IA_PREFERIDA", raising=False)
+    nomes = lambda pref: [n for n, _ in questoes.cadeia("gemini-3.8-flash", pref)]
+    assert nomes(questoes.preferidas_radar()) == ["zai", "gemini:gemini-3.8-flash",
+                                                   f"gemini:{questoes.MODELO_RAPIDO}"]
+    assert nomes(()) == ["gemini:gemini-3.8-flash", f"gemini:{questoes.MODELO_RAPIDO}", "zai"]   # demais funções
+    monkeypatch.setenv("RADAR_IA_PREFERIDA", "gemini")
+    assert nomes(questoes.preferidas_radar())[0] == "gemini:gemini-3.8-flash"
+    monkeypatch.delenv("ZAI_API_KEY")
+    monkeypatch.delenv("RADAR_IA_PREFERIDA")
+    assert nomes(questoes.preferidas_radar())[0] == "gemini:gemini-3.8-flash"            # sem chave: Gemini na frente
