@@ -144,7 +144,8 @@ segundos (padrão 6) para caber no limite por minuto do plano gratuito e o limit
 
 **IA de reserva.** Quando a cota do modelo acaba (ex.: 20 pedidos por dia do `gemini-3.8-flash` no plano gratuito) ou a
 API cai, o app tenta, nesta ordem: o modelo rápido do Gemini (`GEMINI_MODEL_RAPIDO`; troque a lista com
-`GEMINI_FALLBACK`, separada por vírgulas, vazio = nenhum), a Groq (`GROQ_API_KEY`, modelo escolhido pelo catálogo ou fixo
+`GEMINI_FALLBACK`, separada por vírgulas, vazio = nenhum), a Z.ai (`ZAI_API_KEY`, modelos gratuitos
+`glm-4.7-flash` e `glm-4.5-flash`, ou só `ZAI_MODEL`; recebe o pedido completo), a Groq (`GROQ_API_KEY`, modelo escolhido pelo catálogo ou fixo
 em `GROQ_MODEL`) e a Cloudflare Workers AI (`CF_ACCOUNT_ID` + `CF_API_TOKEN`; tenta llama-3.3-70b fp8-fast, llama-4-scout e llama-3.1-70b, ou só
 `CF_MODEL`). Para as reservas, a Seleção manda uma versão enxuta das notícias (`SELECAO_RESERVA_POR_TEMA`, padrão 12,
 e `SELECAO_RESERVA_TOTAL`, padrão 60, sem resumos), porque os limites delas são bem menores que os do Gemini. São as mesmas chaves do app Pauta Plenário. Um modelo sem cota fica de fora até o

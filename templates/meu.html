@@ -550,9 +550,9 @@
     {% elif sel_estado and sel_estado.erro %}
     <div class="aviso erro" style="margin:12px 16px 0">A última tentativa de gerar a seleção ({{ sel_estado.fim.strftime('%d/%m às %H:%M') }}) falhou: {{ sel_estado.erro }}</div>
     {% elif sel_estado and sel_estado.reserva %}
-    <div class="aviso" style="margin:12px 16px 0">A última seleção ({{ sel_estado.fim.strftime('%d/%m às %H:%M') }}) foi gerada pela IA de reserva <b>{{ sel_estado.provedor|replace('gemini:', 'Gemini ')|replace('groq', 'Groq')|replace('cloudflare', 'Cloudflare') }}</b>, porque a cota do modelo principal tinha acabado.</div>
+    <div class="aviso" style="margin:12px 16px 0">A última seleção ({{ sel_estado.fim.strftime('%d/%m às %H:%M') }}) foi gerada pela IA de reserva <b>{{ sel_estado.provedor|replace('gemini:', 'Gemini ')|replace('zai', 'Z.ai (GLM)')|replace('groq', 'Groq')|replace('cloudflare', 'Cloudflare') }}</b>, porque a cota do modelo principal tinha acabado.</div>
     {% endif %}
-    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">A Seleção da IA precisa de uma chave de IA: configure <b>GEMINI_API_KEY</b> (ou <b>GROQ_API_KEY</b> / <b>CF_ACCOUNT_ID</b> + <b>CF_API_TOKEN</b>) no Railway. Sem ela, nenhum tópico é gerado.</div>{% endif %}
+    {% if not ia_ok %}<div class="aviso erro" style="margin:12px 16px 0">A Seleção da IA precisa de uma chave de IA: configure <b>GEMINI_API_KEY</b> (ou <b>ZAI_API_KEY</b> / <b>GROQ_API_KEY</b> / <b>CF_ACCOUNT_ID</b> + <b>CF_API_TOKEN</b>) no Railway. Sem ela, nenhum tópico é gerado.</div>{% endif %}
     {% for L in lotes %}
     <form method="post" class="sel-lote" id="lote-{{ L.lote|replace(':', '') }}" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_decidir">

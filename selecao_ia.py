@@ -328,7 +328,7 @@ def _verificar(cod):
     if not temas:
         raise ValueError(f"Não há notícias das últimas {HORAS} horas para selecionar tópicos.")
     if not questoes.configurado():
-        raise ValueError("A Seleção da IA precisa de uma chave de IA: configure GEMINI_API_KEY (ou GROQ_API_KEY / "
+        raise ValueError("A Seleção da IA precisa de uma chave de IA: configure GEMINI_API_KEY (ou ZAI_API_KEY / GROQ_API_KEY / "
                          "CF_ACCOUNT_ID + CF_API_TOKEN) no Railway.")
     return temas
 

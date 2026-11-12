@@ -3346,3 +3346,39 @@ def test_selecao_mensagem_enxuta_limita_noticias_e_tira_resumos():
     curta = si.montar_mensagem("Dep", temas, [], por_tema=12, com_resumo=False, total=20)
     assert curta.count("[") == 20 and "resumo longo" not in curta
     assert si.montar_mensagem("Dep", temas, []).count("resumo longo") == si.MAX_POR_TEMA
+
+
+def test_zai_vem_logo_depois_do_gemini_e_recebe_o_pedido_completo(monkeypatch):
+    import questoes
+    questoes._esgotado.clear()
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("GEMINI_FALLBACK", "")
+    monkeypatch.setenv("ZAI_API_KEY", "z")
+    monkeypatch.delenv("ZAI_MODEL", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.delenv("CF_ACCOUNT_ID", raising=False)
+    monkeypatch.setattr(questoes.time, "sleep", lambda s: None)
+    assert [n for n, _ in questoes.cadeia("gemini-3.8-flash")] == ["gemini:gemini-3.8-flash", "zai", "groq"]
+    corpos = []
+
+    class S(_SessaoFila):
+        def post(self, url, json=None, timeout=None, headers=None):
+            corpos.append(json)
+            return super().post(url, json, timeout, headers)
+    # glm-4.7-flash ocupado (5xx) -> glm-4.5-flash responde
+    ok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "pela zai"}}]})
+    s = S([_r429_dia(), _Resp(500, {"error": "busy"}), ok])
+    assert questoes.chamar_ia("longa", s, mensagem_reserva="curta", max_tokens=16000) == "pela zai"
+    assert questoes.ULTIMA.provedor == "zai" and s.urls[1] == questoes.ZAI_URL
+    assert [c["model"] for c in corpos[1:]] == ["glm-4.7-flash", "glm-4.5-flash"]
+    assert corpos[1]["messages"][1]["content"] == "longa" and corpos[1]["max_tokens"] == 16000
+    # chave errada na Z.ai: segue para a Groq
+    questoes._esgotado.clear()
+    questoes._groq_cache["modelo"] = "llama-x"
+    monkeypatch.setenv("GROQ_MODEL", "llama-x")
+    gok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "pela groq"}}]})
+    s = S([_r429_dia(), _Resp(401, {"error": "invalid key"}), gok])
+    assert questoes.chamar_ia("longa", s, mensagem_reserva="curta") == "pela groq"
+    assert corpos[-1]["messages"][1]["content"] == "curta"
+    questoes._esgotado.clear()
+    questoes._groq_cache["modelo"] = None

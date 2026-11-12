@@ -73,7 +73,7 @@ def chave():
 
 def configurado():
     """Há alguma IA configurada (Gemini ou uma reserva)."""
-    return bool(chave() or _groq_ok() or _cf_ok())
+    return bool(chave() or _zai_ok() or _groq_ok() or _cf_ok())
 
 
 # ---------------- Regimento ----------------
@@ -408,6 +408,54 @@ def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
     raise _CotaEsgotada(f"Groq: nenhum modelo aceitou o pedido (tentados: {', '.join(excluir)})")
 
 
+# ---------------- Z.ai (GLM) ----------------
+# Modelos Flash gratuitos (glm-4.7-flash, glm-4.5-flash), janela de ~200 mil tokens: recebem o pedido COMPLETO.
+# Plano gratuito: 1 chamada por vez. Configuração: ZAI_API_KEY (z.ai) e, opcional, ZAI_MODEL.
+ZAI_URL = "https://api.z.ai/api/paas/v4/chat/completions"
+ZAI_MODELOS = ["glm-4.7-flash", "glm-4.5-flash"]
+ZAI_MAX_SAIDA = 16000
+
+
+def _zai_ok():
+    return bool(os.environ.get("ZAI_API_KEY"))
+
+
+def _zai(mensagem_usuario, sessao, sistema, max_tokens, timeout):
+    k = os.environ["ZAI_API_KEY"]
+    fixo = (os.environ.get("ZAI_MODEL") or "").strip()
+    erros = []
+    for mod in ([fixo] if fixo else ZAI_MODELOS):
+        try:
+            r = (sessao or requests).post(
+                ZAI_URL, timeout=timeout,
+                headers={"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+                json={"model": mod, "temperature": 0.3, "max_tokens": min(max_tokens, ZAI_MAX_SAIDA),
+                      "thinking": {"type": "disabled"},          # sem raciocínio longo: mais rápido e sem cortes
+                      "messages": [{"role": "system", "content": sistema},
+                                   {"role": "user", "content": mensagem_usuario}]})
+        except requests.Timeout:
+            erros.append(f"{mod}: sem resposta a tempo")
+            continue
+        if r.status_code == 200:
+            dados = r.json()
+            ch = (dados.get("choices") or [{}])[0]
+            ULTIMA.stop_reason = _parada_openai(ch.get("finish_reason"))
+            ULTIMA.uso = dados.get("usage")
+            texto = ((ch.get("message") or {}).get("content") or "").strip()
+            if texto:
+                return texto
+            erros.append(f"{mod}: resposta vazia (parada: {ULTIMA.stop_reason})")
+            continue
+        corpo = (r.text or "")[:300]
+        if r.status_code in (401, 403):
+            raise _CotaEsgotada(f"Z.ai respondeu {r.status_code} (confira ZAI_API_KEY): {corpo}")
+        if r.status_code == 429 and "concurren" not in corpo.lower() and "并发" not in corpo:
+            _marcar_esgotado("zai", 1800)
+            raise _CotaEsgotada(f"Z.ai ({mod}) respondeu 429: {corpo}")
+        erros.append(f"{mod}: {r.status_code} {corpo}")
+    raise _CotaEsgotada("Z.ai: " + " | ".join(erros))
+
+
 def _cf_modelos():
     fixo = (os.environ.get("CF_MODEL") or "").strip()
     return [fixo] if fixo else CF_MODELOS
@@ -478,6 +526,8 @@ def cadeia(modelo_=None):
     if chave():
         for m in [mod] + _modelos_reserva_gemini(mod):
             passos.append((f"gemini:{m}", lambda *a, m=m: _gemini(m, *a)))
+    if _zai_ok():
+        passos.append(("zai", _zai))
     if _groq_ok():
         passos.append(("groq", _groq))
     if _cf_ok():
@@ -504,7 +554,7 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         if not _disponivel(nome):
             pulados.append(nome)
             continue
-        reserva = not nome.startswith("gemini:")
+        reserva = nome in ("groq", "cloudflare")       # limites pequenos: recebem a versão enxuta
         msg_ = mensagem_reserva if reserva and mensagem_reserva else mensagem_usuario
         mt_ = max_tokens_reserva if reserva and max_tokens_reserva else max_tokens
         try:
@@ -527,7 +577,8 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         return texto
     if not erros:
         erros = [f"todas as IAs estão sem cota no momento ({', '.join(pulados)})"]
-    faltam = ([] if _groq_ok() else ["Groq (GROQ_API_KEY)"]) + \
+    faltam = ([] if _zai_ok() else ["Z.ai (ZAI_API_KEY)"]) + \
+             ([] if _groq_ok() else ["Groq (GROQ_API_KEY)"]) + \
              ([] if _cf_ok() else ["Cloudflare (CF_ACCOUNT_ID + CF_API_TOKEN)"])
     if faltam:
         erros.append("reserva não configurada no Railway: " + ", ".join(faltam))
