@@ -615,6 +615,7 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
             pular_gemini = pular_gemini or nome.startswith("gemini:")
             continue
         ULTIMA.provedor = nome
+        log.info("IA: resposta de %s", nome)
         if erros or pulados:
             log.warning("IA respondeu pela reserva %s (antes: %s)", nome,
                         "; ".join(erros + [f"{p} sem cota" for p in pulados]))
