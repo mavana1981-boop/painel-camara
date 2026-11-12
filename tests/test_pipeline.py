@@ -3310,3 +3310,39 @@ def test_groq_nunca_usa_modelo_fora_da_lista_e_respeita_teto_de_max_tokens(monke
     with pytest.raises(questoes._CotaEsgotada, match="nenhum modelo adequado"):
         questoes._groq("x", S3([]), "sis", 16000, 30)
     questoes._groq_cache["modelo"] = None
+
+
+def test_reservas_recebem_mensagem_enxuta_e_cloudflare_troca_de_modelo_no_timeout(monkeypatch):
+    import questoes
+    questoes._esgotado.clear()
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("GEMINI_FALLBACK", "")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setenv("CF_ACCOUNT_ID", "conta")
+    monkeypatch.setenv("CF_API_TOKEN", "t")
+    monkeypatch.delenv("CF_MODEL", raising=False)
+    monkeypatch.setattr(questoes.time, "sleep", lambda s: None)
+    corpos = []
+
+    class S(_SessaoFila):
+        def post(self, url, json=None, timeout=None, headers=None):
+            corpos.append(json)
+            return super().post(url, json, timeout, headers)
+    s = S([_r429_dia(), _Resp(408, {"errors": [{"message": "AiError: Request timeout"}]}),
+           _Resp(200, {"result": {"response": "ok"}})])
+    assert questoes.chamar_ia("longa", s, mensagem_reserva="curta", max_tokens=16000,
+                              max_tokens_reserva=6000) == "ok"
+    assert corpos[0]["contents"][0]["parts"][0]["text"] == "longa"          # Gemini recebe a completa
+    assert corpos[1]["messages"][1]["content"] == "curta" and corpos[1]["max_tokens"] == questoes.CF_MAX_SAIDA
+    assert s.urls[1].endswith(questoes.CF_MODELOS[0]) and s.urls[2].endswith(questoes.CF_MODELOS[1])
+    questoes._esgotado.clear()
+
+
+def test_selecao_mensagem_enxuta_limita_noticias_e_tira_resumos():
+    import selecao_ia as si
+    temas = {"economia": [{"id": i, "titulo": f"Manchete {i}", "fonte": "G1", "resumo": "resumo longo"}
+                          for i in range(50)],
+             "saude": [{"id": 100 + i, "titulo": f"Saúde {i}", "fonte": "UOL", "resumo": "x"} for i in range(50)]}
+    curta = si.montar_mensagem("Dep", temas, [], por_tema=12, com_resumo=False, total=20)
+    assert curta.count("[") == 20 and "resumo longo" not in curta
+    assert si.montar_mensagem("Dep", temas, []).count("resumo longo") == si.MAX_POR_TEMA

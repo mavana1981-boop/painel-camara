@@ -302,7 +302,9 @@ _GROQ_PREFERENCIA = ["gpt-oss-120b", "kimi-k2", "llama-4-maverick", "llama-4-sco
                      "qwen3", "qwen", "deepseek", "gpt-oss", "llama-3.1-70b"]
 GROQ_MAX_SAIDA = 8192
 GROQ_MIN_SAIDA = 3000          # abaixo disso a resposta (JSON da Seleção) não cabe: melhor trocar de modelo
-CF_MODELO_PADRAO = "@cf/meta/llama-3.1-70b-instruct"
+# do mais rápido ao mais lento; CF_MODEL fixa um só
+CF_MODELOS = ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-4-scout-17b-16e-instruct",
+              "@cf/meta/llama-3.1-70b-instruct"]
 CF_MAX_SAIDA = 4096
 _groq_cache = {"modelo": None}
 
@@ -406,29 +408,50 @@ def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
     raise _CotaEsgotada(f"Groq: nenhum modelo aceitou o pedido (tentados: {', '.join(excluir)})")
 
 
+def _cf_modelos():
+    fixo = (os.environ.get("CF_MODEL") or "").strip()
+    return [fixo] if fixo else CF_MODELOS
+
+
 def _cloudflare(mensagem_usuario, sessao, sistema, max_tokens, timeout):
+    """Cloudflare Workers AI. Tenta os modelos em ordem (os rápidos primeiro); num timeout (408), erro do servidor
+    ou modelo inexistente, passa para o seguinte."""
     conta, token = os.environ["CF_ACCOUNT_ID"], os.environ["CF_API_TOKEN"]
-    mod = (os.environ.get("CF_MODEL") or "").strip() or CF_MODELO_PADRAO
-    r = (sessao or requests).post(
-        f"https://api.cloudflare.com/client/v4/accounts/{conta}/ai/run/{mod}", timeout=timeout,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"max_tokens": min(max_tokens, CF_MAX_SAIDA), "temperature": 0.3,
-              "messages": [{"role": "system", "content": sistema},
-                           {"role": "user", "content": mensagem_usuario}]})
-    if r.status_code != 200:
-        if r.status_code == 429:
-            _marcar_esgotado("cloudflare", 3600)
-        raise _CotaEsgotada(f"Cloudflare ({mod}) respondeu {r.status_code}: {(r.text or '')[:300]}")
-    res = r.json().get("result") or {}
-    texto = res.get("response")
-    if not isinstance(texto, str):                      # alguns modelos devolvem já o objeto JSON
-        import json
-        texto = json.dumps(texto, ensure_ascii=False) if texto is not None else ""
-    ULTIMA.stop_reason = None
-    ULTIMA.uso = res.get("usage")
-    if not texto.strip():
-        raise RuntimeError(f"a IA (Cloudflare {mod}) respondeu sem texto")
-    return texto.strip()
+    erros = []
+    for mod in _cf_modelos():
+        try:
+            r = (sessao or requests).post(
+                f"https://api.cloudflare.com/client/v4/accounts/{conta}/ai/run/{mod}", timeout=min(timeout, 120),
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"max_tokens": min(max_tokens, CF_MAX_SAIDA), "temperature": 0.3,
+                      "messages": [{"role": "system", "content": sistema},
+                                   {"role": "user", "content": mensagem_usuario}]})
+        except requests.Timeout:
+            erros.append(f"{mod}: sem resposta a tempo")
+            continue
+        if r.status_code != 200:
+            corpo = (r.text or "")[:200]
+            if r.status_code == 429:
+                _marcar_esgotado("cloudflare", 3600)
+                raise _CotaEsgotada(f"Cloudflare ({mod}) respondeu 429: {corpo}")
+            erros.append(f"{mod}: {r.status_code} {corpo}")
+            if r.status_code in (400, 401, 403) and "model" not in corpo.lower():
+                break                                   # erro de conta/pedido: outro modelo não resolve
+            continue
+        res = r.json().get("result") or {}
+        texto = res.get("response")
+        if texto is None and res.get("choices"):        # formato OpenAI de alguns modelos
+            texto = ((res["choices"][0].get("message") or {}).get("content")) or ""
+        if not isinstance(texto, str):                  # alguns modelos devolvem já o objeto JSON
+            import json
+            texto = json.dumps(texto, ensure_ascii=False) if texto is not None else ""
+        ULTIMA.stop_reason = None
+        ULTIMA.uso = res.get("usage")
+        if texto.strip():
+            ULTIMA.modelo_reserva = mod
+            return texto.strip()
+        erros.append(f"{mod}: resposta vazia")
+    raise _CotaEsgotada("Cloudflare: " + " | ".join(erros))
 
 
 def _modelos_reserva_gemini(mod):
@@ -462,11 +485,13 @@ def cadeia(modelo_=None):
     return passos
 
 
-def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180, pular=()):
+def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180, pular=(),
+              mensagem_reserva=None, max_tokens_reserva=None):
     """Envia a mensagem à IA e devolve o texto. Tenta o Gemini (modelo pedido e depois os outros modelos do
     plano gratuito); se a cota acabar ou a API cair, passa para Groq e Cloudflare, quando configurados.
     O provedor que respondeu fica em ULTIMA.provedor. `pular`: provedores a não tentar nesta chamada (ex.: o que
-    acabou de devolver uma resposta inutilizável)."""
+    acabou de devolver uma resposta inutilizável). `mensagem_reserva`/`max_tokens_reserva`: versão enxuta do pedido
+    para Groq/Cloudflare, cujos limites de tokens por minuto e tempo de resposta são bem menores."""
     passos = [p for p in cadeia(modelo_) if p[0] not in set(pular)] or cadeia(modelo_)
     if not passos:
         raise RuntimeError("GEMINI_API_KEY não configurada no Railway.")
@@ -479,8 +504,11 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         if not _disponivel(nome):
             pulados.append(nome)
             continue
+        reserva = not nome.startswith("gemini:")
+        msg_ = mensagem_reserva if reserva and mensagem_reserva else mensagem_usuario
+        mt_ = max_tokens_reserva if reserva and max_tokens_reserva else max_tokens
         try:
-            texto = fn(mensagem_usuario, sessao, sistema, max_tokens, timeout)
+            texto = fn(msg_, sessao, sistema, mt_, timeout)
         except _CotaEsgotada as e:
             erros.append(str(e))
             continue

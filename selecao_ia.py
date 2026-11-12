@@ -36,6 +36,9 @@ MAX_LOTES = 15                                                # lotes mostrados 
 MIN_TOPICOS = 2
 MAX_TOKENS = int(os.environ.get("SELECAO_MAX_TOKENS", "16000"))  # resposta da IA (JSON longo)
 MAX_POR_TEMA = 40                                             # notícias por tema enviadas à IA
+RESERVA_POR_TEMA = int(os.environ.get("SELECAO_RESERVA_POR_TEMA", "12"))   # versão enxuta para as IAs de reserva
+RESERVA_TOTAL = int(os.environ.get("SELECAO_RESERVA_TOTAL", "60"))
+RESERVA_MAX_TOKENS = 6000
 PRAZO_DIAS = int(os.environ.get("SELECAO_PRAZO_DIAS", "3"))   # prazo das solicitações criadas
 TIPOS = {"comissao": "Comissão", "outros": "Outros assuntos"}
 EQUIPES_PADRAO = {"comissao": ["Lianna"], "outros": ["Marcelo", "Elyezer", "Vinicius", "Garibaldi", "André Alencar"]}
@@ -229,15 +232,22 @@ def _abertos(cod):
     return [f"{t} — {p}" for t, p in rows]
 
 
-def montar_mensagem(nome_deputado, temas, abertos):
+def montar_mensagem(nome_deputado, temas, abertos, por_tema=None, com_resumo=True, total=None):
+    """Mensagem para a IA. Versão enxuta (por_tema/total menores, sem resumos) para as IAs de reserva, que têm
+    limites de tokens por minuto bem menores que o Gemini."""
+    por_tema = por_tema or MAX_POR_TEMA
+    usadas = 0
     partes = [f"Deputado acompanhado: {nome_deputado}",
               f"Temas acompanhados (áreas de interesse): {', '.join(temas)}",
               f"Notícias das últimas {HORAS} horas, por tema:"]
     for tema, itens in temas.items():
         veiculos = len({(n.get("fonte") or "").strip().lower() for n in itens if n.get("fonte")})
         partes.append(f"\n### Tema: {tema} ({len(itens)} notícias, {veiculos} veículos)")
-        for n in itens[:MAX_POR_TEMA]:
-            res = re.sub(r"\s+", " ", n.get("resumo") or "")[:160]
+        for n in itens[:por_tema]:
+            if total and usadas >= total:
+                break
+            usadas += 1
+            res = re.sub(r"\s+", " ", n.get("resumo") or "")[:160] if com_resumo else ""
             partes.append(f"[{n['id']}] {n['titulo']}" + (f" ({n['fonte']})" if n.get("fonte") else "")
                           + (f" — {res}" if res else ""))
     if abertos:
@@ -386,7 +396,10 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     marca = datetime.now()
     s = paineis.deputado(cod) or {}
     temas = _verificar(cod)
-    msg = montar_mensagem(s.get("nome") or str(cod), temas, _abertos(cod))
+    abertos = _abertos(cod)
+    msg = montar_mensagem(s.get("nome") or str(cod), temas, abertos)
+    msg_curta = montar_mensagem(s.get("nome") or str(cod), temas, abertos[:10], por_tema=RESERVA_POR_TEMA,
+                                com_resumo=False, total=RESERVA_TOTAL)
     dados, erro, provedor = None, None, None
     modelo_sel = questoes.modelo_env("SELECAO_MODEL", questoes.modelo())
     aviso = ""
@@ -398,7 +411,8 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
             questoes.ULTIMA.stop_reason = None
             questoes.ULTIMA.provedor = None
             texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA, modelo_=modelo_sel,
-                                       max_tokens=MAX_TOKENS, timeout=240, pular=ruins)
+                                       max_tokens=MAX_TOKENS, timeout=240, pular=ruins,
+                                       mensagem_reserva=msg_curta + aviso, max_tokens_reserva=RESERVA_MAX_TOKENS)
             quem = getattr(questoes.ULTIMA, "provedor", None)
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
