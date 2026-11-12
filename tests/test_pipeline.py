@@ -3367,10 +3367,10 @@ def test_zai_vem_logo_depois_do_gemini_e_recebe_o_pedido_completo(monkeypatch):
             return super().post(url, json, timeout, headers)
     # glm-4.7-flash ocupado (5xx) -> glm-4.5-flash responde
     ok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "pela zai"}}]})
-    s = S([_r429_dia(), _Resp(500, {"error": "busy"}), ok])
+    s = S([_r429_dia(), _Resp(500, {"error": "busy"}), _Resp(500, {"error": "busy"}), ok])
     assert questoes.chamar_ia("longa", s, mensagem_reserva="curta", max_tokens=16000) == "pela zai"
     assert questoes.ULTIMA.provedor == "zai" and s.urls[1] == questoes.ZAI_URL
-    assert [c["model"] for c in corpos[1:]] == ["glm-4.7-flash", "glm-4.5-flash"]
+    assert [c["model"] for c in corpos[1:]] == ["glm-4.7-flash", "glm-4.7-flash", "glm-4.5-flash"]
     assert corpos[1]["messages"][1]["content"] == "longa" and corpos[1]["max_tokens"] == 16000
     # chave errada na Z.ai: segue para a Groq
     questoes._esgotado.clear()
@@ -3418,3 +3418,35 @@ def test_ciclo_automatico_so_coleta_sem_gastar_ia(monkeypatch):
     assert chamou == []
     radar.ciclo([101], buscar=lambda u: None, ia=True)        # botão "Atualizar agora": só a triagem
     assert chamou == ["triagem"]
+
+
+def test_zai_sobrecarregada_1305_nao_e_cota(monkeypatch):
+    import questoes
+    questoes._esgotado.clear()
+    monkeypatch.setenv("ZAI_API_KEY", "z")
+    monkeypatch.delenv("ZAI_MODEL", raising=False)
+    monkeypatch.setattr(questoes.time, "sleep", lambda s: None)
+    sobre = _Resp(429, {"error": {"code": "1305", "message": "The service may be temporarily overloaded, "
+                                                              "please try again later"}})
+    ok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]})
+    assert questoes._zai("x", _SessaoFila([sobre, ok]), "sis", 1000, 30) == "ok"     # tenta de novo e consegue
+    with pytest.raises(questoes._CotaEsgotada):
+        questoes._zai("x", _SessaoFila([sobre] * 4), "sis", 1000, 30)
+    assert questoes._disponivel("zai")                                              # continua na fila
+    questoes._esgotado.clear()
+
+
+def test_groq_modelos_que_pensam_vao_com_raciocinio_minimo():
+    import questoes
+    assert questoes._groq_raciocinio("openai/gpt-oss-120b")["reasoning_effort"] == "low"
+    assert questoes._groq_raciocinio("qwen/qwen3.8-27b") == {"reasoning_effort": "none"}
+    assert questoes._groq_raciocinio("llama-4-scout") == {}
+
+
+def test_extrair_json_conserta_virgula_faltando():
+    import radar
+    quebrado = '{"temas": [{"tema": "Lula", "topicos": [{"topico": "A b c" "area": "Outros"}]}]}'
+    d = radar.extrair_json(quebrado)
+    assert d["temas"][0]["topicos"][0]["area"] == "Outros"
+    with pytest.raises(ValueError):
+        radar.extrair_json("Desculpe, não consigo.")

@@ -337,6 +337,17 @@ def _groq_modelo(sessao, k, excluir=()):
                         + (f" (já tentados: {', '.join(excluir)})" if excluir else ""))
 
 
+def _groq_raciocinio(mod):
+    """Modelos que "pensam" antes de responder gastam o limite de saída com o raciocínio e cortam o JSON:
+    raciocínio no mínimo (gpt-oss: low; qwen3: none) e fora da resposta."""
+    m = mod.lower()
+    if "gpt-oss" in m:
+        return {"reasoning_effort": "low", "include_reasoning": False}
+    if "qwen3" in m:
+        return {"reasoning_effort": "none"}
+    return {}
+
+
 def _parada_openai(fim):
     return "max_tokens" if fim == "length" else (fim or "").lower() or None
 
@@ -357,7 +368,7 @@ def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
         r = (sessao or requests).post(
             f"{GROQ_BASE}/chat/completions", timeout=timeout,
             headers={"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
-            json={"model": mod, "temperature": 0.3, "max_tokens": saida,
+            json={"model": mod, "temperature": 0.3, "max_tokens": saida, **_groq_raciocinio(mod),
                   "messages": [{"role": "system", "content": sistema},
                                {"role": "user", "content": mensagem_usuario}]})
         if r.status_code == 200:
@@ -414,6 +425,7 @@ def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
 ZAI_URL = "https://api.z.ai/api/paas/v4/chat/completions"
 ZAI_MODELOS = ["glm-4.7-flash", "glm-4.5-flash"]
 ZAI_MAX_SAIDA = 16000
+ZAI_ESPERA_SOBRECARGA = 8      # segundos antes de tentar de novo quando a Z.ai responde "sobrecarregado" (1305)
 
 
 def _zai_ok():
@@ -428,10 +440,21 @@ def preferidas_radar():
 
 
 def _zai(mensagem_usuario, sessao, sistema, max_tokens, timeout):
-    k = os.environ["ZAI_API_KEY"]
+    """Tenta glm-4.7-flash e depois glm-4.5-flash. Sobrecarga (429 código 1305, 5xx) não é cota: espera alguns
+    segundos, tenta de novo uma vez e passa ao modelo seguinte, sem tirar a Z.ai da fila."""
     fixo = (os.environ.get("ZAI_MODEL") or "").strip()
     erros = []
     for mod in ([fixo] if fixo else ZAI_MODELOS):
+        texto = _zai_tentar(mod, mensagem_usuario, sessao, sistema, max_tokens, timeout, erros)
+        if texto:
+            return texto
+    raise _CotaEsgotada("Z.ai: " + " | ".join(erros))
+
+
+def _zai_tentar(mod, mensagem_usuario, sessao, sistema, max_tokens, timeout, erros):
+    """Chamadas a um modelo da Z.ai (uma nova tentativa após sobrecarga). Devolve o texto ou None (erro em `erros`)."""
+    k = os.environ["ZAI_API_KEY"]
+    for tentativa in range(2):
         try:
             r = (sessao or requests).post(
                 ZAI_URL, timeout=timeout,
@@ -442,7 +465,7 @@ def _zai(mensagem_usuario, sessao, sistema, max_tokens, timeout):
                                    {"role": "user", "content": mensagem_usuario}]})
         except requests.Timeout:
             erros.append(f"{mod}: sem resposta a tempo")
-            continue
+            return None
         if r.status_code == 200:
             dados = r.json()
             ch = (dados.get("choices") or [{}])[0]
@@ -452,15 +475,22 @@ def _zai(mensagem_usuario, sessao, sistema, max_tokens, timeout):
             if texto:
                 return texto
             erros.append(f"{mod}: resposta vazia (parada: {ULTIMA.stop_reason})")
-            continue
+            return None
         corpo = (r.text or "")[:300]
         if r.status_code in (401, 403):
             raise _CotaEsgotada(f"Z.ai respondeu {r.status_code} (confira ZAI_API_KEY): {corpo}")
-        if r.status_code == 429 and "concurren" not in corpo.lower() and "并发" not in corpo:
-            _marcar_esgotado("zai", 1800)
+        baixo = corpo.lower()
+        sobrecarga = r.status_code >= 500 or any(x in baixo for x in ("1305", "overload", "concurren", "busy",
+                                                                      "try again later"))
+        if r.status_code == 429 and not sobrecarga:     # cota/limite de uso de verdade
+            _marcar_esgotado("zai", 600)
             raise _CotaEsgotada(f"Z.ai ({mod}) respondeu 429: {corpo}")
-        erros.append(f"{mod}: {r.status_code} {corpo}")
-    raise _CotaEsgotada("Z.ai: " + " | ".join(erros))
+        if not sobrecarga or tentativa == 1:
+            erros.append(f"{mod}: {r.status_code} {corpo[:160]}")
+            return None
+        log.info("Z.ai %s sobrecarregada (%s): nova tentativa em %d s", mod, r.status_code, ZAI_ESPERA_SOBRECARGA)
+        time.sleep(ZAI_ESPERA_SOBRECARGA)
+    return None
 
 
 def _cf_modelos():

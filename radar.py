@@ -306,10 +306,23 @@ def extrair_json(texto):
             if bloco.startswith("{"):
                 texto = bloco
                 break
+    bruto = texto
     inicio, fim = texto.find("{"), texto.rfind("}") + 1
     if inicio >= 0 and fim > inicio:
         texto = texto[inicio:fim]
-    return json.loads(texto)
+    try:
+        return json.loads(texto)
+    except ValueError as e:
+        # JSON quase certo (vírgula faltando, resposta cortada no fim...): tenta consertar antes de desistir
+        try:
+            from json_repair import repair_json
+            d = repair_json(bruto[bruto.find("{"):] if "{" in bruto else bruto, return_objects=True)
+        except Exception:
+            d = None
+        if isinstance(d, dict) and d:
+            log.info("JSON da IA consertado (%s)", e)
+            return d
+        raise
 
 
 def _txt(v, limite):
