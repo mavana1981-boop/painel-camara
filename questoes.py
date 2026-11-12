@@ -297,8 +297,9 @@ def _gemini(mod, mensagem_usuario, sessao, sistema, max_tokens, timeout):
 #   GROQ_API_KEY (console.groq.com) e, opcional, GROQ_MODEL;
 #   CF_ACCOUNT_ID + CF_API_TOKEN (Cloudflare Workers AI) e, opcional, CF_MODEL.
 GROQ_BASE = "https://api.groq.com/openai/v1"
-_GROQ_PREFERENCIA = ["gpt-oss-120b", "llama-4-maverick", "llama-4-scout", "llama-4", "llama-3.3-70b",
-                     "gpt-oss", "qwen", "deepseek", "llama"]
+# Só modelos grandes o bastante para o JSON da Seleção; modelos fora da lista (ex.: allam-2-7b) nunca são usados.
+_GROQ_PREFERENCIA = ["gpt-oss-120b", "kimi-k2", "llama-4-maverick", "llama-4-scout", "llama-4", "llama-3.3-70b",
+                     "qwen3", "qwen", "deepseek", "gpt-oss", "llama-3.1-70b"]
 GROQ_MAX_SAIDA = 8192
 GROQ_MIN_SAIDA = 3000          # abaixo disso a resposta (JSON da Seleção) não cabe: melhor trocar de modelo
 CF_MODELO_PADRAO = "@cf/meta/llama-3.1-70b-instruct"
@@ -330,10 +331,8 @@ def _groq_modelo(sessao, k, excluir=()):
             if sub in i.lower():
                 _groq_cache["modelo"] = i
                 return i
-    if not ids:
-        raise _CotaEsgotada("Groq: nenhum modelo de texto disponível")
-    _groq_cache["modelo"] = ids[0]
-    return ids[0]
+    raise _CotaEsgotada("Groq: nenhum modelo adequado disponível"
+                        + (f" (já tentados: {', '.join(excluir)})" if excluir else ""))
 
 
 def _parada_openai(fim):
@@ -373,6 +372,16 @@ def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
             _groq_cache["modelo"] = None
             excluir.append(mod)
             continue
+        m = re.search(r"max_tokens`? must be less than or equal to `?(\d+)", corpo)
+        if r.status_code == 400 and m:
+            teto = int(m.group(1))
+            if teto >= GROQ_MIN_SAIDA and teto < saida:
+                saida = teto
+                continue
+            excluir.append(mod)
+            _groq_cache["modelo"] = None
+            saida = min(max_tokens, GROQ_MAX_SAIDA)
+            continue
         limite, pedido = _limite_tpm(corpo)
         if r.status_code == 413 or (limite and "tokens per minute" in baixo and pedido > limite):
             if limite and pedido:
@@ -392,7 +401,8 @@ def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
             continue
         if r.status_code == 429:
             _marcar_esgotado("groq", float(r.headers.get("retry-after") or 600))
-        raise _CotaEsgotada(f"Groq ({mod}) respondeu {r.status_code}: {corpo[:300]}")
+        raise _CotaEsgotada(f"Groq ({mod}) respondeu {r.status_code}: {corpo[:300]}"
+                            + (f" (antes: {', '.join(excluir)})" if excluir else ""))
     raise _CotaEsgotada(f"Groq: nenhum modelo aceitou o pedido (tentados: {', '.join(excluir)})")
 
 
@@ -489,8 +499,10 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         return texto
     if not erros:
         erros = [f"todas as IAs estão sem cota no momento ({', '.join(pulados)})"]
-    if not _groq_ok() and not _cf_ok():
-        erros.append("sem IA de reserva: configure GROQ_API_KEY ou CF_ACCOUNT_ID/CF_API_TOKEN no Railway")
+    faltam = ([] if _groq_ok() else ["Groq (GROQ_API_KEY)"]) + \
+             ([] if _cf_ok() else ["Cloudflare (CF_ACCOUNT_ID + CF_API_TOKEN)"])
+    if faltam:
+        erros.append("reserva não configurada no Railway: " + ", ".join(faltam))
     raise RuntimeError(" | ".join(erros))
 
 

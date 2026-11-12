@@ -3281,3 +3281,32 @@ def test_chamar_ia_pular_reserva_que_respondeu_mal(monkeypatch):
                               pular=[f"gemini:{questoes.MODELO_RAPIDO}"]) == "pelo groq"
     assert len(s.urls) == 1 and "groq" in s.urls[0]
     questoes._esgotado.clear()
+
+
+def test_groq_nunca_usa_modelo_fora_da_lista_e_respeita_teto_de_max_tokens(monkeypatch):
+    import questoes
+    questoes._groq_cache["modelo"] = None
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.delenv("GROQ_MODEL", raising=False)
+
+    class S(_SessaoFila):
+        def get(self, url, headers=None, timeout=None):
+            return _Resp(200, {"data": [{"id": "allam-2-7b"}, {"id": "qwen/qwen3-32b"}]})
+    enviados = []
+
+    class S2(S):
+        def post(self, url, json=None, timeout=None, headers=None):
+            enviados.append((json["model"], json["max_tokens"]))
+            return super().post(url, json, timeout, headers)
+    teto = _Resp(400, {"error": {"message": "`max_tokens` must be less than or equal to `4096`, the maximum"}})
+    ok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]})
+    assert questoes._groq("x", S2([teto, ok]), "sis", 16000, 30) == "ok"
+    assert enviados == [("qwen/qwen3-32b", 8192), ("qwen/qwen3-32b", 4096)]
+    questoes._groq_cache["modelo"] = None
+
+    class S3(_SessaoFila):
+        def get(self, url, headers=None, timeout=None):
+            return _Resp(200, {"data": [{"id": "allam-2-7b"}]})
+    with pytest.raises(questoes._CotaEsgotada, match="nenhum modelo adequado"):
+        questoes._groq("x", S3([]), "sis", 16000, 30)
+    questoes._groq_cache["modelo"] = None
