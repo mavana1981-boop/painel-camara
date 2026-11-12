@@ -368,6 +368,13 @@ def gerar_em_segundo_plano(cod, autor="Seleção da IA", esperar=ESPERA_BOTAO):
     return estado(cod)
 
 
+def _descartar(ruins, quem, modelo_sel):
+    """Resposta inutilizável de uma IA de reserva: a próxima tentativa vai para a seguinte da cadeia. O modelo
+    principal ganha uma segunda chance (com o aviso de formato)."""
+    if quem and quem != f"gemini:{modelo_sel}" and quem not in ruins:
+        ruins.append(quem)
+
+
 def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     """Gera um lote de tópicos para o deputado, PENDENTES DE ABERTURA (nenhuma solicitação é criada aqui).
     Devolve {lote, gerado_em, topicos}."""
@@ -383,17 +390,24 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     dados, erro, provedor = None, None, None
     modelo_sel = questoes.modelo_env("SELECAO_MODEL", questoes.modelo())
     aviso = ""
-    for tentativa in range(2):                      # uma nova tentativa se a resposta vier quebrada ou genérica
+    ruins = []                                      # IAs de reserva que já devolveram resposta inutilizável
+    for tentativa in range(3):                      # novas tentativas se a resposta vier quebrada ou genérica
         texto = ""
+        quem = None
         try:
             questoes.ULTIMA.stop_reason = None
+            questoes.ULTIMA.provedor = None
             texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA, modelo_=modelo_sel,
-                                       max_tokens=MAX_TOKENS, timeout=240)
+                                       max_tokens=MAX_TOKENS, timeout=240, pular=ruins)
+            quem = getattr(questoes.ULTIMA, "provedor", None)
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
                 dados = d
-                provedor = getattr(questoes.ULTIMA, "provedor", None)
+                provedor = quem
                 break
+            log.warning("seleção da IA (tentativa %d, %s): tópicos inválidos | início da resposta: %r",
+                        tentativa + 1, quem, (texto or "")[:500])
+            _descartar(ruins, quem, modelo_sel)
             erro = "a resposta não trouxe tópicos com providências concretas"
             aviso = ("\n\nATENÇÃO: a resposta anterior veio com providências genéricas ou sem tópicos válidos. "
                      "Siga o formato e as regras à risca.")
@@ -403,7 +417,8 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                 erro = "a resposta da IA foi cortada por ser longa demais"
                 aviso = ("\n\nATENÇÃO: a resposta anterior ficou longa demais e foi cortada. Seja CONCISO: no máximo "
                          "2 tópicos por tema, resumo de UMA frase e 2 alternativas por tópico.")
-            elif texto:
+            elif texto:                              # respondeu fora do formato: na próxima, outra IA de reserva
+                _descartar(ruins, quem or getattr(questoes.ULTIMA, "provedor", None), modelo_sel)
                 inicio = re.sub(r"\s+", " ", texto)[:120]
                 erro = f"a IA não respondeu em JSON — começou com: {inicio!r}"
                 aviso = ("\n\nATENÇÃO: a resposta anterior não veio em JSON. Responda SOMENTE com o objeto JSON, "
@@ -412,6 +427,8 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                 erro = str(e)
             log.warning("seleção da IA (tentativa %d, parada=%s): %s | início da resposta: %r",
                         tentativa + 1, parada, e, (texto or "")[:500])
+            if not texto and tentativa >= 1:         # nenhuma IA respondeu duas vezes: não insistir
+                break
     if not dados:
         cota = "429" in (erro or "") or "sem cota" in (erro or "")
         raise ValueError(f"A IA não devolveu uma seleção utilizável ({erro}). "

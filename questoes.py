@@ -300,6 +300,7 @@ GROQ_BASE = "https://api.groq.com/openai/v1"
 _GROQ_PREFERENCIA = ["gpt-oss-120b", "llama-4-maverick", "llama-4-scout", "llama-4", "llama-3.3-70b",
                      "gpt-oss", "qwen", "deepseek", "llama"]
 GROQ_MAX_SAIDA = 8192
+GROQ_MIN_SAIDA = 3000          # abaixo disso a resposta (JSON da Seleção) não cabe: melhor trocar de modelo
 CF_MODELO_PADRAO = "@cf/meta/llama-3.1-70b-instruct"
 CF_MAX_SAIDA = 4096
 _groq_cache = {"modelo": None}
@@ -339,15 +340,23 @@ def _parada_openai(fim):
     return "max_tokens" if fim == "length" else (fim or "").lower() or None
 
 
+def _limite_tpm(corpo):
+    """Do 413/429 da Groq: (limite, pedido) em tokens por minuto, ex.: "Limit 8000, Requested 15065"."""
+    m = re.search(r"Limit (\d+), Requested (\d+)", corpo or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
 def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
+    """Groq no plano gratuito: cada modelo tem um limite de tokens por minuto (TPM) que conta o pedido MAIS a saída
+    reservada. Num 413 por TPM, reduz a saída se ainda couber uma resposta útil; senão, troca de modelo."""
     k = os.environ["GROQ_API_KEY"]
-    excluir = []
-    for _ in range(2):
+    excluir, saida = [], min(max_tokens, GROQ_MAX_SAIDA)
+    for _ in range(5):
         mod = _groq_modelo(sessao, k, excluir)
         r = (sessao or requests).post(
             f"{GROQ_BASE}/chat/completions", timeout=timeout,
             headers={"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
-            json={"model": mod, "temperature": 0.3, "max_tokens": min(max_tokens, GROQ_MAX_SAIDA),
+            json={"model": mod, "temperature": 0.3, "max_tokens": saida,
                   "messages": [{"role": "system", "content": sistema},
                                {"role": "user", "content": mensagem_usuario}]})
         if r.status_code == 200:
@@ -358,16 +367,33 @@ def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
             if not texto:
                 raise RuntimeError(f"a IA (Groq {mod}) respondeu sem texto (parada: {ULTIMA.stop_reason})")
             return texto
-        corpo = (r.text or "")[:300]
-        if r.status_code == 404 or (r.status_code == 400 and ("decommission" in corpo.lower()
-                                                             or "not found" in corpo.lower())):
+        corpo = (r.text or "")[:400]
+        baixo = corpo.lower()
+        if r.status_code == 404 or (r.status_code == 400 and ("decommission" in baixo or "not found" in baixo)):
             _groq_cache["modelo"] = None
             excluir.append(mod)
             continue
+        limite, pedido = _limite_tpm(corpo)
+        if r.status_code == 413 or (limite and "tokens per minute" in baixo and pedido > limite):
+            if limite and pedido:
+                entrada = pedido - saida
+                cabe = limite - entrada - 200
+                if cabe >= GROQ_MIN_SAIDA and cabe < saida:
+                    log.info("Groq %s: limite de %d TPM, reduzindo a saída para %d tokens", mod, limite, cabe)
+                    saida = cabe
+                    continue
+            log.info("Groq %s: pedido grande demais para o modelo (%s), tentando outro", mod, corpo[:120])
+            if _groq_cache["modelo"] == mod:
+                _groq_cache["modelo"] = None
+            excluir.append(mod)
+            saida = min(max_tokens, GROQ_MAX_SAIDA)
+            if (os.environ.get("GROQ_MODEL") or "").strip() == mod:
+                break
+            continue
         if r.status_code == 429:
             _marcar_esgotado("groq", float(r.headers.get("retry-after") or 600))
-        raise _CotaEsgotada(f"Groq ({mod}) respondeu {r.status_code}: {corpo}")
-    raise _CotaEsgotada("Groq: os modelos do catálogo não funcionaram")
+        raise _CotaEsgotada(f"Groq ({mod}) respondeu {r.status_code}: {corpo[:300]}")
+    raise _CotaEsgotada(f"Groq: nenhum modelo aceitou o pedido (tentados: {', '.join(excluir)})")
 
 
 def _cloudflare(mensagem_usuario, sessao, sistema, max_tokens, timeout):
@@ -426,11 +452,12 @@ def cadeia(modelo_=None):
     return passos
 
 
-def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180):
+def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180, pular=()):
     """Envia a mensagem à IA e devolve o texto. Tenta o Gemini (modelo pedido e depois os outros modelos do
     plano gratuito); se a cota acabar ou a API cair, passa para Groq e Cloudflare, quando configurados.
-    O provedor que respondeu fica em ULTIMA.provedor."""
-    passos = cadeia(modelo_)
+    O provedor que respondeu fica em ULTIMA.provedor. `pular`: provedores a não tentar nesta chamada (ex.: o que
+    acabou de devolver uma resposta inutilizável)."""
+    passos = [p for p in cadeia(modelo_) if p[0] not in set(pular)] or cadeia(modelo_)
     if not passos:
         raise RuntimeError("GEMINI_API_KEY não configurada no Railway.")
     sistema = sistema or SISTEMA

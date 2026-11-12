@@ -2601,7 +2601,7 @@ def test_selecao_mostra_o_motivo_quando_a_ia_nao_responde_em_json():
     try:
         with pytest.raises(ValueError, match="não respondeu em JSON — começou com: 'Desculpe"):
             si.gerar(105)
-        assert len(pedidos) == 2 and "SOMENTE com o objeto JSON" in pedidos[1]
+        assert len(pedidos) == 3 and "SOMENTE com o objeto JSON" in pedidos[1]
     finally:
         questoes.configurado, questoes.chamar_ia = orig_cfg, orig_ia
 
@@ -3233,3 +3233,51 @@ def test_clipping_pl_3240_urgencia_em_marco_aprovacao_em_maio():
     pl = sorted((e["data_situacao"], e["tipo"]) for d in clip["dias"] for e in d["itens"]
                 if e["identificacao"] == "PL 3240/2025")
     assert pl == [("2026-03-02", "urgencia"), ("2026-05-21", "autoria")]
+
+
+def test_groq_413_por_tpm_reduz_saida_ou_troca_de_modelo(monkeypatch):
+    import questoes
+    questoes._esgotado.clear()
+    questoes._groq_cache["modelo"] = None
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.delenv("GROQ_MODEL", raising=False)
+    enviados = []
+
+    class S(_SessaoFila):
+        def post(self, url, json=None, timeout=None, headers=None):
+            enviados.append((json["model"], json["max_tokens"]))
+            return super().post(url, json, timeout, headers)
+
+    def r413(lim, ped):
+        return _Resp(413, {"error": {"message": f"Request too large on tokens per minute (TPM): Limit {lim}, "
+                                                f"Requested {ped}, please reduce"}})
+    ok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]})
+    # gpt-oss: entrada de ~7 mil tokens não deixa espaço útil em 8 mil -> próximo modelo (llama-4-scout)
+    s = S([r413(8000, 15065), ok])
+    assert questoes._groq("x", s, "sis", 16000, 30) == "{}"
+    assert enviados == [("openai/gpt-oss-120b", 8192), ("llama-4-scout-17b", 8192)]
+    # limite maior que a entrada: só reduz a saída no mesmo modelo
+    enviados.clear()
+    questoes._groq_cache["modelo"] = "llama-4-scout-17b"
+    s = S([r413(14000, 15065), ok])
+    assert questoes._groq("x", s, "sis", 16000, 30) == "{}"
+    assert enviados == [("llama-4-scout-17b", 8192), ("llama-4-scout-17b", 14000 - (15065 - 8192) - 200)]
+    questoes._groq_cache["modelo"] = None
+
+
+def test_chamar_ia_pular_reserva_que_respondeu_mal(monkeypatch):
+    import questoes
+    questoes._esgotado.clear()
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.delenv("GEMINI_FALLBACK", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("GROQ_MODEL", "llama-4-scout-17b")
+    monkeypatch.delenv("CF_ACCOUNT_ID", raising=False)
+    monkeypatch.setattr(questoes.time, "sleep", lambda s: None)
+    questoes._marcar_esgotado("gemini:gemini-3.8-flash", 3600)
+    ok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "pelo groq"}}]})
+    s = _SessaoFila([ok])
+    assert questoes.chamar_ia("oi", s, modelo_="gemini-3.8-flash",
+                              pular=[f"gemini:{questoes.MODELO_RAPIDO}"]) == "pelo groq"
+    assert len(s.urls) == 1 and "groq" in s.urls[0]
+    questoes._esgotado.clear()
