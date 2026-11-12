@@ -318,7 +318,8 @@ def _verificar(cod):
     if not temas:
         raise ValueError(f"Não há notícias das últimas {HORAS} horas para selecionar tópicos.")
     if not questoes.configurado():
-        raise ValueError("A Seleção da IA precisa da chave do Gemini: configure GEMINI_API_KEY no Railway.")
+        raise ValueError("A Seleção da IA precisa de uma chave de IA: configure GEMINI_API_KEY (ou GROQ_API_KEY / "
+                         "CF_ACCOUNT_ID + CF_API_TOKEN) no Railway.")
     return temas
 
 
@@ -351,7 +352,7 @@ def gerar_em_segundo_plano(cod, autor="Seleção da IA", esperar=ESPERA_BOTAO):
         fim = {"rodando": False}
         try:
             r = gerar(cod, autor=autor)
-            fim.update(lote=r["lote"], n=len(r["topicos"]), gerado_em=r["gerado_em"])
+            fim.update(lote=r["lote"], n=len(r["topicos"]), gerado_em=r["gerado_em"], provedor=r.get("provedor"), reserva=r.get("reserva"))
         except Exception as e:                    # noqa: BLE001 — o erro vai para a tela
             log.exception("seleção da IA do deputado %s (botão)", cod)
             fim["erro"] = str(e) if isinstance(e, ValueError) else f"Falha inesperada: {e}"
@@ -379,18 +380,19 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
     s = paineis.deputado(cod) or {}
     temas = _verificar(cod)
     msg = montar_mensagem(s.get("nome") or str(cod), temas, _abertos(cod))
-    dados, erro = None, None
+    dados, erro, provedor = None, None, None
+    modelo_sel = questoes.modelo_env("SELECAO_MODEL", questoes.modelo())
     aviso = ""
     for tentativa in range(2):                      # uma nova tentativa se a resposta vier quebrada ou genérica
         texto = ""
         try:
             questoes.ULTIMA.stop_reason = None
-            texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA,
-                                       modelo_=questoes.modelo_env("SELECAO_MODEL", questoes.modelo()),
+            texto = questoes.chamar_ia(msg + aviso, sessao, sistema=SISTEMA, modelo_=modelo_sel,
                                        max_tokens=MAX_TOKENS, timeout=240)
             d = rd.extrair_json(texto)
             if isinstance(d.get("temas"), list) and _topicos_validos(d, temas):
                 dados = d
+                provedor = getattr(questoes.ULTIMA, "provedor", None)
                 break
             erro = "a resposta não trouxe tópicos com providências concretas"
             aviso = ("\n\nATENÇÃO: a resposta anterior veio com providências genéricas ou sem tópicos válidos. "
@@ -411,7 +413,10 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
             log.warning("seleção da IA (tentativa %d, parada=%s): %s | início da resposta: %r",
                         tentativa + 1, parada, e, (texto or "")[:500])
     if not dados:
-        raise ValueError(f"A IA não devolveu uma seleção utilizável ({erro}). Tente de novo em alguns minutos.")
+        cota = "429" in (erro or "") or "sem cota" in (erro or "")
+        raise ValueError(f"A IA não devolveu uma seleção utilizável ({erro}). "
+                         + ("As cotas gratuitas de IA acabaram por hoje; configure uma IA de reserva ou tente "
+                            "mais tarde." if cota else "Tente de novo em alguns minutos."))
     validos = {n["id"]: (tema, n) for tema, itens in temas.items() for n in itens}
     topicos = []
     for t in dados["temas"]:
@@ -441,7 +446,8 @@ def gerar(cod, autor="Seleção da IA", sessao=None, rnd=random, agora=None):
                 alternativas=json.dumps(t["alternativas"], ensure_ascii=False),
                 noticias=json.dumps(t["noticias"]), status="pendente", criado_em=marca)).inserted_primary_key[0]
     log.info("seleção da IA do deputado %s: lote %s com %d tópico(s) pendentes de abertura", cod, lote, len(topicos))
-    return {"lote": lote, "gerado_em": agora, "topicos": topicos}
+    return {"lote": lote, "gerado_em": agora, "topicos": topicos, "provedor": provedor,
+            "reserva": bool(provedor) and provedor != f"gemini:{modelo_sel}"}
 
 
 # ---------------- confirmação humana ----------------

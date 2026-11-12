@@ -142,6 +142,14 @@ aistudio.google.com); o modelo do radar fica em `RADAR_MODEL` (padrão `gemini-3
 das questões de ordem em `GEMINI_MODEL` (padrão `gemini-3.8-flash`). As chamadas são espaçadas em `GEMINI_INTERVALO`
 segundos (padrão 6) para caber no limite por minuto do plano gratuito e o limite de análises por deputado e ciclo em `RADAR_MAX_ANALISES` (30).
 
+**IA de reserva.** Quando a cota do modelo acaba (ex.: 20 pedidos por dia do `gemini-3.8-flash` no plano gratuito) ou a
+API cai, o app tenta, nesta ordem: o modelo rápido do Gemini (`GEMINI_MODEL_RAPIDO`; troque a lista com
+`GEMINI_FALLBACK`, separada por vírgulas, vazio = nenhum), a Groq (`GROQ_API_KEY`, modelo escolhido pelo catálogo ou fixo
+em `GROQ_MODEL`) e a Cloudflare Workers AI (`CF_ACCOUNT_ID` + `CF_API_TOKEN`, modelo em `CF_MODEL`, padrão
+`@cf/meta/llama-3.1-70b-instruct`). São as mesmas chaves do app Pauta Plenário. Um modelo sem cota fica de fora até o
+horário que o Google indicar, sem gastar chamadas. Chamadas que já usam o modelo rápido (radar) não sobem para o
+modelo principal.
+
 ## Plenário (pauta do Minha Pauta)
 
 A aba **Plenário** mostra a pauta mais recente preparada no app Minha Pauta (repositório `plenario-assessoria`),

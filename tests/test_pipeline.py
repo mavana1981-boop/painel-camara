@@ -2676,8 +2676,96 @@ def test_chamar_ia_gemini_429_espera_e_tenta_de_novo(monkeypatch):
     assert esperas == [7.0] and len(chamadas) == 2 and chamadas[0][0].endswith("/gemini-x:generateContent")
     assert chamadas[0][1]["generationConfig"]["maxOutputTokens"] == 700 + questoes.FOLGA_RACIOCINIO
     assert questoes.ULTIMA.uso["promptTokenCount"] == 10
+    monkeypatch.setenv("GEMINI_FALLBACK", "")          # sem modelo de reserva nem Groq/Cloudflare: o erro sobe
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CF_ACCOUNT_ID", raising=False)
     with pytest.raises(RuntimeError, match="Limite do plano gratuito"):
         questoes.chamar_ia("oi", S([R429(), R429()]))
+    questoes._esgotado.clear()
+
+
+class _Resp:
+    def __init__(self, status, dados=None, headers=None):
+        self.status_code, self._dados, self.headers = status, dados or {}, headers or {}
+        self.text = str(self._dados)
+
+    def json(self):
+        return self._dados
+
+
+def _r429_dia():
+    return _Resp(429, {"error": {"code": 429, "message": "Generate content requests per day limit exceeded",
+                                 "details": [{"retryDelay": "52841s"}]}})
+
+
+def _rok_gemini(txt):
+    return _Resp(200, {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": txt}]}}]})
+
+
+class _SessaoFila:
+    def __init__(self, respostas):
+        self.respostas, self.urls = list(respostas), []
+
+    def post(self, url, json=None, timeout=None, headers=None):
+        self.urls.append(url)
+        return self.respostas.pop(0)
+
+    def get(self, url, headers=None, timeout=None):
+        self.urls.append(url)
+        return _Resp(200, {"data": [{"id": "whisper-large-v3"}, {"id": "llama-4-scout-17b"},
+                                    {"id": "openai/gpt-oss-120b"}]})
+
+
+def test_chamar_ia_cota_do_dia_passa_para_o_modelo_rapido_e_depois_pula(monkeypatch):
+    import questoes
+    questoes._esgotado.clear()
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.delenv("GEMINI_FALLBACK", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL_RAPIDO", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CF_ACCOUNT_ID", raising=False)
+    monkeypatch.setattr(questoes.time, "sleep", lambda s: None)
+    s = _SessaoFila([_r429_dia(), _rok_gemini("pelo lite")])
+    assert questoes.chamar_ia("oi", s, modelo_="gemini-3.8-flash") == "pelo lite"
+    assert s.urls[1].endswith(f"/{questoes.MODELO_RAPIDO}:generateContent")
+    assert questoes.ULTIMA.provedor == f"gemini:{questoes.MODELO_RAPIDO}"
+    # na chamada seguinte o modelo sem cota nem é tentado
+    s = _SessaoFila([_rok_gemini("direto no lite")])
+    assert questoes.chamar_ia("oi", s, modelo_="gemini-3.8-flash") == "direto no lite" and len(s.urls) == 1
+    # o radar (já no modelo rápido) não "sobe" para o modelo principal
+    assert questoes._modelos_reserva_gemini(questoes.MODELO_RAPIDO) == []
+    questoes._esgotado.clear()
+
+
+def test_chamar_ia_reserva_groq_e_cloudflare(monkeypatch):
+    import questoes
+    questoes._esgotado.clear()
+    questoes._groq_cache["modelo"] = None
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("GEMINI_FALLBACK", "")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.delenv("GROQ_MODEL", raising=False)
+    monkeypatch.setenv("CF_ACCOUNT_ID", "conta")
+    monkeypatch.setenv("CF_API_TOKEN", "t")
+    monkeypatch.setattr(questoes.time, "sleep", lambda s: None)
+    groq_ok = _Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": "pelo groq"}}]})
+    s = _SessaoFila([_r429_dia(), groq_ok])
+    assert questoes.chamar_ia("oi", s, sistema="sis") == "pelo groq"
+    assert questoes.ULTIMA.provedor == "groq" and questoes._groq_cache["modelo"] == "openai/gpt-oss-120b"
+    # Groq também sem cota -> Cloudflare
+    cf_ok = _Resp(200, {"result": {"response": "pela cloudflare"}})
+    s = _SessaoFila([_Resp(429, {"error": "rate"}, {"retry-after": "120"}), cf_ok])
+    assert questoes.chamar_ia("oi", s) == "pela cloudflare" and questoes.ULTIMA.provedor == "cloudflare"
+    assert "/accounts/conta/ai/run/" in s.urls[-1]
+    # tudo sem cota: erro claro, sem chamar ninguém
+    questoes._marcar_esgotado("cloudflare", 600)
+    with pytest.raises(RuntimeError, match="sem cota"):
+        questoes.chamar_ia("oi", _SessaoFila([]))
+    # erro de configuração do Gemini (401) também tenta a reserva
+    questoes._esgotado.clear()
+    s = _SessaoFila([_Resp(401, {"error": {"message": "API key not valid"}}), groq_ok])
+    assert questoes.chamar_ia("oi", s) == "pelo groq"
+    questoes._esgotado.clear()
 
 
 def test_modelo_antigo_da_anthropic_no_railway_e_ignorado(monkeypatch):

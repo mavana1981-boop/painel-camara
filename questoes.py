@@ -15,7 +15,8 @@ Variáveis de ambiente: GEMINI_API_KEY (obrigatória para gerar; crie em aistudi
 Plano gratuito do Gemini: há limite de pedidos por minuto e por dia (por projeto do Google). Por isso as chamadas
 passam por uma fila com intervalo mínimo entre elas (GEMINI_INTERVALO, padrão 6 s ≈ 10 por minuto) e, quando o
 Google responde 429 (limite por minuto), o app espera o tempo indicado e tenta de novo uma vez. Se o limite do dia
-acabar, o erro sobe e o radar deixa o restante para o próximo ciclo, como já fazia quando a IA caía.
+acabar, `chamar_ia` passa para a reserva: o modelo rápido do Gemini e depois Groq e Cloudflare, quando configurados
+(GROQ_API_KEY, CF_ACCOUNT_ID/CF_API_TOKEN). Sem reserva, o erro sobe e o radar deixa o restante para o próximo ciclo.
 """
 import io
 import logging
@@ -71,7 +72,8 @@ def chave():
 
 
 def configurado():
-    return bool(chave())
+    """Há alguma IA configurada (Gemini ou uma reserva)."""
+    return bool(chave() or _groq_ok() or _cf_ok())
 
 
 # ---------------- Regimento ----------------
@@ -213,13 +215,33 @@ def _segundos_retry(dados):
     return None
 
 
-def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180):
-    """Envia uma mensagem ao Gemini e devolve o texto. Mesma assinatura de quando era o Claude."""
+class _CotaEsgotada(RuntimeError):
+    """O limite do modelo/provedor acabou (ex.: cota diária do Gemini): passar para a reserva."""
+
+
+_esgotado = {}                  # "gemini:<modelo>" / "groq" / "cloudflare" -> instante (monotonic) em que volta
+_esgotado_lock = threading.Lock()
+
+
+def _marcar_esgotado(nome, segundos):
+    with _esgotado_lock:
+        _esgotado[nome] = time.monotonic() + max(60.0, min(float(segundos or 3600), 24 * 3600))
+
+
+def _disponivel(nome):
+    with _esgotado_lock:
+        ate = _esgotado.get(nome)
+        if ate and ate > time.monotonic():
+            return False
+        _esgotado.pop(nome, None)
+        return True
+
+
+def _gemini(mod, mensagem_usuario, sessao, sistema, max_tokens, timeout):
     k = chave()
     if not k:
         raise RuntimeError("GEMINI_API_KEY não configurada no Railway.")
-    mod = modelo_ or modelo()
-    corpo = {"systemInstruction": {"parts": [{"text": sistema or SISTEMA}]},
+    corpo = {"systemInstruction": {"parts": [{"text": sistema}]},
              "contents": [{"role": "user", "parts": [{"text": mensagem_usuario}]}],
              "generationConfig": {"maxOutputTokens": min(max_tokens + FOLGA_RACIOCINIO, 65536)}}
     url = f"{API_BASE}/{mod}:generateContent"
@@ -235,14 +257,21 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         except ValueError:
             erro = {}
         msg = (erro.get("error") or {}).get("message") or (r.text or "")[:300]
+        espera = _segundos_retry(erro)
         if r.status_code in (429, 503) and tentativa == 0:
-            espera = _segundos_retry(erro) or (30 if r.status_code == 429 else 10)
-            if espera <= ESPERA_MAX_429:
-                log.info("Gemini %s: esperando %.0f s para tentar de novo", r.status_code, espera)
-                time.sleep(espera)
+            espera_ = espera or (30 if r.status_code == 429 else 10)
+            if espera_ <= ESPERA_MAX_429:
+                log.info("Gemini %s: esperando %.0f s para tentar de novo", r.status_code, espera_)
+                time.sleep(espera_)
                 continue
         if r.status_code == 429:
-            raise RuntimeError(f"Limite do plano gratuito do Gemini atingido (429): {msg}")
+            # limite que não volta logo (normalmente a cota do dia): não insistir neste modelo até lá
+            _marcar_esgotado(f"gemini:{mod}", espera or 3600)
+            raise _CotaEsgotada(f"Limite do plano gratuito do Gemini atingido (429, {mod}): {msg}")
+        if r.status_code in (500, 502, 503, 504):
+            raise _CotaEsgotada(f"A API do Gemini respondeu {r.status_code} ({mod}): {msg}")
+        if r.status_code == 404:
+            raise _CotaEsgotada(f"Modelo {mod} não encontrado no Gemini (404): {msg}")
         raise RuntimeError(f"A API do Gemini respondeu {r.status_code}: {msg}")
     try:
         dados = r.json()
@@ -261,6 +290,181 @@ def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tok
         raise RuntimeError(f"a IA respondeu sem texto (motivo de parada: {ULTIMA.stop_reason or bloqueio}; "
                            f"blocos: {tipos})")
     return texto
+
+
+# ---------------- reservas: Groq e Cloudflare (mesmas chaves do app Pauta Plenário) ----------------
+# Usadas só quando os modelos do Gemini falham por cota/indisponibilidade. Configuração no Railway:
+#   GROQ_API_KEY (console.groq.com) e, opcional, GROQ_MODEL;
+#   CF_ACCOUNT_ID + CF_API_TOKEN (Cloudflare Workers AI) e, opcional, CF_MODEL.
+GROQ_BASE = "https://api.groq.com/openai/v1"
+_GROQ_PREFERENCIA = ["gpt-oss-120b", "llama-4-maverick", "llama-4-scout", "llama-4", "llama-3.3-70b",
+                     "gpt-oss", "qwen", "deepseek", "llama"]
+GROQ_MAX_SAIDA = 8192
+CF_MODELO_PADRAO = "@cf/meta/llama-3.1-70b-instruct"
+CF_MAX_SAIDA = 4096
+_groq_cache = {"modelo": None}
+
+
+def _groq_ok():
+    return bool(os.environ.get("GROQ_API_KEY"))
+
+
+def _cf_ok():
+    return bool(os.environ.get("CF_ACCOUNT_ID") and os.environ.get("CF_API_TOKEN"))
+
+
+def _groq_modelo(sessao, k, excluir=()):
+    fixo = (os.environ.get("GROQ_MODEL") or "").strip()
+    if fixo and fixo not in excluir:
+        return fixo
+    if _groq_cache["modelo"] and _groq_cache["modelo"] not in excluir:
+        return _groq_cache["modelo"]
+    r = (sessao or requests).get(f"{GROQ_BASE}/models", headers={"Authorization": f"Bearer {k}"}, timeout=20)
+    if r.status_code != 200:
+        raise _CotaEsgotada(f"Groq /models respondeu {r.status_code}: {(r.text or '')[:200]}")
+    ids = [m.get("id", "") for m in (r.json().get("data") or []) if m.get("active", True)]
+    ids = [i for i in ids if i not in excluir and not any(x in i.lower() for x in ("whisper", "guard", "tts", "embed"))]
+    for sub in _GROQ_PREFERENCIA:
+        for i in ids:
+            if sub in i.lower():
+                _groq_cache["modelo"] = i
+                return i
+    if not ids:
+        raise _CotaEsgotada("Groq: nenhum modelo de texto disponível")
+    _groq_cache["modelo"] = ids[0]
+    return ids[0]
+
+
+def _parada_openai(fim):
+    return "max_tokens" if fim == "length" else (fim or "").lower() or None
+
+
+def _groq(mensagem_usuario, sessao, sistema, max_tokens, timeout):
+    k = os.environ["GROQ_API_KEY"]
+    excluir = []
+    for _ in range(2):
+        mod = _groq_modelo(sessao, k, excluir)
+        r = (sessao or requests).post(
+            f"{GROQ_BASE}/chat/completions", timeout=timeout,
+            headers={"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+            json={"model": mod, "temperature": 0.3, "max_tokens": min(max_tokens, GROQ_MAX_SAIDA),
+                  "messages": [{"role": "system", "content": sistema},
+                               {"role": "user", "content": mensagem_usuario}]})
+        if r.status_code == 200:
+            ch = (r.json().get("choices") or [{}])[0]
+            ULTIMA.stop_reason = _parada_openai(ch.get("finish_reason"))
+            ULTIMA.uso = r.json().get("usage")
+            texto = ((ch.get("message") or {}).get("content") or "").strip()
+            if not texto:
+                raise RuntimeError(f"a IA (Groq {mod}) respondeu sem texto (parada: {ULTIMA.stop_reason})")
+            return texto
+        corpo = (r.text or "")[:300]
+        if r.status_code == 404 or (r.status_code == 400 and ("decommission" in corpo.lower()
+                                                             or "not found" in corpo.lower())):
+            _groq_cache["modelo"] = None
+            excluir.append(mod)
+            continue
+        if r.status_code == 429:
+            _marcar_esgotado("groq", float(r.headers.get("retry-after") or 600))
+        raise _CotaEsgotada(f"Groq ({mod}) respondeu {r.status_code}: {corpo}")
+    raise _CotaEsgotada("Groq: os modelos do catálogo não funcionaram")
+
+
+def _cloudflare(mensagem_usuario, sessao, sistema, max_tokens, timeout):
+    conta, token = os.environ["CF_ACCOUNT_ID"], os.environ["CF_API_TOKEN"]
+    mod = (os.environ.get("CF_MODEL") or "").strip() or CF_MODELO_PADRAO
+    r = (sessao or requests).post(
+        f"https://api.cloudflare.com/client/v4/accounts/{conta}/ai/run/{mod}", timeout=timeout,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={"max_tokens": min(max_tokens, CF_MAX_SAIDA), "temperature": 0.3,
+              "messages": [{"role": "system", "content": sistema},
+                           {"role": "user", "content": mensagem_usuario}]})
+    if r.status_code != 200:
+        if r.status_code == 429:
+            _marcar_esgotado("cloudflare", 3600)
+        raise _CotaEsgotada(f"Cloudflare ({mod}) respondeu {r.status_code}: {(r.text or '')[:300]}")
+    res = r.json().get("result") or {}
+    texto = res.get("response")
+    if not isinstance(texto, str):                      # alguns modelos devolvem já o objeto JSON
+        import json
+        texto = json.dumps(texto, ensure_ascii=False) if texto is not None else ""
+    ULTIMA.stop_reason = None
+    ULTIMA.uso = res.get("usage")
+    if not texto.strip():
+        raise RuntimeError(f"a IA (Cloudflare {mod}) respondeu sem texto")
+    return texto.strip()
+
+
+def _modelos_reserva_gemini(mod):
+    """Outros modelos do Gemini para tentar antes de sair do Google (cada um tem a sua cota diária no plano
+    gratuito). Padrão: o modelo rápido (cotas maiores). Nunca "sobe" para o modelo principal quando quem chamou
+    já usa o rápido (o radar), para não gastar a cota curta da Seleção e das questões de ordem.
+    GEMINI_FALLBACK (lista separada por vírgulas, vazio = nenhum) troca essa lista."""
+    env = os.environ.get("GEMINI_FALLBACK")
+    if env is not None:
+        lista = [m.strip() for m in env.split(",")]
+    else:
+        lista = [modelo_rapido()] if mod != modelo_rapido() else []
+    out = []
+    for m in lista:
+        if m and m != mod and m not in out and not m.lower().startswith("claude"):
+            out.append(m)
+    return out
+
+
+def cadeia(modelo_=None):
+    """Ordem de tentativa: [(nome, função)]."""
+    mod = modelo_ or modelo()
+    passos = []
+    if chave():
+        for m in [mod] + _modelos_reserva_gemini(mod):
+            passos.append((f"gemini:{m}", lambda *a, m=m: _gemini(m, *a)))
+    if _groq_ok():
+        passos.append(("groq", _groq))
+    if _cf_ok():
+        passos.append(("cloudflare", _cloudflare))
+    return passos
+
+
+def chamar_ia(mensagem_usuario, sessao=None, sistema=None, modelo_=None, max_tokens=4000, timeout=180):
+    """Envia a mensagem à IA e devolve o texto. Tenta o Gemini (modelo pedido e depois os outros modelos do
+    plano gratuito); se a cota acabar ou a API cair, passa para Groq e Cloudflare, quando configurados.
+    O provedor que respondeu fica em ULTIMA.provedor."""
+    passos = cadeia(modelo_)
+    if not passos:
+        raise RuntimeError("GEMINI_API_KEY não configurada no Railway.")
+    sistema = sistema or SISTEMA
+    erros, pulados, pular_gemini = [], [], False
+    ULTIMA.provedor = None
+    for nome, fn in passos:
+        if pular_gemini and nome.startswith("gemini:"):
+            continue
+        if not _disponivel(nome):
+            pulados.append(nome)
+            continue
+        try:
+            texto = fn(mensagem_usuario, sessao, sistema, max_tokens, timeout)
+        except _CotaEsgotada as e:
+            erros.append(str(e))
+            continue
+        except requests.RequestException as e:
+            erros.append(f"{nome}: falha de conexão ({e.__class__.__name__})")
+            continue
+        except RuntimeError as e:
+            # erro de configuração ou de conteúdo: outro modelo do Gemini não resolve, outro provedor talvez sim
+            erros.append(str(e))
+            pular_gemini = pular_gemini or nome.startswith("gemini:")
+            continue
+        ULTIMA.provedor = nome
+        if erros or pulados:
+            log.warning("IA respondeu pela reserva %s (antes: %s)", nome,
+                        "; ".join(erros + [f"{p} sem cota" for p in pulados]))
+        return texto
+    if not erros:
+        erros = [f"todas as IAs estão sem cota no momento ({', '.join(pulados)})"]
+    if not _groq_ok() and not _cf_ok():
+        erros.append("sem IA de reserva: configure GROQ_API_KEY ou CF_ACCOUNT_ID/CF_API_TOKEN no Railway")
+    raise RuntimeError(" | ".join(erros))
 
 
 ULTIMA = threading.local()      # stop_reason da última chamada desta thread (diagnóstico)
