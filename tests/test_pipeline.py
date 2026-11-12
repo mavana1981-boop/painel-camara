@@ -1297,7 +1297,7 @@ def test_radar_no_modelo_do_monitor():
     ia = _IAFake()
     os.environ["GEMINI_API_KEY"] = "sk-teste"
     try:
-        res = radar.ciclo([101], buscar=_buscar_fake, sessao=ia)
+        res = radar.ciclo([101], buscar=_buscar_fake, sessao=ia, ia=True)        # "Atualizar agora"
         assert res == {"portais": 3, "google": 1, "analisadas": 4}
         assert radar.ciclo([101], buscar=_buscar_fake, sessao=ia)["portais"] == 0      # já vistas
     finally:
@@ -1485,7 +1485,7 @@ def test_atualizar_agora_e_etapa_diaria():
     import meu
     feitos = []
     orig = coleta_meu.executar
-    coleta_meu.executar = lambda codigos=None, agenda_tambem=True: feitos.append(codigos)
+    coleta_meu.executar = lambda codigos=None, agenda_tambem=True, ia=None: feitos.append((codigos, ia))
     try:
         adm = _cliente()
         tok = _tok(adm, "/meu/101?secao=radar")
@@ -1495,7 +1495,7 @@ def test_atualizar_agora_e_etapa_diaria():
             if feitos:
                 break
             time.sleep(0.05)
-        assert feitos == [[101]]
+        assert feitos == [([101], True)]                  # o botão aciona a triagem por IA
         assert "Atualização iniciada" in adm.get("/meu/101?secao=radar").get_data(as_text=True)
     finally:
         coleta_meu.executar = orig
@@ -3401,3 +3401,20 @@ def test_radar_e_selecao_usam_zai_antes_do_gemini(monkeypatch):
     monkeypatch.delenv("ZAI_API_KEY")
     monkeypatch.delenv("RADAR_IA_PREFERIDA")
     assert nomes(questoes.preferidas_radar())[0] == "gemini:gemini-3.8-flash"            # sem chave: Gemini na frente
+
+
+def test_ciclo_automatico_so_coleta_sem_gastar_ia(monkeypatch):
+    import radar
+    import questoes
+    import selecao_ia
+    chamou = []
+    monkeypatch.setattr(radar, "IA_AUTO", False)
+    monkeypatch.setattr(radar, "analisar", lambda *a, **k: chamou.append("triagem") or 0)
+    monkeypatch.setattr(radar, "reanalisar_alternativas", lambda *a, **k: chamou.append("reanalise") or 0)
+    monkeypatch.setattr(selecao_ia, "gerar", lambda *a, **k: chamou.append("selecao"))
+    monkeypatch.setattr(selecao_ia, "precisa_gerar", lambda *a, **k: True)
+    monkeypatch.setattr(questoes, "configurado", lambda: True)
+    radar.ciclo([101], buscar=lambda u: None)                 # agendador de 2 h / coleta diária
+    assert chamou == []
+    radar.ciclo([101], buscar=lambda u: None, ia=True)        # botão "Atualizar agora": só a triagem
+    assert chamou == ["triagem"]

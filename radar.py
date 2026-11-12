@@ -11,9 +11,9 @@ Como o Monitor:
   e incluir manualmente uma notícia pelo link (origem "manual"; a IA analisa em seguida).
 
 Diferenças: aqui o radar é por parlamentar — dos portais entram só as notícias que citam o nome
-dele ou um dos temas cadastrados — e o Google Notícias complementa a busca. A IA é o Gemini
-(plano gratuito; mesma GEMINI_API_KEY das questões de ordem; modelo em RADAR_MODEL, padrão flash-lite). O ciclo roda a cada
-2 horas (RADAR_HORAS), na atualização diária e no botão "Atualizar agora".
+dele ou um dos temas cadastrados — e o Google Notícias complementa a busca. A IA (Z.ai na frente,
+Gemini e demais de reserva — ver questoes.chamar_ia) só faz a triagem pelo botão "Atualizar agora"; a coleta roda a cada
+2 horas (RADAR_HORAS) e na atualização diária sem gastar IA (RADAR_IA_AUTO=1 volta a triagem automática).
 """
 import html
 import json
@@ -670,13 +670,21 @@ def vinculados():
 _lock = threading.Lock()   # um ciclo por vez (agendador de 2h, rotina diária e "Atualizar agora")
 
 
-def ciclo(codigos=None, buscar=baixar, sessao=None):
-    """Portais → Google Notícias → análise por IA. Sem `codigos`: todos os parlamentares vinculados."""
+IA_AUTO = os.environ.get("RADAR_IA_AUTO") == "1"   # 1 = triagem e Seleção também nos ciclos automáticos (antigo)
+
+
+def ciclo(codigos=None, buscar=baixar, sessao=None, ia=None):
+    """Portais → Google Notícias → (triagem por IA). Sem `codigos`: todos os parlamentares vinculados.
+    A IA (triagem das notícias) só roda quando `ia=True` — o botão "Atualizar agora". Os ciclos automáticos (a cada
+    2 h e na coleta diária) só COLETAM, para não gastar cota de IA sem comando do usuário; RADAR_IA_AUTO=1 volta ao
+    comportamento antigo (triagem automática e Seleção da IA diária a partir das 7h)."""
+    if ia is None:
+        ia = IA_AUTO
     with _lock:
-        return _ciclo(codigos, buscar, sessao)
+        return _ciclo(codigos, buscar, sessao, ia)
 
 
-def _ciclo(codigos, buscar, sessao):
+def _ciclo(codigos, buscar, sessao, ia=False):
     garantir_fontes()
     cods = list(codigos) if codigos is not None else vinculados()
     res = {"portais": 0, "google": 0, "analisadas": 0}
@@ -688,7 +696,8 @@ def _ciclo(codigos, buscar, sessao):
         for cod in cods:
             try:
                 res["google"] += coletar_google(cod, buscar)
-                res["analisadas"] += analisar(cod, sessao=sessao)
+                if ia:
+                    res["analisadas"] += analisar(cod, sessao=sessao)
                 import questoes
                 import selecao_ia
                 try:
@@ -696,7 +705,8 @@ def _ciclo(codigos, buscar, sessao):
                     areas.classificar()
                 except Exception:
                     log.exception("áreas das solicitações")
-                if questoes.configurado() and selecao_ia.precisa_gerar(cod):   # 1x por dia, a partir das 7h
+                # Seleção da IA automática (1x por dia, a partir das 7h) só com RADAR_IA_AUTO=1; senão, só pelo botão
+                if IA_AUTO and questoes.configurado() and selecao_ia.precisa_gerar(cod):
                     try:
                         selecao_ia.gerar(cod, sessao=sessao)
                     except ValueError as e:
@@ -704,10 +714,11 @@ def _ciclo(codigos, buscar, sessao):
             except Exception:
                 log.exception("radar do parlamentar %s", cod)
     if codigos is None:
-        try:
-            reanalisar_alternativas(sessao=sessao)       # só faz algo até concluir uma vez
-        except Exception:
-            log.exception("reanálise do radar")
+        if ia:
+            try:
+                reanalisar_alternativas(sessao=sessao)   # só faz algo até concluir uma vez
+            except Exception:
+                log.exception("reanálise do radar")
         with engine.begin() as c:
             c.execute(delete(meta).where(meta.c.chave == "radar:ultimo_ciclo"))
             c.execute(insert(meta).values(chave="radar:ultimo_ciclo", valor=datetime.now().isoformat(timespec="seconds")))

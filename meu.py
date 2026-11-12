@@ -942,7 +942,7 @@ def atualizar_em_segundo_plano(cod):
     def _rodar():
         try:
             import coleta_meu
-            coleta_meu.executar([cod])
+            coleta_meu.executar([cod], ia=True)          # comando do usuário: coleta + triagem por IA
         except Exception:
             log.exception("atualização sob demanda")
         finally:

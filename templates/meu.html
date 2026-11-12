@@ -535,11 +535,11 @@
       {% for t in radar.termos %}<a class="{{ 'sel' if termo == t }}" href="{{ url_for('meu.painel', cod=cod, secao='radar', termo=t, filtro=filtro or None, q=busca or None) }}">{{ t }}</a>{% endfor %}
     </div>{% endif %}
     {% if not ia_ok and filtro not in ('selecao', 'prelista') %}<div class="aviso erro" style="margin:12px 16px 0">A análise por IA está desligada: falta a variável <b>GEMINI_API_KEY</b> no Railway. As notícias continuam sendo coletadas.</div>
-    {% elif rc.pend %}<div class="rn-fila">{{ rc.pend }} notícia(s) aguardando análise da IA — saem no próximo ciclo (a cada 2 horas).</div>{% endif %}
+    {% elif rc.pend %}<div class="rn-fila">{{ rc.pend }} notícia(s) aguardando análise da IA — clique em “Atualizar agora” para a IA analisar (até 30 por vez).</div>{% endif %}
     {% if filtro == 'selecao' %}
     <div class="sel-cab">
       <div><b>✨ Seleção da IA — pendentes de abertura</b>{% if sel_pend %} <span class="sel-npend">{{ sel_pend }} tópico{{ 's' if sel_pend != 1 }} aguardando</span>{% endif %}
-        <small>A IA lê as notícias das últimas {{ sel_horas }} horas, agrupa as que tratam do mesmo fato e escolhe os assuntos mais comentados, espalhando os tópicos pelo maior número possível de temas e áreas do parlamentar. Nada vira solicitação sozinho: confirme um tópico ou marque vários e abra de uma vez. Roda sozinha uma vez por dia, a partir das 7h; cada rodada forma um lote com dia e hora.</small></div>
+        <small>A IA lê as notícias das últimas {{ sel_horas }} horas, agrupa as que tratam do mesmo fato e escolhe os assuntos mais comentados, espalhando os tópicos pelo maior número possível de temas e áreas do parlamentar. Nada vira solicitação sozinho: confirme um tópico ou marque vários e abra de uma vez. Só roda quando você clica em “Gerar nova seleção”; cada rodada forma um lote com dia e hora.</small></div>
       <form method="post" action="{{ url_for('meu.painel', cod=cod, secao='radar', filtro='selecao') }}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Iniciando…'">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="selecao_gerar">
         <button class="btn" {{ 'disabled' if sel_estado and sel_estado.rodando }}>{{ '⏳ Gerando…' if sel_estado and sel_estado.rodando else '✨ Gerar nova seleção' }}</button></form>
@@ -851,7 +851,7 @@
           </form>
         </details>
       </article>
-    {% else %}<div class="vazio-msg">{% if busca %}Nenhuma notícia do radar com “{{ busca }}”{{ ' neste filtro' if filtro or termo }}. Busque no Google Notícias acima ou inclua a notícia pelo link ao lado.{% else %}Nenhuma notícia {{ 'neste filtro' if filtro or termo else 'coletada ainda' }}. O radar roda a cada 2 horas; use “Atualizar agora” para buscar já.{% endif %}</div>{% endfor %}
+    {% else %}<div class="vazio-msg">{% if busca %}Nenhuma notícia do radar com “{{ busca }}”{{ ' neste filtro' if filtro or termo }}. Busque no Google Notícias acima ou inclua a notícia pelo link ao lado.{% else %}Nenhuma notícia {{ 'neste filtro' if filtro or termo else 'coletada ainda' }}. O radar coleta a cada 2 horas; use “Atualizar agora” para buscar já e passar as novas pela IA.{% endif %}</div>{% endfor %}
     </div>
     {% endif %}
     <script>
@@ -863,7 +863,7 @@
       b.closest('ol').querySelectorAll('[data-usar]').forEach(function (x) { x.classList.toggle('on', x === b); });
     });
     </script>
-    <p class="nota">Como no Monitor Legislativo: os portais são lidos a cada 2 horas e cada notícia nova passa pela IA, que diz se cabe ação parlamentar, de que tipo e por quê. Daqui entram só as notícias que citam o nome do deputado ou um tema acompanhado; o Google Notícias complementa com outros veículos.</p>
+    <p class="nota">Como no Monitor Legislativo: os portais são lidos a cada 2 horas e, quando você clica em “Atualizar agora”, as notícias novas passam pela IA, que diz se cabe ação parlamentar, de que tipo e por quê. Daqui entram só as notícias que citam o nome do deputado ou um tema acompanhado; o Google Notícias complementa com outros veículos.</p>
   </div>
   <div class="lado-pilha">
   {% if filtro in ('selecao', 'prelista') %}

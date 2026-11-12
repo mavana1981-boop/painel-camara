@@ -1,6 +1,6 @@
 """Radar → "Seleção da IA".
 
-Uma vez por dia (a partir das 7h) e pelo botão "Gerar nova seleção", a IA lê as notícias das últimas 72 horas
+Pelo botão "Gerar nova seleção" (a rodada diária automática das 7h só com RADAR_IA_AUTO=1), a IA lê as notícias das últimas 72 horas
 de cada tema acompanhado (o termo que trouxe cada notícia: nome do deputado e temas cadastrados), agrupa as que
 tratam do mesmo fato e escolhe os assuntos mais comentados, espalhando os tópicos pelo maior número possível de
 temas e áreas do parlamentar. Cada tópico vem com área, resumo, providência concreta, as notícias que o

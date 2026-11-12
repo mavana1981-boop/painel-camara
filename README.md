@@ -136,8 +136,9 @@ do Plenário convocadas depois da coleta e pautas que mudam. Dia em que a API fa
 sempre que alguém abre a agenda (no máximo uma vez por minuto, `AGENDA_SEGUNDOS_ACESSO`; `AGENDA_AO_ACESSAR=0` desliga), e a
 página se recarrega sozinha quando ela termina. Nos itens da pauta, o
 painel diz se o deputado é relator, autor (1º signatário) ou coautor.
-O radar roda a cada 2 horas (`RADAR_HORAS`; `AUTO_RADAR=0` desliga) só para deputados com usuário vinculado; o botão
-**Atualizar agora** busca na hora. A IA do radar e das questões de ordem usa `GEMINI_API_KEY` (plano gratuito, chave em
+O radar COLETA a cada 2 horas (`RADAR_HORAS`; `AUTO_RADAR=0` desliga) só para deputados com usuário vinculado, sem
+usar IA. A triagem das notícias pela IA só roda no botão **Atualizar agora** (que também busca na hora) e a Seleção da
+IA só no botão **Gerar nova seleção**; `RADAR_IA_AUTO=1` volta a triagem automática e a Seleção diária das 7h. A IA do radar e das questões de ordem usa `GEMINI_API_KEY` (plano gratuito, chave em
 aistudio.google.com); o modelo do radar fica em `RADAR_MODEL` (padrão `gemini-3.5-flash-lite`), o da Seleção da IA e
 das questões de ordem em `GEMINI_MODEL` (padrão `gemini-3.8-flash`). As chamadas são espaçadas em `GEMINI_INTERVALO`
 segundos (padrão 6) para caber no limite por minuto do plano gratuito e o limite de análises por deputado e ciclo em `RADAR_MAX_ANALISES` (30).

@@ -485,8 +485,8 @@ def deputados_vinculados():
         return sorted({r[0] for r in c.execute(select(usuario_deputados.c.codigo_deputado))})
 
 
-def executar(codigos=None, agenda_tambem=True):
-    """Etapa diária do Meu Parlamentar (também usada pelo botão 'Atualizar agora')."""
+def executar(codigos=None, agenda_tambem=True, ia=None):
+    """Etapa diária do Meu Parlamentar (também usada pelo botão 'Atualizar agora', com ia=True para a triagem)."""
     if agenda_tambem:
         for fn in (coletar_agenda, coletar_historico_pautas):
             try:
@@ -501,6 +501,6 @@ def executar(codigos=None, agenda_tambem=True):
         log.exception("clipping automático")
     import radar
     try:
-        radar.ciclo(codigos)
+        radar.ciclo(codigos, ia=ia)
     except Exception:
         log.exception("radar de notícias")
