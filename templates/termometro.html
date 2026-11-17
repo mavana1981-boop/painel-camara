@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Termômetro{% endblock %}
+
+{% macro sel_ori(valor) -%}
+<select name="orientacao_oposicao" required title="Como a Oposição vai orientar">
+  <option value="" {{ 'selected' if not valor }}>Oposição orienta…</option>
+  <option value="SIM" {{ 'selected' if valor == 'SIM' }}>Oposição: SIM</option>
+  <option value="NÃO" {{ 'selected' if valor == 'NÃO' }}>Oposição: NÃO</option>
+</select>
+{%- endmacro %}
+
+{% block conteudo %}
+<header class="tm-cab">
+  <div>
+    <span class="tm-rot">Termômetro</span>
+    <h1>Como cada deputado deve votar</h1>
+    <p>A previsão parte do voto de cada deputado em votações parecidas (as anteriores da mesma proposição valem mais),
+      do oposicionismo dele e do partido; a IA pode ler discursos e entrevistas sobre o tema, e a posição apurada pela
+      assessoria prevalece. Cada termômetro guarda anotações da equipe e os contatos dos gabinetes, com WhatsApp direto.</p>
+  </div>
+  <div class="tm-acoes">
+    {% if arquivados %}<a class="btn sec" href="{{ url_for('termometro') }}">Ver em andamento</a>
+    {% else %}<a class="btn sec" href="{{ url_for('termometro', arquivados=1) }}">Ver arquivados</a>{% endif %}
+  </div>
+</header>
+
+<section class="grade larga">
+  <div class="card neu">
+    <h2>{{ 'Todos os termômetros' if arquivados else 'Em acompanhamento' }} <small>{{ termometros|length }}</small></h2>
+    {% if termometros %}
+    <div class="tm-cards">
+      {% for t in termometros %}{% set pl = resumo.get(t.id) %}
+      <a class="tm-card {{ 'arq' if t.arquivado }}" href="{{ url_for('termometro.ver', tid=t.id) }}">
+        <b>{{ t.identificacao }}</b> <span class="tm-ori {{ t.orientacao_oposicao }}">Oposição: {{ t.orientacao_oposicao }}</span>
+        {% if t.arquivado %}<span class="tm-sub"> · arquivado</span>{% endif %}
+        <p>{{ t.ementa or '' }}</p>
+        {% if pl %}
+        {{ m.tm_placar(pl, rotulos=False) }}
+        <div class="tm-sub"><b style="color:#17703a">{{ pl.sim }} SIM</b> · <b style="color:#b03021">{{ pl.nao }} NÃO</b> · {{ pl.indef }} indefinidos · {{ pl.situacao }}</div>
+        {% endif %}
+        <div class="tm-sub">Criado por {{ t.criado_por or '—' }} em {{ t.criado_em|dt_curta }}{% if t.atualizado_em and t.atualizado_em != t.criado_em %} · atualizado {{ t.atualizado_em|dt_curta }}{% endif %}</div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="vazio-msg">Nenhum termômetro ainda. Crie o primeiro ao lado — de um item da pauta do Plenário, de uma proposição ou de um tema.</div>
+    {% endif %}
+  </div>
+
+  <div class="card neu tm-novo">
+    <h2>Novo termômetro</h2>
+    {% if itens %}
+    <div class="tm-opcao">
+      <h3>Da pauta do Plenário <span class="tm-sub">· {{ pauta.data|data if pauta.data }} {{ pauta.titulo or '' }}</span></h3>
+      <div class="rolagem" style="max-height:300px">
+      {% for i in itens %}
+      <form class="tm-item" method="post" action="{{ url_for('termometro.novo') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="proposicao_id" value="{{ i.proposicao_id or '' }}">
+        <input type="hidden" name="identificacao" value="{{ i.identificacao or '' }}">
+        <input type="hidden" name="ementa" value="{{ i.ementa or '' }}">
+        <input type="hidden" name="evento_id" value="{{ i.evento_id or '' }}">
+        <div><b>{{ i.identificacao }}</b><small title="{{ i.ementa }}">{{ i.ementa }}</small></div>
+        {{ sel_ori(i.orientacao) }}
+        <button class="btn">Criar</button>
+      </form>
+      {% endfor %}
+      </div>
+      <p class="tm-sub" style="margin:6px 0 0">A orientação vem das notas do Minha Pauta, quando houver.</p>
+    </div>
+    {% endif %}
+
+    <div class="tm-opcao">
+      <h3>De uma proposição</h3>
+      <form class="form-linha" method="get" style="padding:0" action="{{ url_for('termometro') }}">
+        <input type="search" name="busca" value="{{ busca }}" placeholder="PL 1087/2025 ou palavras da ementa" style="flex:1 1 220px">
+        <button class="btn sec">Buscar</button>
+      </form>
+      {% if busca %}
+        {% for p in achados %}
+        <form class="tm-item" method="post" action="{{ url_for('termometro.novo') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="proposicao_id" value="{{ p.id }}">
+          <div><b>{{ p.identificacao }}</b><small title="{{ p.ementa }}">{{ p.ementa }}</small></div>
+          {{ sel_ori('') }}
+          <button class="btn">Criar</button>
+        </form>
+        {% else %}<p class="tm-sub">Nenhuma proposição encontrada. Use o formulário abaixo para criar pelo tema.</p>{% endfor %}
+      {% endif %}
+    </div>
+
+    <div class="tm-opcao" style="padding:0">
+      <h3 style="padding:12px 14px 0">Por tema ou proposição digitada</h3>
+      <form class="tm-form" method="post" action="{{ url_for('termometro.novo') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <div class="lin">
+          <label>Proposição ou título<input name="identificacao" placeholder="PL 1087/2025 ou 'Isenção do IR'" maxlength="80"></label>
+          <label>Orientação da Oposição{{ sel_ori('') }}</label>
+        </div>
+        <label>Ementa / descrição<textarea name="ementa" rows="2" placeholder="Do que trata a matéria"></textarea></label>
+        <label>Palavras-chave do tema <span style="text-transform:none;font-weight:400">(separadas por vírgula; ajudam a achar votações, discursos e entrevistas)</span>
+          <input name="palavras" placeholder="ex.: imposto de renda, isenção, tributação"></label>
+        <div><button class="btn">Criar termômetro</button></div>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}

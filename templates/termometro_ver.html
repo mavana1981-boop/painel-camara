@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block titulo %}Termômetro · {{ t.identificacao }}{% endblock %}
+
+{% block conteudo %}
+{% set pl = prev.placar %}
+<header class="tm-cab">
+  <div style="flex:1 1 480px;min-width:0">
+    <span class="tm-rot"><a href="{{ url_for('termometro') }}">Termômetro</a> ›</span>
+    <h1>{{ t.identificacao }} <span class="tm-ori {{ t.orientacao_oposicao }}">Oposição orienta {{ t.orientacao_oposicao }}</span>
+      {% if t.arquivado %}<span class="tm-sub">· arquivado</span>{% endif %}</h1>
+    {% if t.ementa %}<p>{{ t.ementa }}</p>{% endif %}
+    <div>{% for p in (t.palavras or '').split(',') if p.strip() %}<span class="tm-kw">{{ p.strip() }}</span>{% endfor %}</div>
+    {% if t.observacao %}<p><b>Observação:</b> {{ t.observacao }}</p>{% endif %}
+    <p class="tm-sub">Criado por {{ t.criado_por or '—' }} em {{ t.criado_em|dt_curta }}{% if t.proposicao_id %} · <a href="https://www.camara.leg.br/propostas-legislativas/{{ t.proposicao_id }}" target="_blank" rel="noopener">ficha na Câmara ↗</a>{% endif %}</p>
+  </div>
+  <div class="tm-acoes">
+    <form method="post" action="{{ url_for('termometro.arquivar', tid=t.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="mini">{{ 'Reabrir' if t.arquivado else 'Arquivar' }}</button></form>
+    {% if usuario and (usuario.admin or usuario.login == t.criado_por) %}
+    <form method="post" action="{{ url_for('termometro.apagar', tid=t.id) }}" onsubmit="return confirm('Apagar este termômetro, com anotações e posições apuradas?')">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="mini perigo">Apagar</button></form>
+    {% endif %}
+  </div>
+</header>
+
+<details class="card neu" style="margin-bottom:14px">
+  <summary style="padding:10px 14px;cursor:pointer;font-weight:600;color:var(--pri-esc)">Editar orientação, ementa e palavras-chave</summary>
+  <form class="tm-form" method="post" action="{{ url_for('termometro.editar_rota', tid=t.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div class="lin">
+      <label>Proposição ou título<input name="identificacao" value="{{ t.identificacao or '' }}" maxlength="80"></label>
+      <label>Orientação da Oposição<select name="orientacao_oposicao">
+        {% for o in ['SIM', 'NÃO'] %}<option {{ 'selected' if t.orientacao_oposicao == o }}>{{ o }}</option>{% endfor %}</select></label>
+    </div>
+    <label>Ementa / descrição<textarea name="ementa" rows="2">{{ t.ementa or '' }}</textarea></label>
+    <label>Palavras-chave (vírgulas)<input name="palavras" value="{{ t.palavras or '' }}"></label>
+    <label>Observação<input name="observacao" value="{{ t.observacao or '' }}"></label>
+    <div><button class="btn">Salvar</button> <span class="tm-sub">Mudar a ementa ou as palavras-chave muda as votações parecidas usadas.</span></div>
+  </form>
+</details>
+
+{% if fila and fila.rodando %}
+<div class="tm-fila">⏳ IA lendo discursos e entrevistas: {{ fila.feitos }} de {{ fila.total }} deputado(s)… A página se atualiza sozinha.</div>
+<script>setTimeout(function(){location.reload()}, 8000)</script>
+{% elif fila and fila.erros %}
+<div class="aviso erro">A última análise da IA teve {{ fila.erros|length }} falha(s): {{ fila.erros[-1] }}</div>
+{% endif %}
+
+<section class="kpis">
+  <div class="kpi dest" style="border-top-color:#17703a"><b style="color:#17703a">{{ pl.sim }}</b><span>SIM previstos ({{ pl.faixas.get('sim', 0) }} prováveis + {{ pl.faixas.get('tende_sim', 0) }} tendência)</span></div>
+  <div class="kpi dest" style="border-top-color:#b03021"><b style="color:#b03021">{{ pl.nao }}</b><span>NÃO previstos ({{ pl.faixas.get('nao', 0) }} prováveis + {{ pl.faixas.get('tende_nao', 0) }} tendência)</span></div>
+  <div class="kpi dest" style="border-top-color:#9aa3b0"><b>{{ pl.indef }}</b><span>Indefinidos{% if pl.ausente %} · {{ pl.ausente }} ausentes{% endif %}</span></div>
+  <div class="kpi dest ouro"><b>{{ pl.esperado_sim }}</b><span>SIM esperados (soma das chances)</span></div>
+  <div class="kpi dest"><b style="font-size:16px;padding-top:5px">{{ pl.situacao|capitalize }}</b><span>{{ prev.quorum.rotulo }}{% if pl.falta_sim %} · faltam {{ pl.falta_sim }} SIM{% endif %}</span></div>
+</section>
+
+<section class="card neu" style="margin-bottom:14px">
+  <h2>Placar previsto <small>{{ pl.total }} deputados em exercício</small></h2>
+  <div style="padding:10px 14px 0">{{ m.tm_placar(pl, prev.quorum) }}</div>
+  <div class="tm-legenda">
+    {% for k, rot, _ in faixas %}<span class="tm-f-{{ k }}"><i></i>{{ rot }}: <b>{{ pl.faixas.get(k, 0) }}</b></span>{% endfor %}
+    {% if pl.ausente %}<span class="tm-f-ausente"><i></i>Ausentes: <b>{{ pl.ausente }}</b></span>{% endif %}
+  </div>
+  <details style="border-top:1px solid var(--linha)">
+    <summary style="padding:9px 14px;cursor:pointer;font-size:13px;font-weight:600">Por partido</summary>
+    <div class="rolagem" style="max-height:360px">
+    <table>
+      <thead><tr><th>Partido</th><th class="n">SIM</th><th class="n">Tende SIM</th><th class="n">Indef.</th><th class="n">Tende NÃO</th><th class="n">NÃO</th><th class="n">Total</th></tr></thead>
+      <tbody>{% for p, c in partidos %}
+        <tr><td><a href="{{ url_for('termometro.ver', tid=t.id, partido=p) }}#lista">{{ p }}</a></td>
+          {% for k in ['sim', 'tende_sim', 'indef', 'tende_nao', 'nao'] %}<td class="n">{{ c.get(k) or '' }}</td>{% endfor %}
+          <td class="n"><b>{{ c.values()|sum }}</b></td></tr>{% endfor %}</tbody>
+    </table>
+    </div>
+  </details>
+</section>
+
+<section class="card neu" style="margin-bottom:14px">
+  <h2>Discursos e entrevistas <small>leitura por IA</small></h2>
+  <div class="form-linha">
+    <form method="post" action="{{ url_for('termometro.ia_lote', tid=t.id) }}" style="margin:0">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn" {{ 'disabled' if fila and fila.rodando }}>✨ Ler discursos e entrevistas dos {{ lote }} mais indefinidos</button>
+    </form>
+    <span class="tm-sub" style="flex:1 1 300px">A IA lê os discursos do deputado no Plenário (Dados Abertos da Câmara) e notícias com o nome dele e o tema (Google Notícias) e diz se há sinal de voto a favor ou contra, com as evidências. Também dá para pedir um deputado só, na ficha dele.</span>
+  </div>
+</section>
+
+<form class="filtros" method="get" id="lista" action="{{ url_for('termometro.ver', tid=t.id) }}#lista">
+  <label style="flex:1 1 160px">Deputado<input type="search" name="q" value="{{ request.args.get('q', '') }}" placeholder="Nome"></label>
+  <label>Partido<select name="partido"><option value="">Todos</option>
+    {% for p in opc_partidos %}<option {{ 'selected' if request.args.get('partido') == p }}>{{ p }}</option>{% endfor %}</select></label>
+  <label>UF<select name="uf"><option value="">Todas</option>
+    {% for u in opc_ufs %}<option {{ 'selected' if request.args.get('uf') == u }}>{{ u }}</option>{% endfor %}</select></label>
+  <label>Mostrar<select name="so">
+    {% for k, rot in [('', 'Todos'), ('apurados', 'Com posição apurada'), ('notas', 'Com anotações'), ('contatos', 'Com contato')] %}
+    <option value="{{ k }}" {{ 'selected' if request.args.get('so', '') == k }}>{{ rot }}</option>{% endfor %}</select></label>
+  <div class="tm-chk">
+    {% set sel = request.args.getlist('faixa') %}
+    {% for k, rot, _ in faixas %}<label><input type="checkbox" name="faixa" value="{{ k }}" {{ 'checked' if k in sel }}> <span class="tm-faixa tm-f-{{ k }}">{{ rot }}</span></label>{% endfor %}
+    <label><input type="checkbox" name="faixa" value="ausente" {{ 'checked' if 'ausente' in sel }}> <span class="tm-faixa tm-f-ausente">Ausente</span></label>
+  </div>
+  <button class="btn">Filtrar</button>
+  <a class="btn sec" href="{{ url_for('termometro.ver', tid=t.id) }}#lista">Limpar</a>
+</form>
+
+<section class="card neu" style="margin-bottom:14px">
+  <h2>Deputados <small>{{ deps|length }} de {{ prev.deputados|length }} · da maior para a menor chance de votar SIM</small></h2>
+  <div class="rolagem" style="max-height:none">
+  {% if deps %}
+  <table class="tm-tabela">
+    <thead><tr><th>Deputado(a)</th><th>Chance de SIM</th><th>Previsão</th><th class="m-esc">Base</th><th class="m-esc">IA</th><th>Posição apurada</th><th class="c m-esc">Notas</th><th>Contato</th></tr></thead>
+    <tbody>
+    {% for d in deps %}
+    <tr id="d{{ d.codigo }}">
+      <td><a href="{{ url_for('termometro.deputado', tid=t.id, cod=d.codigo) }}" style="text-decoration:none">{{ m.parlamentar(d) }}</a></td>
+      <td>{{ m.tm_term(d.pct_sim) }}</td>
+      <td><span class="tm-faixa tm-f-{{ d.faixa }}">{{ rotulo_faixa.get(d.faixa, 'Ausente') }}</span><div class="tm-sub">confiança {{ d.confianca }}</div></td>
+      <td class="m-esc tm-sub" style="white-space:nowrap">
+        {% if d.n_similares %}{{ d.n_similares }} votação(ões) parecida(s){% if d.com_oposicao_tema is not none %} · {{ d.com_oposicao_tema }}% com a Oposição{% endif %}{% else %}sem votações parecidas{% endif %}
+        {% if d.mesma %}<br><b style="color:var(--tinta)">última votação desta matéria: {{ d.mesma[0].voto }} ({{ 'com' if d.mesma[0].com else 'contra' }} a Oposição)</b>{% endif %}
+        {% if d.oposicionismo is not none %}<br>oposicionismo geral {{ d.oposicionismo|pct }}{% endif %}
+      </td>
+      <td class="m-esc">{% if d.ia %}<span class="tm-ia {{ d.ia.posicao }}" title="{{ d.ia.justificativa or '' }}">{{ rotulo_ia.get(d.ia.posicao) }}{% if d.ia.posicao in ('favor', 'contra') %} · {{ d.ia.confianca }}%{% endif %}</span>{% else %}<span class="tm-sub">—</span>{% endif %}</td>
+      <td class="tm-pos {{ 'marcada' if d.manual }}">
+        <form method="post" action="{{ url_for('termometro.posicao', tid=t.id, cod=d.codigo) }}" style="margin:0">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="lista">
+          <select name="posicao" onchange="this.form.submit()" aria-label="Posição apurada de {{ d.nome }}">
+            {% for k, rot in posicoes %}<option value="{{ k }}" {{ 'selected' if (d.manual or '') == k }}>{{ rot }}</option>{% endfor %}
+          </select>
+        </form>
+      </td>
+      <td class="c m-esc"><a href="{{ url_for('termometro.deputado', tid=t.id, cod=d.codigo) }}#notas">{{ d.notas or '＋' }}</a></td>
+      <td>
+        {% set cw = d.contatos|selectattr('whatsapp')|first %}
+        {% if cw %}<a class="btn-whats" href="{{ link_whatsapp(cw.whatsapp, msg_whats(d, cw)) }}" target="_blank" rel="noopener" title="WhatsApp de {{ cw.nome or 'contato' }}{% if cw.cargo %} ({{ cw.cargo }}){% endif %}">{{ m.icone_whats() }} {{ (cw.nome or 'WhatsApp').split()[0] }}</a>
+        {% else %}<a class="mini" href="{{ url_for('termometro.deputado', tid=t.id, cod=d.codigo) }}#contatos" style="text-decoration:none">＋ contato</a>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="vazio-msg">Nenhum deputado neste filtro.</div>{% endif %}
+  </div>
+</section>
+
+<section class="grade larga">
+  <div class="card neu" id="notas">
+    <h2>Anotações gerais <small>{{ notas_gerais|length }}</small></h2>
+    <form class="tm-form" method="post" action="{{ url_for('termometro.nota_geral', tid=t.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <textarea name="texto" rows="3" required placeholder="Acordos, conversas com lideranças, mudança de orientação…"></textarea>
+      <div><button class="btn">Anotar</button></div>
+    </form>
+    <div class="tm-notas">
+      {% for n in notas_gerais %}
+      <div class="tm-nota"><div class="tm-sub"><span><b>{{ n.autor }}</b> · {{ n.criado_em|dt_curta }}</span>
+        {% if usuario and (usuario.admin or usuario.login == n.autor) %}<form method="post" action="{{ url_for('termometro.nota_apagar', nid=n.id) }}" style="margin:0" onsubmit="return confirm('Apagar a anotação?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="mini perigo">apagar</button></form>{% endif %}</div>
+        <p>{{ n.texto }}</p></div>
+      {% else %}<p class="tm-sub">Nenhuma anotação geral.</p>{% endfor %}
+    </div>
+  </div>
+
+  <div class="card neu">
+    <h2>Votações parecidas usadas <small>{{ prev.similares|length }}</small></h2>
+    <div class="rolagem" style="max-height:480px">
+    {% if prev.similares %}
+    <table>
+      <thead><tr><th>Data</th><th>Matéria</th><th class="c">Oposição</th><th class="n">Peso</th></tr></thead>
+      <tbody>{% for s in prev.similares %}
+        <tr><td style="white-space:nowrap">{{ s.data|data }}</td>
+          <td><a href="{{ url_for('votacoes', id=s.id) }}">{{ s.sigla_materia }} {{ s.numero_materia }}/{{ s.ano_materia }}</a>
+            {% if s.mesma %}<span class="tm-kw" style="background:#fff3d6;color:#7a5a00">mesma proposição</span>{% endif %}
+            <div class="tm-sub">{{ (s.descricao_votacao or s.descricao_materia or '')[:140] }}</div>
+            {% if s.comuns and not s.mesma %}<div class="tm-sub">em comum: {{ s.comuns|join(', ') }}</div>{% endif %}</td>
+          <td class="c"><span class="pill {{ s.ori_opo }}">{{ s.ori_opo }}</span></td>
+          <td class="n">{{ '%.2f'|format(s.peso) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<div class="vazio-msg">Nenhuma votação parecida. A previsão usa só o oposicionismo geral — acrescente palavras-chave para achar votações do tema.</div>{% endif %}
+    </div>
+    <p class="nota">Votações nominais do Plenário em que a Oposição orientou SIM ou NÃO. Peso = semelhança de palavras da ementa (votações com Governo e Oposição em lados opostos valem mais); votações anteriores da mesma proposição valem {{ '1,5' }}.</p>
+  </div>
+</section>
+{% endblock %}

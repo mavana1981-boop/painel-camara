@@ -3450,3 +3450,130 @@ def test_extrair_json_conserta_virgula_faltando():
     assert d["temas"][0]["topicos"][0]["area"] == "Outros"
     with pytest.raises(ValueError):
         radar.extrair_json("Desculpe, não consigo.")
+
+
+# ---------------- Termômetro ----------------
+
+def _csrf(cli, url):
+    return re.search(r'name="_csrf" value="([^"]+)"', cli.get(url).get_data(as_text=True)).group(1)
+
+
+def test_termometro_whatsapp_e_palavras():
+    import termometro as tm
+    assert tm.numero_whatsapp("(61) 99999-1234") == "5561999991234"
+    assert tm.numero_whatsapp("+55 61 99999-1234") == "5561999991234"
+    assert tm.numero_whatsapp("061 99999-1234") == "5561999991234"
+    assert tm.numero_whatsapp("3216-0000") is None and tm.numero_whatsapp("") is None
+    assert tm.link_whatsapp("(61) 99999-1234", "Olá, tudo bem?") == "https://wa.me/5561999991234?text=Ol%C3%A1%2C%20tudo%20bem%3F"
+    assert tm.parse_identificacao("PL nº 1.087/2025") == ("PL", 1087, 2025)
+    assert {"imposto", "renda", "isencao"} <= tm.palavras("Isenção do Imposto de Renda e outras providências")
+    assert "lei" not in tm.palavras("Altera a Lei")
+    assert tm.faixa(0.8) == "sim" and tm.faixa(0.5) == "indef" and tm.faixa(0.1) == "nao"
+    assert tm.quorum({"identificacao": "PEC 45/2025"})["sim"] == 308
+
+
+def test_termometro_previsao_posicao_notas_e_contatos():
+    import termometro as tm
+    cli = _cliente()
+    assert "Termômetro" in cli.get("/orientacoes").get_data(as_text=True)          # item no menu
+    tok = _csrf(cli, "/termometro")
+    r = cli.post("/termometro/novo", data={"_csrf": tok, "proposicao_id": "2480001", "orientacao_oposicao": "NÃO"})
+    assert r.status_code == 302
+    tid = int(re.search(r"/termometro/(\d+)", r.headers["Location"]).group(1))
+    t = tm.obter(tid)
+    assert t["identificacao"] == "PL 1087/2025" and "imposto de renda" in t["ementa"]
+
+    prev = tm.calcular(t)
+    d = {x["codigo"]: x for x in prev["deputados"]}
+    assert 108 not in d                                     # só deputados em exercício
+    assert d[101]["faixa"] == "nao" and d[101]["mesma"]     # Ana sempre com a Oposição: vai de NÃO
+    assert d[102]["faixa"] == "sim"                         # Bruno sempre contra a Oposição: SIM
+    assert all(s["mesma"] for s in prev["similares"][:2])
+    assert prev["placar"]["sim"] + prev["placar"]["nao"] + prev["placar"]["indef"] == len(d)
+
+    # posição apurada prevalece; anotação junto
+    cli.post(f"/termometro/{tid}/deputado/104/posicao", data={"_csrf": tok, "posicao": "sim",
+                                                              "texto": "Chefe de gabinete confirmou SIM"})
+    d = {x["codigo"]: x for x in tm.calcular(tm.obter(tid))["deputados"]}
+    assert d[104]["faixa"] == "sim" and d[104]["manual"] == "sim" and d[104]["notas"] == 1
+    cli.post(f"/termometro/{tid}/nota", data={"_csrf": tok, "texto": "Acordo com o Centrão em andamento"})
+
+    # contato da assessoria com WhatsApp
+    r = cli.post(f"/termometro/{tid}/deputado/101/contato", data={"_csrf": tok, "nome": "Maria Souza",
+                                                                   "cargo": "Chefe de gabinete",
+                                                                   "whatsapp": "(61) 99999-1234"})
+    assert r.status_code == 302
+    r = cli.post(f"/termometro/{tid}/deputado/101/contato", data={"_csrf": tok, "nome": "X", "whatsapp": "123"})
+    assert _q("SELECT COUNT(*) FROM contatos_assessoria")[0][0] == 1           # número inválido não grava
+
+    html = cli.get(f"/termometro/{tid}/deputado/101").get_data(as_text=True)
+    assert "https://wa.me/5561999991234?text=" in html and "Maria Souza" in html
+    assert "PL 1087/2025" in html and "mesma proposição" in html
+    html = cli.get(f"/termometro/{tid}").get_data(as_text=True)
+    assert "btn-whats" in html and "Acordo com o Centrão" in html and "Placar previsto" in html
+    assert cli.get(f"/termometro/{tid}?faixa=sim&partido=MDB").get_data(as_text=True).count('class="tm-faixa tm-f-sim"') >= 1
+    assert cli.get(f"/termometro/{tid}?so=contatos").status_code == 200
+    html = cli.get("/termometro").get_data(as_text=True)
+    assert "PL 1087/2025" in html and "Em acompanhamento" in html
+    assert "PL 1087/2025" in cli.get("/termometro?busca=PL+1087/2025").get_data(as_text=True)
+    cid = _q("SELECT id FROM contatos_assessoria")[0][0]
+    assert cli.get(f"/termometro/{tid}/deputado/101?editar={cid}").status_code == 200
+    cli.post(f"/termometro/{tid}/deputado/101/contato/{cid}/apagar", data={"_csrf": tok})
+    assert _q("SELECT COUNT(*) FROM contatos_assessoria")[0][0] == 0
+
+    # termômetro por tema acha a votação parecida pelas palavras
+    tid2 = tm.criar({"identificacao": "Isenção do IR", "ementa": "Isenção do imposto de renda para professores",
+                     "orientacao_oposicao": "SIM"}, "admin")
+    sims = tm.votacoes_similares(tm.obter(tid2))
+    assert sims and sims[0]["sigla_materia"] == "PL" and not sims[0]["mesma"]
+
+    cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
+    cli.post(f"/termometro/{tid2}/apagar", data={"_csrf": tok})
+    assert tm.obter(tid) is None and _q("SELECT COUNT(*) FROM termometro_notas")[0][0] == 0
+
+
+def test_termometro_ia_le_discursos_e_noticias():
+    import termometro as tm
+    tid = tm.criar({"identificacao": "PL 1087/2025", "ementa": "Amplia a faixa de isenção do imposto de renda.",
+                    "palavras": "imposto de renda, isenção", "orientacao_oposicao": "SIM"}, "admin")
+    pedidos = []
+
+    def api(url):
+        pedidos.append(url)
+        return {"dados": [
+            {"dataHoraInicio": "2025-04-02T15:00", "tipoDiscurso": "Breves Comunicações",
+             "sumario": "Defende a ampliação da isenção do imposto de renda.",
+             "transcricao": "Sou a favor de ampliar a isenção do imposto de renda para quem ganha pouco.",
+             "urlTexto": "https://www.camara.leg.br/discurso/1"},
+            {"dataHoraInicio": "2025-04-01T15:00", "sumario": "Homenagem ao Dia do Atleta.", "transcricao": "..."}],
+            "links": []}
+
+    vistos = {}
+
+    def ia(msg):
+        vistos["msg"] = msg
+        return '```json\n{"posicao": "favor", "confianca": 80, "justificativa": "Defendeu a ampliação.", ' \
+               '"evidencias": [{"fonte": 1, "trecho": "Sou a favor de ampliar a isenção"}]}\n```'
+
+    reg = tm.analisar_deputado(tid, 102, "admin", pedir=api, buscar=lambda u: None, ia=ia)
+    assert "/deputados/102/discursos" in pedidos[0] and "dataInicio=" in pedidos[0]
+    assert reg["posicao"] == "favor" and reg["confianca"] == 80
+    assert "Sou a favor" in vistos["msg"] and "Atleta" not in vistos["msg"]      # só discursos do tema
+    ev = json.loads(reg["evidencias"])
+    assert ev[0]["link"] == "https://www.camara.leg.br/discurso/1"
+
+    # sem discursos nem notícias: não chama a IA
+    reg = tm.analisar_deputado(tid, 101, "admin", pedir=lambda u: {"dados": []}, buscar=lambda u: None,
+                               ia=lambda m: (_ for _ in ()).throw(AssertionError("não devia chamar")))
+    assert reg["posicao"] == "sem_sinal"
+
+    t = tm.obter(tid)
+    prev = tm.calcular(t)
+    d = {x["codigo"]: x for x in prev["deputados"]}
+    assert d[102]["fonte"] == "votos + IA" and d[102]["ia"]["posicao"] == "favor"
+    assert 102 not in tm.escolher_para_ia(prev) and 101 not in tm.escolher_para_ia(prev)
+    cli = _cliente()
+    html = cli.get(f"/termometro/{tid}/deputado/102").get_data(as_text=True)
+    assert "Sou a favor de ampliar a isenção" in html and "A favor" in html
+    tok = _csrf(cli, "/termometro")
+    cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})

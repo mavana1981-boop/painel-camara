@@ -106,6 +106,7 @@ meu.py        Meu Parlamentar (rotas e regras)
 coleta_meu.py agenda, pautas/relatorias e radar de notícias
 questoes.py   questões de ordem por IA com base no RICD
 plenario.py   aba Plenário (pauta e notas do app Minha Pauta)
+termometro.py Termômetro (previsão de votos, anotações, contatos/WhatsApp)
 radar.py      radar de notícias (portais do Monitor Legislativo + Google Notícias, análise por IA)
 cota.py       tetos da CEAP por UF
 db.py         tabelas e normalização
@@ -216,3 +217,26 @@ tipo; o que não interessa pode ser descartado (e voltar depois). A solicitaçã
 dias. As solicitações que a versão anterior abria sozinha e que ninguém tocou voltaram a ser pendentes de abertura
 (uma vez só, na atualização); as já trabalhadas ficaram. Padrão: comissão = Lianna; outros = Marcelo, Elyezer, Vinicius, Garibaldi e André Alencar
 (casados com os usuários pelo nome, preferindo a equipe Oposição); editável no quadro “Distribuição”.
+
+## Termômetro (previsão de votos)
+Aba **Termômetro**: antecipa como cada deputado em exercício deve votar numa proposição. Cria-se o termômetro a partir
+de um item da última pauta do Plenário (Minha Pauta, com a orientação da Oposição já preenchida quando houver), de uma
+proposição buscada ou de um tema digitado, sempre informando como a Oposição vai orientar (SIM ou NÃO).
+
+- **Votações parecidas**: votações nominais do Plenário em que a Oposição orientou SIM/NÃO, escolhidas por semelhança de
+  palavras com a ementa e as palavras-chave (palavras raras pesam mais; Governo × Oposição em lados opostos valem mais).
+  Votações anteriores da **mesma proposição** (urgência, requerimentos, destaques) pesam 1,5. Conta-se se o deputado
+  votou com a orientação da Oposição. Ajuste com `TERMOMETRO_SIMILARES` (40) e `TERMOMETRO_SIM_MINIMA` (0,15).
+- **Ponto de partida**: quem votou pouco no tema é puxado para o oposicionismo geral dele e para o do partido nas
+  votações parecidas. O cálculo fica entre 3% e 97% de chance de SIM.
+- **Discursos e entrevistas (IA)**: por botão (um deputado, ou os `TERMOMETRO_IA_LOTE` = 15 mais indefinidos), a IA lê os
+  discursos do deputado no Plenário (API `/deputados/{id}/discursos`, desde o início da legislatura) e notícias dos
+  últimos 12 meses com o nome dele e o tema (Google Notícias) e responde a favor / contra / indefinido, com confiança e
+  evidências (link + trecho). Entra na conta com peso de até 50%. Usa a mesma cadeia de IAs do radar.
+- **Posição apurada** pela assessoria (SIM/NÃO confirmado, tendência, indeciso, ausente) prevalece sobre o cálculo.
+- Faixas: SIM provável (≥70%), tende a SIM (≥57%), indefinido, tende a NÃO (≤43%), NÃO provável (<30%). Placar
+  previsto com o quórum da matéria (PEC 308, PLP 257, demais maioria simples) e quadro por partido.
+- **Anotações** gerais do termômetro e por deputado (quem escreveu apaga; admin apaga todas).
+- **Contatos da assessoria** por gabinete (nome, cargo, WhatsApp, telefone, e-mail), valendo para todos os termômetros,
+  e o telefone oficial do gabinete. O botão **WhatsApp** abre o aplicativo (`wa.me`) com a mensagem sobre a proposição
+  já escrita, editável antes de clicar.

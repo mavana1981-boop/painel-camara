@@ -73,3 +73,21 @@
   {% else %}<span class="r" style="grid-column:1/-1;color:var(--suave)">Sem dados.</span>{% endfor %}
 </div>
 {%- endmacro %}
+
+{% macro tm_placar(pl, quorum=None, rotulos=True) -%}
+{% set tot = pl.total or 1 %}
+<div class="tm-placar" role="img" aria-label="Placar previsto: {{ pl.sim }} SIM, {{ pl.nao }} NÃO, {{ pl.indef }} indefinidos">
+  {% for k in ['sim', 'tende_sim', 'indef', 'ausente', 'tende_nao', 'nao'] %}{% set n = pl.faixas.get(k, 0) %}
+  {% if n %}<span class="tm-f-{{ k }}" style="width:{{ 100 * n / tot }}%" title="{{ n }}">{{ n if rotulos and n / tot > 0.035 }}</span>{% endif %}
+  {% endfor %}
+  {% if quorum and quorum.sim %}<span class="tm-quorum" style="left:{{ 100 * quorum.sim / tot }}%;background:var(--tinta)"><i>{{ quorum.sim }}</i></span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro tm_term(pct, grande=False) -%}
+<div class="tm-term {{ 'grande' if grande }}" title="Chance estimada de votar SIM: {{ pct }}%"><span class="tm-tubo"><i style="left:{{ pct }}%"></i></span><b>{{ pct }}%</b></div>
+{%- endmacro %}
+
+{% macro icone_whats() -%}
+<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.6-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.4.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1 2.7c.1.2 1.8 2.8 4.4 3.9 1.6.7 2.3.8 3.1.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.6-.3z"/></svg>
+{%- endmacro %}
