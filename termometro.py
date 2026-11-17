@@ -175,21 +175,99 @@ def editar(tid, dados):
         c.execute(update(termometros).where(termometros.c.id == tid).values(**valores))
 
 
-def buscar_proposicao(consulta):
-    """Proposições que casam com 'PL 1087/2025' ou com palavras da ementa (até 15)."""
+_NUM_ANO = re.compile(r"\b(?:([A-Z]{2,5})\s*)?(?:n[º°o.]*\s*)?([\d.]{1,7})\s*/\s*(\d{2}|\d{4})\b", re.I)
+SIGLAS_PRIORIDADE = ("PEC", "PLP", "PL", "MPV", "PDL", "PLN", "PRC", "PLV")
+
+
+def _numero_ano(consulta):
+    """'4675/2025', 'PL 4.675/25', 'pl4675/2025' → (sigla ou None, 4675, 2025)."""
+    m = _NUM_ANO.search((consulta or "").strip())
+    if not m:
+        return None
+    ano = int(m.group(3))
+    if ano < 100:
+        ano += 2000 if ano < 70 else 1900
+    return (m.group(1) or "").upper() or None, int(m.group(2).replace(".", "")), ano
+
+
+def _ordem_sigla(sigla):
+    return SIGLAS_PRIORIDADE.index(sigla) if sigla in SIGLAS_PRIORIDADE else len(SIGLAS_PRIORIDADE)
+
+
+def _busca_api(consulta, na, pedir=None):
+    """Plano B: a API da Câmara traz qualquer proposição (Executivo, Senado, comissões...)."""
+    pedir = pedir or _http_json
+    if na:
+        sigla, numero, ano = na
+        url = (f"{API}/proposicoes?numero={numero}&ano={ano}&dataApresentacaoInicio={ano}-01-01"
+               f"&dataApresentacaoFim={ano}-12-31&itens=30&ordem=ASC&ordenarPor=id")
+        if sigla:
+            url += f"&siglaTipo={sigla}"
+    else:
+        url = (f"{API}/proposicoes?keywords={quote(consulta)}&dataApresentacaoInicio={INICIO_DISCURSOS}"
+               "&itens=15&ordem=DESC&ordenarPor=id")
+    try:
+        doc = pedir(url)
+    except Exception as e:
+        log.warning("busca de proposição na API: %s", e)
+        return []
+    out = []
+    for d in (doc or {}).get("dados") or []:
+        if not d.get("id"):
+            continue
+        out.append({"id": d["id"], "identificacao": f"{d.get('siglaTipo')} {d.get('numero')}/{d.get('ano')}",
+                    "ementa": d.get("ementa"), "situacao": None, "sigla": d.get("siglaTipo"), "origem": "api"})
+    return out
+
+
+def buscar_proposicao(consulta, pedir=None):
+    """Proposições que casam com 'PL 1087/2025', '1087/2025' ou palavras da ementa (até 15).
+    Procura no banco do painel (proposições dos deputados e matérias já votadas) e, se não achar, na API."""
     consulta = (consulta or "").strip()
     if not consulta:
         return []
-    q = select(processos.c.id, processos.c.identificacao, processos.c.ementa, processos.c.situacao)
-    ident = parse_identificacao(consulta)
-    if ident:
-        q = q.where(processos.c.sigla == ident[0], processos.c.numero == str(ident[1]), processos.c.ano == ident[2])
-    else:
-        for w in consulta.split()[:5]:
-            q = q.where(processos.c.ementa.ilike(f"%{w}%"))
-        q = q.order_by(processos.c.data_apresentacao.desc())
+    na = _numero_ano(consulta)
+    achados = {}
     with engine.connect() as c:
-        return [dict(r) for r in c.execute(q.limit(15)).mappings()]
+        q = select(processos.c.id, processos.c.identificacao, processos.c.ementa, processos.c.situacao,
+                   processos.c.sigla)
+        if na:
+            q = q.where(processos.c.numero == str(na[1]), processos.c.ano == na[2])
+            if na[0]:
+                q = q.where(processos.c.sigla == na[0])
+        else:
+            for w in consulta.split()[:5]:
+                q = q.where(processos.c.ementa.ilike(f"%{w}%"))
+            q = q.order_by(processos.c.data_apresentacao.desc())
+        for r in c.execute(q.limit(15)).mappings():
+            achados[r["id"]] = {**dict(r), "origem": "painel"}
+        # matérias já votadas no Plenário (inclui as que não são de autoria de deputado)
+        sql = ("SELECT DISTINCT proposicao_id, sigla_materia, numero_materia, ano_materia, descricao_materia "
+               "FROM votacoes WHERE proposicao_id IS NOT NULL")
+        p = {}
+        if na:
+            sql += " AND numero_materia = :n AND ano_materia = :a"
+            p.update(n=na[1], a=na[2])
+            if na[0]:
+                sql += " AND sigla_materia = :s"
+                p["s"] = na[0]
+        else:
+            for i, w in enumerate(consulta.split()[:5]):
+                sql += f" AND LOWER(descricao_materia) LIKE :w{i}"
+                p[f"w{i}"] = f"%{w.lower()}%"
+        for r in c.execute(text(sql + " LIMIT 15"), p).mappings():
+            if r["proposicao_id"] not in achados:
+                achados[r["proposicao_id"]] = {
+                    "id": r["proposicao_id"], "sigla": r["sigla_materia"], "situacao": None, "origem": "votacoes",
+                    "identificacao": f"{r['sigla_materia']} {r['numero_materia']}/{r['ano_materia']}",
+                    "ementa": r["descricao_materia"]}
+    if not achados or (na and not any(a.get("sigla") in SIGLAS_PRIORIDADE for a in achados.values())):
+        for a in _busca_api(consulta, na, pedir):
+            achados.setdefault(a["id"], a)
+    lista_ = list(achados.values())
+    if na:
+        lista_.sort(key=lambda a: _ordem_sigla(a.get("sigla")))
+    return lista_[:15]
 
 
 def itens_pauta():
