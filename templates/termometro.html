@@ -74,7 +74,7 @@
     <div class="tm-opcao">
       <h3>De uma proposição</h3>
       <form class="form-linha" method="get" style="padding:0" action="{{ url_for('termometro') }}">
-        <input type="search" name="busca" value="{{ busca }}" placeholder="PL 1087/2025 ou palavras da ementa" style="flex:1 1 220px">
+        <input type="search" name="busca" value="{{ busca }}" placeholder="PL 4675/2025, 4675/2025 ou palavras da ementa" style="flex:1 1 220px">
         <button class="btn sec">Buscar</button>
       </form>
       {% if busca %}
@@ -82,6 +82,8 @@
         <form class="tm-item" method="post" action="{{ url_for('termometro.novo') }}">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
           <input type="hidden" name="proposicao_id" value="{{ p.id }}">
+          <input type="hidden" name="identificacao" value="{{ p.identificacao or '' }}">
+          <input type="hidden" name="ementa" value="{{ p.ementa or '' }}">
           <div><b>{{ p.identificacao }}</b><small title="{{ p.ementa }}">{{ p.ementa }}</small></div>
           {{ sel_ori('') }}
           <button class="btn">Criar</button>

@@ -3577,3 +3577,36 @@ def test_termometro_ia_le_discursos_e_noticias():
     assert "Sou a favor de ampliar a isenção" in html and "A favor" in html
     tok = _csrf(cli, "/termometro")
     cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
+
+
+def test_termometro_busca_proposicao_sem_sigla_e_pela_api():
+    import termometro as tm
+    assert tm._numero_ano("4675/2025") == (None, 4675, 2025)
+    assert tm._numero_ano("PL 4.675/25") == ("PL", 4675, 2025)
+    achou = tm.buscar_proposicao("1087/2025", pedir=lambda u: None)          # sem a sigla, no banco do painel
+    assert achou[0]["identificacao"] == "PL 1087/2025"
+    assert tm.buscar_proposicao("1300/2025", pedir=lambda u: None)[0]["identificacao"] == "MPV 1300/2025"  # só votada
+    urls = []
+
+    def api(url):
+        urls.append(url)
+        return {"dados": [{"id": 9, "siglaTipo": "REQ", "numero": 4675, "ano": 2025, "ementa": "Requer..."},
+                          {"id": 7, "siglaTipo": "PL", "numero": 4675, "ano": 2025, "ementa": "Do Executivo."}]}
+    achou = tm.buscar_proposicao("4675/2025", pedir=api)
+    assert "numero=4675&ano=2025" in urls[0] and "siglaTipo" not in urls[0]
+    assert achou[0]["identificacao"] == "PL 4675/2025"                       # projeto antes do requerimento
+    cli = _cliente()
+    import termometro
+    orig = termometro._http_json
+    termometro._http_json = api
+    try:
+        html = cli.get("/termometro?busca=4675/2025").get_data(as_text=True)
+    finally:
+        termometro._http_json = orig
+    assert "PL 4675/2025" in html and 'name="ementa" value="Do Executivo."' in html
+    tok = _csrf(cli, "/termometro")
+    r = cli.post("/termometro/novo", data={"_csrf": tok, "proposicao_id": "7", "identificacao": "PL 4675/2025",
+                                          "ementa": "Do Executivo.", "orientacao_oposicao": "NÃO"})
+    tid = int(re.search(r"/termometro/(\d+)", r.headers["Location"]).group(1))
+    assert tm.obter(tid)["identificacao"] == "PL 4675/2025"
+    cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
