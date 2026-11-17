@@ -294,7 +294,7 @@ def itens_pauta():
 def _candidatas():
     sql = text("""
         SELECT vt.id, vt.data, vt.sigla_materia, vt.numero_materia, vt.ano_materia, vt.proposicao_id,
-               vt.descricao_materia, vt.descricao_votacao, vt.qtd_sim, vt.qtd_nao, vt.aprovacao,
+               vt.descricao_materia, vt.descricao_votacao, vt.etapa, vt.qtd_sim, vt.qtd_nao, vt.aprovacao,
                o.voto AS ori_opo, gv.voto AS ori_gov
         FROM votacoes vt
         JOIN orientacoes o ON o.votacao_id = vt.id AND o.lideranca = 'Oposição'
@@ -344,6 +344,7 @@ def votacoes_similares(t, candidatas=None):
         opostas = v["ori_gov"] in ("SIM", "NÃO") and v["ori_gov"] != v["ori_opo"]
         peso = PESO_MESMA if mesma else sim * (1.0 if opostas else 0.6)
         out.append({**v, "sim": round(sim, 3), "peso": round(peso, 3), "mesma": mesma, "opostas": opostas,
+                    "tipo_etapa": metrics.tipo_etapa(v),
                     "comuns": sorted({w for w in b if w in alvo})[:8]})
     mesmas = [x for x in out if x["mesma"]]
     outras = sorted([x for x in out if not x["mesma"]], key=lambda x: (-x["peso"], str(x["data"])))
@@ -406,7 +407,8 @@ def calcular(t, similares=None):
         d["a"] += s["peso"] * com
         d["n"] += 1
         if s["mesma"]:
-            d["mesma"].append({"id": vid, "data": s["data"], "voto": voto, "com": bool(com)})
+            d["mesma"].append({"id": vid, "data": s["data"], "voto": voto, "com": bool(com), "ori_opo": s["ori_opo"],
+                               "etapa": s["tipo_etapa"], "descricao": s["descricao_votacao"]})
         partido = (cad.get(cod) or {}).get("partido")
         if partido:
             par[partido]["w"] += s["peso"]
@@ -978,7 +980,8 @@ def deputado(tid, cod):
     evid = json.loads(ia["evidencias"] or "[]") if ia else []
     u = _usuario()
     return render_template("termometro_dep.html", **_contexto_base(), t=t, d=d, historico=historico, ia=ia,
-                           evid=evid, notas=notas(tid, cod), posicoes=POSICOES, rotulo_posicao=ROTULO_POSICAO,
+                           evid=evid, notas=notas(tid, cod),
+                           prev_mesmas=[s for s in prev["similares"] if s["mesma"]], posicoes=POSICOES, rotulo_posicao=ROTULO_POSICAO,
                            rotulo_faixa=ROTULO_FAIXA, rotulo_ia=ROTULO_IA, gabinete=telefone_gabinete(cod),
                            msg=mensagem_padrao(t, d, None, u), msg_contato=lambda c_: mensagem_padrao(t, d, c_, u),
                            link_whatsapp=link_whatsapp, fila=status_fila(tid),

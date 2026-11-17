@@ -47,6 +47,14 @@
 <div class="aviso erro">A última análise da IA teve {{ fila.erros|length }} falha(s): {{ fila.erros[-1] }}</div>
 {% endif %}
 
+{% set mesmas = prev.similares|selectattr('mesma')|list %}
+{% if mesmas %}
+<div class="aviso ok" style="background:#fff8e6;color:#5c4400">
+  <b>Esta matéria já teve {{ mesmas|length }} votação(ões) nominal(is) no Plenário</b>, que pesam mais na previsão:
+  {% for s in mesmas %}<a href="{{ url_for('votacoes', id=s.id) }}" title="{{ s.descricao_votacao or '' }}">{{ s.tipo_etapa }} em {{ s.data|data }}</a> (Oposição orientou {{ s.ori_opo }}){{ ', ' if not loop.last else '.' }}{% endfor %}
+  O voto nessas etapas (ex.: urgência) indica alinhamento com a Oposição, não necessariamente o voto no mérito.
+</div>
+{% endif %}
 <section class="kpis">
   <div class="kpi dest" style="border-top-color:#17703a"><b style="color:#17703a">{{ pl.sim }}</b><span>SIM previstos ({{ pl.faixas.get('sim', 0) }} prováveis + {{ pl.faixas.get('tende_sim', 0) }} tendência)</span></div>
   <div class="kpi dest" style="border-top-color:#b03021"><b style="color:#b03021">{{ pl.nao }}</b><span>NÃO previstos ({{ pl.faixas.get('nao', 0) }} prováveis + {{ pl.faixas.get('tende_nao', 0) }} tendência)</span></div>
@@ -119,7 +127,7 @@
       <td><span class="tm-faixa tm-f-{{ d.faixa }}">{{ rotulo_faixa.get(d.faixa, 'Ausente') }}</span><div class="tm-sub">confiança {{ d.confianca }}</div></td>
       <td class="m-esc tm-sub" style="white-space:nowrap">
         {% if d.n_similares %}{{ d.n_similares }} votação(ões) parecida(s){% if d.com_oposicao_tema is not none %} · {{ d.com_oposicao_tema }}% com a Oposição{% endif %}{% else %}sem votações parecidas{% endif %}
-        {% if d.mesma %}<br><b style="color:var(--tinta)">última votação desta matéria: {{ d.mesma[0].voto }} ({{ 'com' if d.mesma[0].com else 'contra' }} a Oposição)</b>{% endif %}
+        {% if d.mesma %}{% set u = d.mesma[0] %}<br><a href="{{ url_for('votacoes', id=u.id) }}" title="{{ u.descricao or '' }}" style="color:var(--tinta)"><b>{{ u.etapa }} ({{ u.data|data }}): votou {{ u.voto }}</b> — Oposição orientou {{ u.ori_opo }}</a>{% if d.mesma|length > 1 %} <span>+{{ d.mesma|length - 1 }}</span>{% endif %}{% endif %}
         {% if d.oposicionismo is not none %}<br>oposicionismo geral {{ d.oposicionismo|pct }}{% endif %}
       </td>
       <td class="m-esc">{% if d.ia %}<span class="tm-ia {{ d.ia.posicao }}" title="{{ d.ia.justificativa or '' }}">{{ rotulo_ia.get(d.ia.posicao) }}{% if d.ia.posicao in ('favor', 'contra') %} · {{ d.ia.confianca }}%{% endif %}</span>{% else %}<span class="tm-sub">—</span>{% endif %}</td>
@@ -171,7 +179,7 @@
       <tbody>{% for s in prev.similares %}
         <tr><td style="white-space:nowrap">{{ s.data|data }}</td>
           <td><a href="{{ url_for('votacoes', id=s.id) }}">{{ s.sigla_materia }} {{ s.numero_materia }}/{{ s.ano_materia }}</a>
-            {% if s.mesma %}<span class="tm-kw" style="background:#fff3d6;color:#7a5a00">mesma proposição</span>{% endif %}
+            <span class="tm-kw">{{ s.tipo_etapa }}</span>{% if s.mesma %}<span class="tm-kw" style="background:#fff3d6;color:#7a5a00">mesma proposição</span>{% endif %}
             <div class="tm-sub">{{ (s.descricao_votacao or s.descricao_materia or '')[:140] }}</div>
             {% if s.comuns and not s.mesma %}<div class="tm-sub">em comum: {{ s.comuns|join(', ') }}</div>{% endif %}</td>
           <td class="c"><span class="pill {{ s.ori_opo }}">{{ s.ori_opo }}</span></td>
