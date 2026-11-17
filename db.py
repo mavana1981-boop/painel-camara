@@ -464,6 +464,15 @@ termometro_posicoes = Table(  # posição apurada pela assessoria (prevalece sob
     Column("atualizado_em", DateTime),
 )
 
+termometro_partidos = Table(  # orientação que cada partido deve dar nesta matéria (informada pela equipe)
+    "termometro_partidos", metadata,
+    Column("termometro_id", Integer, primary_key=True),
+    Column("partido", String(40), primary_key=True),
+    Column("orientacao", String(10)),                 # SIM, NÃO ou LIVRE
+    Column("autor", String(60)),
+    Column("atualizado_em", DateTime),
+)
+
 termometro_notas = Table(  # anotações da equipe (do termômetro inteiro ou de um deputado)
     "termometro_notas", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),

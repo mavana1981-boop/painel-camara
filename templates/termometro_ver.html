@@ -84,6 +84,34 @@
   </details>
 </section>
 
+{% set pm = prev.partidos_materia %}
+<section class="card neu" style="margin-bottom:14px" id="partidos">
+  <h2>Orientação dos partidos nesta matéria <small>entra na conta com a fidelidade de cada deputado ao partido</small></h2>
+  <details {{ 'open' if request.args.get('partidos') }}>
+    <summary style="padding:9px 14px;cursor:pointer;font-size:13px;font-weight:600">
+      {% set inf = pm.values()|selectattr('fonte', 'equalto', 'informada')|list|length %}{% set est = pm.values()|selectattr('fonte', 'equalto', 'estimada')|list|length %}
+      {{ inf }} informada(s) pela equipe · {{ est }} estimada(s) pelas votações anteriores da matéria — ver e editar</summary>
+    <form method="post" action="{{ url_for('termometro.partidos', tid=t.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <div class="rolagem" style="max-height:420px">
+      <table>
+        <thead><tr><th>Partido</th><th class="n">Deputados</th><th>Estimativa</th><th>Orientação nesta matéria</th></tr></thead>
+        <tbody>{% for p, c in partidos if p != '—' %}{% set o = pm.get(p) or {} %}
+          <tr><td><b>{{ p }}</b></td><td class="n">{{ c.values()|sum }}</td>
+            <td class="tm-sub">{% if o.base_etapa %}<a href="{{ url_for('votacoes', id=o.base_id) }}">{{ o.base_etapa }} {{ o.base_data|data }}</a>: orientou {{ o.base_voto }} (Oposição {{ o.base_ori_opo }}){% if o.fonte == 'estimada' %} → <b>{{ o.orientacao }}</b>{% endif %}{% else %}sem orientação anterior nesta matéria{% endif %}</td>
+            <td><select name="ori_{{ p }}" style="font:inherit;font-size:12px;padding:3px 4px;border:1px solid var(--linha);border-radius:5px{{ ';background:var(--pri-cl);border-color:var(--pri);font-weight:600' if o.fonte == 'informada' }}">
+              <option value="">{{ 'Usar estimativa (' ~ o.orientacao ~ ')' if o.base_etapa else 'Não sabemos' }}</option>
+              {% for v, rot in [('SIM', 'SIM'), ('NÃO', 'NÃO'), ('LIVRE', 'Liberado')] %}<option value="{{ v }}" {{ 'selected' if o.fonte == 'informada' and o.orientacao == v }}>{{ rot }}</option>{% endfor %}
+            </select>{% if o.fonte == 'informada' %} <span class="tm-sub">{{ o.autor }}</span>{% endif %}</td></tr>
+        {% endfor %}</tbody>
+      </table>
+      </div>
+      <div class="form-linha"><button class="btn">Salvar orientações</button>
+        <span class="tm-sub" style="flex:1 1 300px">A orientação informada pesa {{ '50%' }} na chance do deputado; a estimada, {{ '35%' }}. O efeito depende da fidelidade de cada um ao partido (quantas vezes seguiu a orientação na legislatura). "Liberado" não muda a conta.</span></div>
+    </form>
+  </details>
+</section>
+
 <section class="card neu" style="margin-bottom:14px">
   <h2>Discursos e entrevistas <small>leitura por IA</small></h2>
   <div class="form-linha">
@@ -130,6 +158,7 @@
           <summary title="Clique para ver as votações usadas">
             {% if d.n_similares %}{{ d.n_similares }} votação(ões) parecida(s){% if d.com_oposicao_tema is not none %} · {{ d.com_oposicao_tema }}% com a Oposição{% endif %}{% else %}sem votações parecidas{% endif %}
             {% if d.mesma %}{% set u = d.mesma[0] %}<br><b style="color:var(--tinta)">{{ u.etapa }} ({{ u.data|data }}): votou {{ u.voto }} — Oposição orientou {{ u.ori_opo }}</b>{% if d.mesma|length > 1 %} +{{ d.mesma|length - 1 }}{% endif %}{% endif %}
+            {% if d.partido_materia.orientacao %}<br>{{ d.partido }} {{ 'libera' if d.partido_materia.orientacao == 'LIVRE' else 'orienta ' ~ d.partido_materia.orientacao }} ({{ d.partido_materia.fonte }}){% if d.fidelidade is not none %} · segue o partido em {{ d.fidelidade }}%{% endif %}{% endif %}
             {% if d.oposicionismo is not none %}<br>oposicionismo geral {{ d.oposicionismo|pct }}{% endif %}
             <span class="tm-ver">ver votações ▾</span>
           </summary>
@@ -137,7 +166,7 @@
             {% for v in d.votos[:12] %}
             <a href="{{ url_for('votacoes', id=v.id) }}" title="{{ v.descricao or '' }}">
               <span>{{ v.data|data }} · <b>{{ v.materia }}</b> · {{ v.etapa }}{% if v.mesma %} <i class="tm-kw" style="background:#fff3d6;color:#7a5a00;font-style:normal">mesma proposição</i>{% endif %}</span>
-              <span>votou <span class="pill {{ v.voto }}">{{ v.voto }}</span> · Oposição <span class="pill {{ v.ori_opo }}">{{ v.ori_opo }}</span> · <b style="color:{{ '#17703a' if v.com else '#b03021' }}">{{ 'com' if v.com else 'contra' }} a Oposição</b></span>
+              <span>votou <span class="pill {{ v.voto }}">{{ v.voto }}</span> · Oposição <span class="pill {{ v.ori_opo }}">{{ v.ori_opo }}</span>{% if v.ori_partido %} · {{ d.partido }} <span class="pill {{ v.ori_partido }}">{{ v.ori_partido }}</span>{% endif %} · <b style="color:{{ '#17703a' if v.com else '#b03021' }}">{{ 'com' if v.com else 'contra' }} a Oposição</b></span>
             </a>
             {% else %}<div>Não votou SIM ou NÃO em nenhuma votação parecida{% if prev.similares|selectattr('mesma')|list %} (nem nas votações anteriores desta matéria){% endif %}. A previsão parte do oposicionismo dele e do partido.</div>{% endfor %}
             {% if d.votos|length > 12 %}<div>+{{ d.votos|length - 12 }} — ver todas na <a href="{{ url_for('termometro.deputado', tid=t.id, cod=d.codigo) }}">ficha</a></div>{% endif %}

@@ -33,7 +33,7 @@ from sqlalchemy import bindparam, delete, func, insert, select, text, update
 
 import metrics
 from db import (contatos_assessoria, deputados, engine, processos, sem_acento, termometro_ia, termometro_notas,
-                termometro_posicoes, termometros)
+                termometro_partidos, termometro_posicoes, termometros)
 
 log = logging.getLogger("termometro")
 bp = Blueprint("termometro", __name__, url_prefix="/termometro")
@@ -42,6 +42,9 @@ MAX_SIMILARES = int(os.environ.get("TERMOMETRO_SIMILARES", "40"))
 SIM_MINIMA = float(os.environ.get("TERMOMETRO_SIM_MINIMA", "0.15"))
 PESO_MESMA = 1.5           # votação anterior da própria proposição
 PESO_PRIOR = 2.0           # quantas "votações" vale o ponto de partida (geral + partido)
+PESO_PARTIDO_INFORMADA = 0.5     # peso da orientação do partido nesta matéria, quando a equipe informa
+PESO_PARTIDO_ESTIMADA = 0.35     # ... quando é estimada pela orientação do partido nas votações anteriores da matéria
+FIDELIDADE_PADRAO = 0.85         # quem tem poucos votos registrados com orientação do partido
 LOTE_IA = int(os.environ.get("TERMOMETRO_IA_LOTE", "15"))      # deputados por rodada de análise em lote
 INICIO_DISCURSOS = os.environ.get("INICIO_LEGISLATURA", "2023-02-01")
 API = os.environ.get("CAMARA_API", "https://dadosabertos.camara.leg.br/api/v2")
@@ -397,6 +400,22 @@ def calcular(t, similares=None):
                      "WHERE votacao_id IN :ids AND voto IN ('SIM','NÃO')").bindparams(
                 bindparam("ids", expanding=True))
             votos = c.execute(q, {"ids": list(peso)}).all()
+            q = text("SELECT votacao_id, partido, voto FROM orientacoes_partido WHERE votacao_id IN :ids").bindparams(
+                bindparam("ids", expanding=True))
+            oris_partido = c.execute(q, {"ids": list(peso)}).all()
+        else:
+            oris_partido = []
+    # orientação dos partidos nas votações parecidas: com ou contra a Oposição
+    par_ori = defaultdict(lambda: {"w": 0.0, "a": 0.0})
+    ori_por_vot = defaultdict(dict)
+    for vid, partido, voto in oris_partido:
+        ori_por_vot[vid][partido] = voto
+        if voto in ("SIM", "NÃO"):
+            s_ = peso[vid]
+            par_ori[partido]["w"] += s_["peso"]
+            par_ori[partido]["a"] += s_["peso"] * (1.0 if voto == s_["ori_opo"] else 0.0)
+    partidos_mat = orientacao_partidos(t, sims, ori_por_vot)
+    fidel = {r["codigo"]: r for r in metrics.fidelidade(metrics.Filtros(opostas=False))}
     ind = defaultdict(lambda: {"w": 0.0, "a": 0.0, "n": 0, "mesma": [], "votos": []})
     par = defaultdict(lambda: {"w": 0.0, "a": 0.0})
     for vid, cod, voto in votos:
@@ -407,6 +426,7 @@ def calcular(t, similares=None):
         d["a"] += s["peso"] * com
         d["n"] += 1
         item = {"id": vid, "data": s["data"], "voto": voto, "com": bool(com), "ori_opo": s["ori_opo"],
+                "ori_partido": ori_por_vot[vid].get((cad.get(cod) or {}).get("partido")),
                 "etapa": s["tipo_etapa"], "mesma": s["mesma"], "peso": s["peso"],
                 "materia": f"{s['sigla_materia']} {s['numero_materia']}/{s['ano_materia']}",
                 "descricao": s["descricao_votacao"] or s["descricao_materia"]}
@@ -429,20 +449,33 @@ def calcular(t, similares=None):
         d = ind.get(cod) or {"w": 0.0, "a": 0.0, "n": 0, "mesma": [], "votos": []}
         g_ = geral.get(cod)
         p_ = par.get(s.get("partido"))
+        po = par_ori.get(s.get("partido"))
         bases = []
         if g_ and g_["total"] >= 5 and g_["pct"] is not None:
             bases.append(g_["pct"] / 100)
-        if p_ and p_["w"] >= 1:
+        if po and po["w"] >= 1:                      # como o partido orientou nas votações parecidas
+            bases.append(po["a"] / po["w"])
+        elif p_ and p_["w"] >= 1:                    # sem orientação registrada: como a bancada votou
             bases.append(p_["a"] / p_["w"])
         prior = sum(bases) / len(bases) if bases else 0.5
         alin = (d["a"] + PESO_PRIOR * prior) / (d["w"] + PESO_PRIOR)
         p_votos = alin if sim_opo else 1 - alin
-        p_sim, fonte = p_votos, "votos"
+        p_sim, fontes = p_votos, ["votos"]
+        # orientação do partido nesta matéria x fidelidade do deputado ao partido
+        pm = partidos_mat.get(s.get("partido")) or {}
+        fd = fidel.get(cod)
+        fidelidade = ((fd["seguiu"] + 4 * FIDELIDADE_PADRAO) / (fd["total"] + 4)) if fd else FIDELIDADE_PADRAO
+        if pm.get("orientacao") in ("SIM", "NÃO"):
+            wp = PESO_PARTIDO_INFORMADA if pm["fonte"] == "informada" else PESO_PARTIDO_ESTIMADA
+            p_part = fidelidade if pm["orientacao"] == "SIM" else 1 - fidelidade
+            p_sim = (1 - wp) * p_sim + wp * p_part
+            fontes.append("partido")
         r_ia = ia.get(cod)
         if r_ia and r_ia["posicao"] in ("favor", "contra") and r_ia.get("confianca"):
             a = 0.5 * min(r_ia["confianca"], 100) / 100
-            p_sim = (1 - a) * p_votos + a * (0.9 if r_ia["posicao"] == "favor" else 0.1)
-            fonte = "votos + IA"
+            p_sim = (1 - a) * p_sim + a * (0.9 if r_ia["posicao"] == "favor" else 0.1)
+            fontes.append("IA")
+        fonte = " + ".join(fontes)
         p_sim = min(max(p_sim, 0.03), 0.97)       # cálculo nunca dá certeza: 3% a 97%
         m = (manual.get(cod) or {}).get("posicao")
         if m in P_MANUAL:
@@ -464,12 +497,59 @@ def calcular(t, similares=None):
             "com_oposicao_tema": round(100 * d["a"] / d["w"]) if d["w"] else None,
             "oposicionismo": g_["pct"] if g_ else None,
             "partido_tema": round(100 * p_["a"] / p_["w"]) if p_ and p_["w"] else None,
+            "partido_ori_tema": round(100 * po["a"] / po["w"]) if po and po["w"] else None,
+            "partido_materia": pm, "fidelidade": round(100 * fd["seguiu"] / fd["total"]) if fd and fd["total"] else None,
+            "fidelidade_total": fd["total"] if fd else 0, "p_votos": round(p_votos, 3),
             "mesma": sorted(d["mesma"], key=lambda x: str(x["data"]), reverse=True),
             "votos": sorted(d["votos"], key=lambda x: (not x["mesma"], -x["peso"], str(x["data"]))),
             "ia": r_ia, "manual": m, "notas": notas.get(cod, 0), "contatos": ct,
         })
     out.sort(key=lambda x: (-x["p_sim"], x["nome"]))
-    return {"deputados": out, "placar": placar(out, t), "similares": sims, "quorum": quorum(t)}
+    return {"deputados": out, "placar": placar(out, t), "similares": sims, "quorum": quorum(t),
+            "partidos_materia": partidos_mat}
+
+
+def orientacao_partidos(t, sims, ori_por_vot):
+    """Orientação de cada partido nesta matéria: a informada pela equipe ou, se não houver, a estimada pela
+    orientação do partido na votação anterior mais recente da própria matéria (ex.: urgência) — se o partido
+    orientou com a Oposição lá, supõe-se que acompanhe a Oposição agora; se contra, o contrário."""
+    out = {}
+    informadas = {}
+    if t.get("id"):
+        with engine.connect() as c:
+            informadas = {r["partido"]: dict(r) for r in c.execute(
+                select(termometro_partidos).where(termometro_partidos.c.termometro_id == t["id"])).mappings()}
+    ori_opo = t.get("orientacao_oposicao")
+    contraria = {"SIM": "NÃO", "NÃO": "SIM"}
+    for s_ in sorted([x for x in sims if x["mesma"]], key=lambda x: str(x["data"])):     # a mais recente vence
+        for partido, voto in ori_por_vot.get(s_["id"], {}).items():
+            if voto in ("SIM", "NÃO") and ori_opo in contraria:
+                o = ori_opo if voto == s_["ori_opo"] else contraria[ori_opo]
+            elif voto == "LIVRE":
+                o = "LIVRE"
+            else:
+                continue
+            out[partido] = {"orientacao": o, "fonte": "estimada", "base_voto": voto, "base_etapa": s_["tipo_etapa"],
+                            "base_data": s_["data"], "base_id": s_["id"], "base_ori_opo": s_["ori_opo"]}
+    for partido, r in informadas.items():
+        if r["orientacao"] in ("SIM", "NÃO", "LIVRE"):
+            out[partido] = {**out.get(partido, {}), "orientacao": r["orientacao"], "fonte": "informada",
+                            "autor": r["autor"], "atualizado_em": r["atualizado_em"]}
+    return out
+
+
+def salvar_orientacoes_partidos(tid, valores, autor):
+    """valores: {partido: 'SIM'|'NÃO'|'LIVRE'|''} — vazio apaga a informada (volta à estimativa)."""
+    agora = datetime.now()
+    with engine.begin() as c:
+        for partido, o in valores.items():
+            o = {"SIM": "SIM", "NAO": "NÃO", "NÃO": "NÃO", "LIVRE": "LIVRE"}.get(sem_acento(o or "").upper(), "")
+            c.execute(delete(termometro_partidos).where(termometro_partidos.c.termometro_id == tid,
+                                                        termometro_partidos.c.partido == partido))
+            if o:
+                c.execute(insert(termometro_partidos).values(termometro_id=tid, partido=partido[:40], orientacao=o,
+                                                             autor=autor, atualizado_em=agora))
+        c.execute(update(termometros).where(termometros.c.id == tid).values(atualizado_em=agora))
 
 
 def placar(deps, t=None):
@@ -922,11 +1002,21 @@ def apagar(tid):
     if t["criado_por"] != u.get("login") and not u.get("admin"):
         abort(403)
     with engine.begin() as c:
-        for tab in (termometro_ia, termometro_posicoes, termometro_notas):
+        for tab in (termometro_ia, termometro_posicoes, termometro_notas, termometro_partidos):
             c.execute(delete(tab).where(tab.c.termometro_id == tid))
         c.execute(delete(termometros).where(termometros.c.id == tid))
     flash("Termômetro apagado.", "ok")
     return redirect(url_for("termometro"))
+
+
+@bp.post("/<int:tid>/partidos")
+def partidos(tid):
+    if not obter(tid):
+        abort(404)
+    valores = {k[4:]: v for k, v in request.form.items() if k.startswith("ori_")}
+    salvar_orientacoes_partidos(tid, valores, _usuario().get("login"))
+    flash("Orientações dos partidos salvas.", "ok")
+    return redirect(url_for("termometro.ver", tid=tid) + "#partidos")
 
 
 @bp.post("/<int:tid>/nota")
@@ -979,10 +1069,13 @@ def deputado(tid, cod):
         votos = dict(c.execute(text("SELECT votacao_id, voto FROM votos WHERE codigo_deputado = :c "
                                     "AND votacao_id IN :ids").bindparams(bindparam("ids", expanding=True)),
                                {"c": cod, "ids": [s["id"] for s in prev["similares"]] or [""]}).all())
+        oris = dict(c.execute(text("SELECT votacao_id, voto FROM orientacoes_partido WHERE partido = :p "
+                                   "AND votacao_id IN :ids").bindparams(bindparam("ids", expanding=True)),
+                              {"p": d["partido"], "ids": [s["id"] for s in prev["similares"]] or [""]}).all())
     historico = []
     for s_ in prev["similares"]:
         voto = votos.get(s_["id"])
-        historico.append({**s_, "voto": voto, "conta": voto in ("SIM", "NÃO"),
+        historico.append({**s_, "voto": voto, "conta": voto in ("SIM", "NÃO"), "ori_partido": oris.get(s_["id"]),
                           "com": voto == s_["ori_opo"] if voto in ("SIM", "NÃO") else None})
     historico.sort(key=lambda x: (not x["mesma"], not x["conta"], -x["peso"]))
     ia = d["ia"]

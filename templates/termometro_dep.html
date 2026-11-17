@@ -31,7 +31,11 @@
       <div class="tm-base">
         <div><b>{{ d.n_similares }}</b><span>votações parecidas em que votou SIM ou NÃO</span></div>
         <div><b>{{ d.com_oposicao_tema ~ '%' if d.com_oposicao_tema is not none else '—' }}</b><span>com a Oposição nessas votações</span></div>
-        <div><b>{{ d.partido_tema ~ '%' if d.partido_tema is not none else '—' }}</b><span>do {{ d.partido or 'partido' }} com a Oposição nessas votações</span></div>
+        <div><b>{{ d.partido_ori_tema ~ '%' if d.partido_ori_tema is not none else '—' }}</b><span>das orientações do {{ d.partido or 'partido' }} com a Oposição nessas votações</span></div>
+        {% set pm = d.partido_materia %}
+        <div style="{{ 'background:var(--pri-cl)' if pm.orientacao }}"><b>{% if pm.orientacao == 'LIVRE' %}Liberado{% elif pm.orientacao %}{{ pm.orientacao }}{% else %}—{% endif %}</b>
+          <span>orientação do {{ d.partido or 'partido' }} nesta matéria{% if pm.fonte == 'informada' %} (informada por {{ pm.autor }}){% elif pm.fonte == 'estimada' %} (estimada: na {{ pm.base_etapa }} de {{ pm.base_data|data }} orientou {{ pm.base_voto }}, Oposição {{ pm.base_ori_opo }}){% else %} — <a href="{{ url_for('termometro.ver', tid=t.id, partidos=1) }}#partidos">informar</a>{% endif %}</span></div>
+        <div><b>{{ d.fidelidade ~ '%' if d.fidelidade is not none else '—' }}</b><span>segue a orientação do partido ({{ d.fidelidade_total }} votos na legislatura)</span></div>
         <div><b>{{ d.oposicionismo|pct }}</b><span>oposicionismo geral na legislatura</span></div>
       </div>
       {% if d.manual %}<p class="nota"><b>Posição apurada pela assessoria: {{ rotulo_posicao.get(d.manual) }}</b> — ela prevalece sobre o cálculo.</p>{% endif %}
@@ -40,13 +44,14 @@
       <h3 style="margin:0;padding:10px 14px 4px;font-size:13px">Votações usadas no cálculo <span class="tm-sub">· {{ historico|length }} · entram só os votos SIM ou NÃO</span></h3>
       <div class="rolagem" style="max-height:420px">
       <table>
-        <thead><tr><th>Data</th><th>Votação</th><th class="c">Oposição</th><th class="c">Voto</th><th class="n">Peso</th></tr></thead>
+        <thead><tr><th>Data</th><th>Votação</th><th class="c">Oposição</th><th class="c">{{ d.partido or 'Partido' }}</th><th class="c">Voto</th><th class="n">Peso</th></tr></thead>
         <tbody>{% for h in historico %}
           <tr style="{{ '' if h.conta else 'opacity:.6' }}"><td style="white-space:nowrap">{{ h.data|data }}</td>
             <td><a href="{{ url_for('votacoes', id=h.id) }}">{{ h.sigla_materia }} {{ h.numero_materia }}/{{ h.ano_materia }}</a>
               <span class="tm-kw">{{ h.tipo_etapa }}</span>{% if h.mesma %}<span class="tm-kw" style="background:#fff3d6;color:#7a5a00">mesma proposição</span>{% endif %}
               <div class="tm-sub">{{ (h.descricao_votacao or h.descricao_materia or '')[:120] }}</div></td>
             <td class="c"><span class="pill {{ h.ori_opo }}">{{ h.ori_opo }}</span></td>
+            <td class="c">{% if h.ori_partido %}<span class="pill {{ h.ori_partido }}">{{ h.ori_partido }}</span>{% else %}<span class="tm-sub">—</span>{% endif %}</td>
             <td class="c">{% if h.voto %}<span class="pill {{ h.voto }}">{{ h.voto }}</span>{% else %}<span class="tm-sub">não votou</span>{% endif %}
               <div class="tm-sub">{% if h.conta %}{{ 'com a Oposição' if h.com else 'contra a Oposição' }}{% elif h.voto %}não conta{% endif %}</div></td>
             <td class="n">{{ '%.2f'|format(h.peso) }}</td></tr>

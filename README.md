@@ -229,6 +229,12 @@ proposição buscada ou de um tema digitado, sempre informando como a Oposição
   votou com a orientação da Oposição. Ajuste com `TERMOMETRO_SIMILARES` (40) e `TERMOMETRO_SIM_MINIMA` (0,15).
 - **Ponto de partida**: quem votou pouco no tema é puxado para o oposicionismo geral dele e para o do partido nas
   votações parecidas. O cálculo fica entre 3% e 97% de chance de SIM.
+- **Orientação do partido**: no ponto de partida entra como o partido do deputado ORIENTOU nas votações parecidas
+  (tabela `orientacoes_partido`; sem orientação, como a bancada votou). Além disso, a orientação do partido NESTA
+  matéria — informada pela equipe no quadro "Orientação dos partidos nesta matéria" (SIM, NÃO, liberado) ou, sem isso,
+  estimada pela orientação do partido na votação anterior mais recente da matéria (ex.: urgência; se orientou com a
+  Oposição lá, supõe-se que acompanhe a Oposição agora) — puxa a chance do deputado na proporção da fidelidade dele ao
+  partido na legislatura (peso 50% se informada, 35% se estimada; liberado não conta).
 - **Discursos e entrevistas (IA)**: por botão (um deputado, ou os `TERMOMETRO_IA_LOTE` = 15 mais indefinidos), a IA lê os
   discursos do deputado no Plenário (API `/deputados/{id}/discursos`, desde o início da legislatura) e notícias dos
   últimos 12 meses com o nome dele e o tema (Google Notícias) e responde a favor / contra / indefinido, com confiança e
