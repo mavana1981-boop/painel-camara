@@ -24,7 +24,8 @@ app.jinja_loader = ChoiceLoader([FileSystemLoader(os.path.join(RAIZ, "templates"
 
 TEMPLATES = ("base.html", "_macros.html", "_selo.html", "login.html", "conta.html", "usuarios.html",
              "erro.html", "vazio.html", "perfil.html", "proposicoes.html", "cota.html", "votacoes.html",
-             "orientacoes.html", "rankings.html", "meu.html", "meu_escolher.html", "plenario.html")
+             "orientacoes.html", "rankings.html", "meu.html", "meu_escolher.html", "plenario.html",
+             "termometro.html", "termometro_ver.html", "termometro_dep.html")
 ESTATICOS = ("style.css", "plenario.svg", "favicon.svg", "manifest.webmanifest", "sw.js",
              "icon-192.png", "icon-512.png", "apple-touch-icon.png")
 
@@ -84,6 +85,9 @@ app.register_blueprint(prelista.bp)
 app.register_blueprint(fotos.bp)
 import ajuda  # noqa: E402
 app.register_blueprint(ajuda.bp)
+import termometro  # noqa: E402
+app.register_blueprint(termometro.bp)
+app.add_url_rule("/termometro", "termometro", termometro.pagina_lista)   # aba do menu
 try:
     import selecao_ia  # noqa: E402
     selecao_ia.limpar_selecao_por_palavras()
@@ -98,9 +102,9 @@ except Exception:
 
 ABAS = [("perfil", "Perfil"), ("proposicoes", "Proposições"), ("cota", "Cota"),
         ("votacoes", "Votações"), ("orientacoes", "Orientações"), ("rankings", "Rankings"),
-        ("plenario", "Plenário")]
+        ("plenario", "Plenário"), ("termometro", "Termômetro")]
 ABAS_DEPUTADO = {"perfil", "proposicoes", "cota"}   # abas com seletor de deputado
-ABAS_LIVRES = {"plenario"}                          # abas que não usam os filtros de votação
+ABAS_LIVRES = {"plenario", "termometro"}                        # abas que não usam os filtros de votação
 
 
 @app.context_processor

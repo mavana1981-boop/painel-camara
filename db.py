@@ -423,6 +423,72 @@ plenario_pautas = Table(  # cópia das últimas pautas do app Minha Pauta, com a
     Column("sincronizado_em", DateTime),
 )
 
+# ---------------- Termômetro (previsão de votos) ----------------
+
+termometros = Table(  # cada proposição acompanhada no Termômetro
+    "termometros", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("proposicao_id", BigInteger, index=True),  # id da proposição na API (quando houver)
+    Column("identificacao", String(80)),              # PL 1087/2025
+    Column("ementa", Text),
+    Column("palavras", Text),                         # palavras-chave do tema, separadas por vírgula
+    Column("orientacao_oposicao", String(10)),        # SIM ou NÃO: como a Oposição vai orientar
+    Column("evento_id", Integer),                     # sessão do Plenário de onde veio (Minha Pauta)
+    Column("observacao", Text),
+    Column("arquivado", Boolean, default=False),
+    Column("criado_por", String(60)),
+    Column("criado_em", DateTime),
+    Column("atualizado_em", DateTime),
+)
+
+termometro_ia = Table(  # leitura da IA sobre discursos e entrevistas do deputado a respeito do tema
+    "termometro_ia", metadata,
+    Column("termometro_id", Integer, primary_key=True),
+    Column("codigo_deputado", Integer, primary_key=True),
+    Column("posicao", String(20)),                    # favor, contra, indefinido, sem_sinal
+    Column("confianca", Integer),                     # 0 a 100
+    Column("justificativa", Text),
+    Column("evidencias", Text),                       # JSON: [{tipo, data, titulo, link, trecho}]
+    Column("fontes_lidas", Integer),
+    Column("modelo", String(60)),
+    Column("criado_por", String(60)),
+    Column("criado_em", DateTime),
+)
+
+termometro_posicoes = Table(  # posição apurada pela assessoria (prevalece sobre a previsão)
+    "termometro_posicoes", metadata,
+    Column("termometro_id", Integer, primary_key=True),
+    Column("codigo_deputado", Integer, primary_key=True),
+    Column("posicao", String(20)),                    # sim, tende_sim, indeciso, tende_nao, nao, ausente
+    Column("autor", String(60)),
+    Column("atualizado_em", DateTime),
+)
+
+termometro_notas = Table(  # anotações da equipe (do termômetro inteiro ou de um deputado)
+    "termometro_notas", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("termometro_id", Integer, index=True),
+    Column("codigo_deputado", Integer, index=True),   # nulo = anotação geral do termômetro
+    Column("texto", Text),
+    Column("autor", String(60)),
+    Column("criado_em", DateTime),
+)
+
+contatos_assessoria = Table(  # contatos dos gabinetes (valem para todos os termômetros)
+    "contatos_assessoria", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("codigo_deputado", Integer, index=True),
+    Column("nome", String(120)),
+    Column("cargo", String(120)),
+    Column("whatsapp", String(30)),
+    Column("telefone", String(30)),
+    Column("email", String(120)),
+    Column("observacao", Text),
+    Column("criado_por", String(60)),
+    Column("criado_em", DateTime),
+    Column("atualizado_em", DateTime),
+)
+
 meta = Table(
     "meta", metadata,
     Column("chave", String(60), primary_key=True),
