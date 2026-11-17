@@ -35,21 +35,25 @@
         <div><b>{{ d.oposicionismo|pct }}</b><span>oposicionismo geral na legislatura</span></div>
       </div>
       {% if d.manual %}<p class="nota"><b>Posição apurada pela assessoria: {{ rotulo_posicao.get(d.manual) }}</b> — ela prevalece sobre o cálculo.</p>{% endif %}
+      {% if not historico|selectattr('conta')|list %}<p class="nota" style="border-top:0">Não votou SIM ou NÃO em nenhuma das votações usadas{% if prev_mesmas %} — nem em {{ prev_mesmas|map(attribute='tipo_etapa')|join(', ') }} desta matéria{% endif %}: a previsão parte do oposicionismo dele e do partido.</p>{% endif %}
       {% if historico %}
-      <div class="rolagem" style="max-height:380px">
+      <h3 style="margin:0;padding:10px 14px 4px;font-size:13px">Votações usadas no cálculo <span class="tm-sub">· {{ historico|length }} · entram só os votos SIM ou NÃO</span></h3>
+      <div class="rolagem" style="max-height:420px">
       <table>
-        <thead><tr><th>Data</th><th>Votação</th><th class="c">Oposição</th><th class="c">Voto</th></tr></thead>
+        <thead><tr><th>Data</th><th>Votação</th><th class="c">Oposição</th><th class="c">Voto</th><th class="n">Peso</th></tr></thead>
         <tbody>{% for h in historico %}
-          <tr><td style="white-space:nowrap">{{ h.data|data }}</td>
+          <tr style="{{ '' if h.conta else 'opacity:.6' }}"><td style="white-space:nowrap">{{ h.data|data }}</td>
             <td><a href="{{ url_for('votacoes', id=h.id) }}">{{ h.sigla_materia }} {{ h.numero_materia }}/{{ h.ano_materia }}</a>
               <span class="tm-kw">{{ h.tipo_etapa }}</span>{% if h.mesma %}<span class="tm-kw" style="background:#fff3d6;color:#7a5a00">mesma proposição</span>{% endif %}
               <div class="tm-sub">{{ (h.descricao_votacao or h.descricao_materia or '')[:120] }}</div></td>
             <td class="c"><span class="pill {{ h.ori_opo }}">{{ h.ori_opo }}</span></td>
-            <td class="c"><span class="pill {{ h.voto }}">{{ h.voto }}</span><div class="tm-sub">{{ 'com a Oposição' if h.com else 'contra a Oposição' }}</div></td></tr>
+            <td class="c">{% if h.voto %}<span class="pill {{ h.voto }}">{{ h.voto }}</span>{% else %}<span class="tm-sub">não votou</span>{% endif %}
+              <div class="tm-sub">{% if h.conta %}{{ 'com a Oposição' if h.com else 'contra a Oposição' }}{% elif h.voto %}não conta{% endif %}</div></td>
+            <td class="n">{{ '%.2f'|format(h.peso) }}</td></tr>
         {% endfor %}</tbody>
       </table>
       </div>
-      {% else %}<p class="nota">Não votou SIM ou NÃO em nenhuma votação parecida{% if prev_mesmas %} — nem em {{ prev_mesmas|map(attribute='tipo_etapa')|join(', ') }} desta matéria (ausente ou sem voto registrado){% endif %}: a previsão parte do oposicionismo dele e do partido.</p>{% endif %}
+      {% else %}<p class="nota">Nenhuma votação parecida encontrada para este termômetro: acrescente palavras-chave do tema.</p>{% endif %}
     </div>
 
     <div class="card neu" id="ia">

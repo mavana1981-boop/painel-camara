@@ -397,7 +397,7 @@ def calcular(t, similares=None):
                      "WHERE votacao_id IN :ids AND voto IN ('SIM','NÃO')").bindparams(
                 bindparam("ids", expanding=True))
             votos = c.execute(q, {"ids": list(peso)}).all()
-    ind = defaultdict(lambda: {"w": 0.0, "a": 0.0, "n": 0, "mesma": []})
+    ind = defaultdict(lambda: {"w": 0.0, "a": 0.0, "n": 0, "mesma": [], "votos": []})
     par = defaultdict(lambda: {"w": 0.0, "a": 0.0})
     for vid, cod, voto in votos:
         s = peso[vid]
@@ -406,6 +406,11 @@ def calcular(t, similares=None):
         d["w"] += s["peso"]
         d["a"] += s["peso"] * com
         d["n"] += 1
+        item = {"id": vid, "data": s["data"], "voto": voto, "com": bool(com), "ori_opo": s["ori_opo"],
+                "etapa": s["tipo_etapa"], "mesma": s["mesma"], "peso": s["peso"],
+                "materia": f"{s['sigla_materia']} {s['numero_materia']}/{s['ano_materia']}",
+                "descricao": s["descricao_votacao"] or s["descricao_materia"]}
+        d["votos"].append(item)
         if s["mesma"]:
             d["mesma"].append({"id": vid, "data": s["data"], "voto": voto, "com": bool(com), "ori_opo": s["ori_opo"],
                                "etapa": s["tipo_etapa"], "descricao": s["descricao_votacao"]})
@@ -421,7 +426,7 @@ def calcular(t, similares=None):
     sim_opo = t.get("orientacao_oposicao") == "SIM"
     out = []
     for cod, s in cad.items():
-        d = ind.get(cod) or {"w": 0.0, "a": 0.0, "n": 0, "mesma": []}
+        d = ind.get(cod) or {"w": 0.0, "a": 0.0, "n": 0, "mesma": [], "votos": []}
         g_ = geral.get(cod)
         p_ = par.get(s.get("partido"))
         bases = []
@@ -460,6 +465,7 @@ def calcular(t, similares=None):
             "oposicionismo": g_["pct"] if g_ else None,
             "partido_tema": round(100 * p_["a"] / p_["w"]) if p_ and p_["w"] else None,
             "mesma": sorted(d["mesma"], key=lambda x: str(x["data"]), reverse=True),
+            "votos": sorted(d["votos"], key=lambda x: (not x["mesma"], -x["peso"], str(x["data"]))),
             "ia": r_ia, "manual": m, "notas": notas.get(cod, 0), "contatos": ct,
         })
     out.sort(key=lambda x: (-x["p_sim"], x["nome"]))
@@ -969,13 +975,16 @@ def deputado(tid, cod):
     d = next((x for x in prev["deputados"] if x["codigo"] == cod), None)
     if not d:
         abort(404)
-    sims = {s["id"]: s for s in prev["similares"]}
     with engine.connect() as c:
-        votos = c.execute(text("SELECT votacao_id, voto FROM votos WHERE codigo_deputado = :c AND votacao_id IN :ids")
-                          .bindparams(bindparam("ids", expanding=True)),
-                          {"c": cod, "ids": list(sims) or [""]}).all()
-    historico = sorted([{**sims[v], "voto": voto, "com": voto == sims[v]["ori_opo"]} for v, voto in votos],
-                       key=lambda x: (not x["mesma"], -x["peso"]))
+        votos = dict(c.execute(text("SELECT votacao_id, voto FROM votos WHERE codigo_deputado = :c "
+                                    "AND votacao_id IN :ids").bindparams(bindparam("ids", expanding=True)),
+                               {"c": cod, "ids": [s["id"] for s in prev["similares"]] or [""]}).all())
+    historico = []
+    for s_ in prev["similares"]:
+        voto = votos.get(s_["id"])
+        historico.append({**s_, "voto": voto, "conta": voto in ("SIM", "NÃO"),
+                          "com": voto == s_["ori_opo"] if voto in ("SIM", "NÃO") else None})
+    historico.sort(key=lambda x: (not x["mesma"], not x["conta"], -x["peso"]))
     ia = d["ia"]
     evid = json.loads(ia["evidencias"] or "[]") if ia else []
     u = _usuario()

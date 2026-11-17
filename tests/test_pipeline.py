@@ -3512,6 +3512,9 @@ def test_termometro_previsao_posicao_notas_e_contatos():
     html_ver = cli.get(f"/termometro/{tid}").get_data(as_text=True)
     assert "já teve 2 votação(ões) nominal(is)" in html_ver and "Retirada de pauta" in html_ver
     assert "Oposição orientou" in html_ver and "/votacoes?id=2500001" in html_ver
+    assert "ver votações" in html_ver and "contra a Oposição" in html_ver               # coluna Base clicável
+    html_105 = cli.get(f"/termometro/{tid}/deputado/105").get_data(as_text=True)         # presidente: não votou
+    assert "Votações usadas no cálculo" in html_105 and "não conta" in html_105 and "Não votou SIM ou NÃO" in html_105
     html = cli.get(f"/termometro/{tid}").get_data(as_text=True)
     assert "btn-whats" in html and "Acordo com o Centrão" in html and "Placar previsto" in html
     assert cli.get(f"/termometro/{tid}?faixa=sim&partido=MDB").get_data(as_text=True).count('class="tm-faixa tm-f-sim"') >= 1
