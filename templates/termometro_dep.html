@@ -20,7 +20,7 @@
 </header>
 
 {% if fila and fila.rodando %}
-<div class="tm-fila">⏳ IA lendo discursos e entrevistas ({{ fila.feitos }} de {{ fila.total }})… A página se atualiza sozinha.</div>
+<div class="tm-fila">⏳ {% if fila.tipo == 'bandeiras' %}IA identificando temas caros{% elif fila.tipo == 'impacto' %}IA lendo a proposição{% else %}IA lendo discursos e entrevistas{% endif %} ({{ fila.feitos }} de {{ fila.total }})… A página se atualiza sozinha.</div>
 <script>setTimeout(function(){location.reload()}, 8000)</script>
 {% endif %}
 
@@ -59,6 +59,53 @@
       </table>
       </div>
       {% else %}<p class="nota">Nenhuma votação parecida encontrada para este termômetro: acrescente palavras-chave do tema.</p>{% endif %}
+    </div>
+
+    <div class="card neu" id="individual">
+      <h2>Individualidade do parlamentar <small>estado e temas caros podem contrariar o partido · juntos pesam até 40% (55% com fator da equipe)</small></h2>
+      {% if d.fatores %}
+      {% for f in d.fatores %}
+      <div class="tm-evid"><b style="color:{{ '#17703a' if f.direcao == 'SIM' else '#b03021' }}">{{ {'uf': '🏠', 'bandeira': '⭐', 'autoria': '✍️', 'frente': '🤝', 'avulso': '📌'}.get(f.tipo) }} {{ f.rotulo }} → puxa para {{ f.direcao }}</b>
+        <span class="tm-sub"> · peso {{ (100 * f.peso)|round|int }}%{% if f.autor %} · {{ f.autor }}{% endif %}</span>
+        {% if f.detalhe and f.tipo != 'autoria' %}<div class="tm-sub">{{ 'em comum: ' if f.tipo == 'bandeira' }}{{ f.detalhe }}</div>{% endif %}
+        {% if f.lista %}<div class="tm-sub">{% for a in f.lista %}<a href="https://www.camara.leg.br/propostas-legislativas/{{ a.id }}" target="_blank" rel="noopener" title="{{ a.ementa }}">{{ a.identificacao }}</a>{{ ' (1º autor)' if a.principal }}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}
+      </div>
+      {% endfor %}
+      {% else %}<p class="nota" style="border-top:0">Nenhum fator individual neste termômetro: o estado dele não é afetado e nenhum tema caro casa com a proposição.</p>{% endif %}
+
+      <h3 style="margin:0;padding:10px 14px 4px;font-size:13px">Temas caros <span class="tm-sub">· valem para todos os termômetros</span></h3>
+      {% for b in bandeiras_dep %}
+      <div class="tm-contato" style="padding:6px 14px"><div><b>{{ b.tema }}</b> <span class="tm-kw" style="{{ '' if b.origem == 'ia' else 'background:#fff3d6;color:#7a5a00' }}">{{ 'IA' if b.origem == 'ia' else 'equipe' }}</span>
+          {% if b.palavras %}<div class="tm-sub">{{ b.palavras }}</div>{% endif %}{% if b.justificativa %}<div class="tm-sub">{{ b.justificativa }}</div>{% endif %}</div>
+        <form method="post" action="{{ url_for('termometro.bandeira_apagar', tid=t.id, cod=d.codigo, bid=b.id) }}" style="margin:0"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="mini perigo">remover</button></form>
+      </div>
+      {% else %}<p class="tm-sub" style="padding:0 14px">Nenhum tema caro registrado.</p>{% endfor %}
+      <form class="form-linha" method="post" action="{{ url_for('termometro.bandeira_nova', tid=t.id, cod=d.codigo) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input name="tema" required placeholder="Tema, ex.: Proteção animal" style="flex:1 1 160px">
+        <input name="palavras" placeholder="palavras-chave (vírgulas)" style="flex:2 1 200px">
+        <button class="btn sec">Adicionar</button>
+      </form>
+      <form class="form-linha" method="post" action="{{ url_for('termometro.bandeiras_ia_deputado', tid=t.id, cod=d.codigo) }}" style="padding-top:0">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <button class="btn sec" {{ 'disabled' if fila and fila.rodando }}>✨ {{ 'Refazer' if bandeiras_dep|selectattr('origem', 'equalto', 'ia')|list else 'Identificar' }} temas caros com IA</button>
+        <span class="tm-sub" style="flex:1 1 220px">A IA lê frentes parlamentares, comissões e proposições de autoria. Os temas da equipe são mantidos.</span>
+      </form>
+      {% if frentes_dep %}<details><summary style="padding:6px 14px;cursor:pointer;font-size:12px" class="tm-sub">Frentes parlamentares ({{ frentes_dep|length }})</summary>
+        <div class="tm-sub" style="padding:0 14px 10px">{{ frentes_dep|join(' · ') }}</div></details>{% endif %}
+
+      <h3 style="margin:0;padding:10px 14px 4px;font-size:13px;border-top:1px solid var(--linha)">Fator individual neste termômetro <span class="tm-sub">· informado pela equipe, peso 50%</span></h3>
+      <form class="tm-form" method="post" action="{{ url_for('termometro.fator', tid=t.id, cod=d.codigo) }}" style="padding-top:4px">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <div class="lin">
+          <label>Puxa para<select name="direcao">
+            <option value="">Nenhum</option>
+            <option value="SIM" {{ 'selected' if fator_dep and fator_dep.direcao == 'SIM' }}>SIM</option>
+            <option value="NÃO" {{ 'selected' if fator_dep and fator_dep.direcao == 'NÃO' }}>NÃO</option></select></label>
+          <label style="flex:3 1 240px">Motivo<input name="motivo" value="{{ fator_dep.motivo if fator_dep and fator_dep.motivo else '' }}" placeholder="Ex.: base eleitoral no agronegócio; obra no estado dele"></label>
+        </div>
+        <div><button class="btn sec">Salvar fator</button></div>
+      </form>
     </div>
 
     <div class="card neu" id="ia">

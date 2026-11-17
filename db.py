@@ -435,6 +435,14 @@ termometros = Table(  # cada proposição acompanhada no Termômetro
     Column("orientacao_oposicao", String(10)),        # SIM ou NÃO: como a Oposição vai orientar
     Column("evento_id", Integer),                     # sessão do Plenário de onde veio (Minha Pauta)
     Column("observacao", Text),
+    # individualidade: a quem a proposição interessa (IA ou equipe)
+    Column("ufs_favorecidas", String(200)),           # "AM,PA" — estados que a proposição beneficia
+    Column("ufs_prejudicadas", String(200)),
+    Column("temas_proposicao", Text),                 # temas da proposição, separados por vírgula
+    Column("efeito_pauta", String(10)),               # favorece ou contraria: o que a proposição faz com essas pautas
+    Column("impacto_resumo", Text),
+    Column("impacto_origem", String(20)),             # ia ou equipe
+    Column("impacto_em", DateTime),
     Column("arquivado", Boolean, default=False),
     Column("criado_por", String(60)),
     Column("criado_em", DateTime),
@@ -469,6 +477,28 @@ termometro_partidos = Table(  # orientação que cada partido deve dar nesta mat
     Column("termometro_id", Integer, primary_key=True),
     Column("partido", String(40), primary_key=True),
     Column("orientacao", String(10)),                 # SIM, NÃO ou LIVRE
+    Column("autor", String(60)),
+    Column("atualizado_em", DateTime),
+)
+
+deputado_bandeiras = Table(  # temas caros a cada deputado (valem para todos os termômetros)
+    "deputado_bandeiras", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("codigo_deputado", Integer, index=True),
+    Column("tema", String(120)),
+    Column("palavras", Text),                         # palavras-chave, separadas por vírgula
+    Column("justificativa", Text),
+    Column("origem", String(20)),                     # ia ou equipe
+    Column("autor", String(60)),
+    Column("criado_em", DateTime),
+)
+
+termometro_fatores = Table(  # fator individual informado pela equipe num termômetro (puxa para SIM ou NÃO)
+    "termometro_fatores", metadata,
+    Column("termometro_id", Integer, primary_key=True),
+    Column("codigo_deputado", Integer, primary_key=True),
+    Column("direcao", String(5)),                     # SIM ou NÃO
+    Column("motivo", Text),
     Column("autor", String(60)),
     Column("atualizado_em", DateTime),
 )
