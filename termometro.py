@@ -32,8 +32,9 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from sqlalchemy import bindparam, delete, func, insert, select, text, update
 
 import metrics
-from db import (contatos_assessoria, deputados, engine, processos, sem_acento, termometro_ia, termometro_notas,
-                termometro_partidos, termometro_posicoes, termometros)
+from db import (contatos_assessoria, deputado_bandeiras, deputados, engine, processos, sem_acento, termometro_ia, termometro_notas,
+                termometro_fatores, termometro_partidos, termometro_posicoes,
+                termometros)
 
 log = logging.getLogger("termometro")
 bp = Blueprint("termometro", __name__, url_prefix="/termometro")
@@ -73,7 +74,7 @@ projeto proposta emenda emendas constituicao constitucional complementar ordinar
 requerimento requer urgencia retirada pauta adiamento votacao discussao turno destaque destaques
 subemenda substitutivo parecer aprovado aprovada rejeitado rejeitada mantido texto termos sessao
 deliberativa plenario camara deputados senado comissao relator autor materia sistema demais quando onde
-fins efeito efeitos aplicacao aplica prever preve previsto prevista fica ficam passa passam vigor
+publico publica publicos publicas fins efeito efeitos aplicacao aplica prever preve previsto prevista fica ficam passa passam vigor
 """).split())
 
 
@@ -416,6 +417,7 @@ def calcular(t, similares=None):
             par_ori[partido]["a"] += s_["peso"] * (1.0 if voto == s_["ori_opo"] else 0.0)
     partidos_mat = orientacao_partidos(t, sims, ori_por_vot)
     fidel = {r["codigo"]: r for r in metrics.fidelidade(metrics.Filtros(opostas=False))}
+    indiv = fatores_individuais(t, cad)
     ind = defaultdict(lambda: {"w": 0.0, "a": 0.0, "n": 0, "mesma": [], "votos": []})
     par = defaultdict(lambda: {"w": 0.0, "a": 0.0})
     for vid, cod, voto in votos:
@@ -470,6 +472,17 @@ def calcular(t, similares=None):
             p_part = fidelidade if pm["orientacao"] == "SIM" else 1 - fidelidade
             p_sim = (1 - wp) * p_sim + wp * p_part
             fontes.append("partido")
+        # individualidade: estado, bandeiras, autoria, frentes e fator da equipe (podem contrariar o partido)
+        fts = indiv.get(cod) or []
+        if fts:
+            # média dos fatores (cada um no seu peso); o conjunto pesa no máximo TETO_INDIVIDUAL
+            # (TETO_AVULSO quando a equipe informou um fator), para não apagar o histórico de votos
+            soma = sum(f_["peso"] for f_ in fts)
+            alvo_ind = sum(f_["peso"] * (0.9 if f_["direcao"] == "SIM" else 0.1) for f_ in fts) / soma
+            teto = TETO_AVULSO if any(f_["tipo"] == "avulso" for f_ in fts) else TETO_INDIVIDUAL
+            w_ind = min(soma, teto)
+            p_sim = (1 - w_ind) * p_sim + w_ind * alvo_ind
+            fontes.append("individual")
         r_ia = ia.get(cod)
         if r_ia and r_ia["posicao"] in ("favor", "contra") and r_ia.get("confianca"):
             a = 0.5 * min(r_ia["confianca"], 100) / 100
@@ -482,7 +495,8 @@ def calcular(t, similares=None):
             p_sim, fonte = P_MANUAL[m], "apurada"
         if m == "sim" or m == "nao" or m == "ausente":
             confianca = "apurada"
-        elif d["w"] >= 4 or (r_ia and (r_ia.get("confianca") or 0) >= 70 and d["w"] >= 1) or m:
+        elif d["w"] >= 4 or (r_ia and (r_ia.get("confianca") or 0) >= 70 and d["w"] >= 1) or m or \
+                any(f_["tipo"] == "avulso" for f_ in fts):
             confianca = "alta"
         elif d["w"] >= 1 or (r_ia and r_ia["posicao"] in ("favor", "contra")):
             confianca = "média"
@@ -499,7 +513,7 @@ def calcular(t, similares=None):
             "partido_tema": round(100 * p_["a"] / p_["w"]) if p_ and p_["w"] else None,
             "partido_ori_tema": round(100 * po["a"] / po["w"]) if po and po["w"] else None,
             "partido_materia": pm, "fidelidade": round(100 * fd["seguiu"] / fd["total"]) if fd and fd["total"] else None,
-            "fidelidade_total": fd["total"] if fd else 0, "p_votos": round(p_votos, 3),
+            "fidelidade_total": fd["total"] if fd else 0, "p_votos": round(p_votos, 3), "fatores": fts,
             "mesma": sorted(d["mesma"], key=lambda x: str(x["data"]), reverse=True),
             "votos": sorted(d["votos"], key=lambda x: (not x["mesma"], -x["peso"], str(x["data"]))),
             "ia": r_ia, "manual": m, "notas": notas.get(cod, 0), "contatos": ct,
@@ -852,13 +866,14 @@ def status_fila(tid):
     return _fila.get(tid)
 
 
-def analisar_em_segundo_plano(tid, codigos, autor=None):
-    """Põe deputados na fila da IA. Devolve False se já há uma análise rodando neste termômetro."""
+def analisar_em_segundo_plano(tid, codigos, autor=None, tipo="discursos"):
+    """Põe deputados na fila da IA (tipo discursos ou bandeiras). False se já há análise rodando neste termômetro."""
     with _fila_lock:
         st = _fila.get(tid)
         if st and st["rodando"]:
             return False
         _fila[tid] = st = {"rodando": True, "total": len(codigos), "feitos": 0, "erros": [], "atual": None,
+                           "tipo": tipo,
                            "codigos": list(codigos), "inicio": datetime.now()}
 
     def rodar():
@@ -866,7 +881,12 @@ def analisar_em_segundo_plano(tid, codigos, autor=None):
             for cod in codigos:
                 st["atual"] = cod
                 try:
-                    analisar_deputado(tid, cod, autor)
+                    if tipo == "bandeiras":
+                        identificar_bandeiras(cod, autor)
+                    elif tipo == "impacto":
+                        analisar_impacto(tid, autor)
+                    else:
+                        analisar_deputado(tid, cod, autor)
                 except Exception as e:
                     log.exception("termômetro: IA do deputado %s", cod)
                     st["erros"].append(f"{cod}: {str(e)[:200]}")
@@ -884,6 +904,328 @@ def escolher_para_ia(prev, limite=LOTE_IA):
     cand = [d for d in prev["deputados"] if not d["ia"] and not d["manual"]]
     cand.sort(key=lambda d: (abs(d["p_sim"] - 0.5), d["nome"]))
     return [d["codigo"] for d in cand[:limite]]
+
+
+# ---------------- individualidade do parlamentar ----------------
+# Fatores que podem levar o deputado a votar diferente do partido e da liderança:
+#   - a proposição beneficia (ou prejudica) o estado dele;
+#   - o tema é uma bandeira dele: temas caros identificados pela IA ou informados pela equipe, projetos parecidos
+#     de que é autor e frentes parlamentares do tema;
+#   - fator avulso informado pela equipe neste termômetro.
+
+PESO_UF = 0.35
+PESO_BANDEIRA = 0.35
+PESO_FRENTE = 0.15
+PESO_AVULSO = 0.5
+TETO_INDIVIDUAL = float(os.environ.get("TERMOMETRO_TETO_INDIVIDUAL", "0.4"))   # peso máximo somado dos fatores
+TETO_AVULSO = 0.55
+SIM_AUTORIA = float(os.environ.get("TERMOMETRO_SIM_AUTORIA", "0.3"))
+UFS = ("AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO").split()
+REGIOES = {"norte": "AC AM AP PA RO RR TO", "nordeste": "AL BA CE MA PB PE PI RN SE",
+           "centro-oeste": "DF GO MT MS", "centro oeste": "DF GO MT MS", "sudeste": "ES MG RJ SP",
+           "sul": "PR RS SC", "amazonia legal": "AC AM AP PA RO RR TO MT MA"}
+_cache_ind = {}
+
+
+def ufs_de(texto):
+    """'AM, pa, Nordeste' → ['AM', 'PA', 'AL', 'BA', ...] (sem repetir, na ordem)."""
+    out = []
+    for parte in re.split(r"[,;/\n]+", texto or ""):
+        p = parte.strip()
+        if not p:
+            continue
+        r = REGIOES.get(sem_acento(p).lower())
+        for uf in (r.split() if r else [p.upper()]):
+            if uf in UFS and uf not in out:
+                out.append(uf)
+    return out
+
+
+def _cosseno_idf(alvo, docs_tokens, idf):
+    na = math.sqrt(sum(idf(w) ** 2 for w in alvo)) or 1.0
+    for chave, b in docs_tokens:
+        if not b:
+            continue
+        inter = sum(idf(w) ** 2 for w in b if w in alvo)
+        if inter:
+            yield chave, inter / (na * (math.sqrt(sum(idf(w) ** 2 for w in b)) or 1.0))
+
+
+def _corpus_autoria():
+    """Ementas das proposições de autoria de cada deputado, já em palavras (guardado por 30 min)."""
+    c_ = _cache_ind.get("autoria")
+    if c_ and (datetime.now() - c_["em"]).total_seconds() < 1800:
+        return c_
+    with engine.connect() as c:
+        linhas = c.execute(text("SELECT a.codigo_deputado, a.principal, p.id, p.identificacao, p.ementa "
+                                "FROM autorias a JOIN processos p ON p.id = a.processo_id")).all()
+    toks, df = {}, defaultdict(int)
+    for _, _, pid, _, ementa in linhas:
+        if pid not in toks:
+            toks[pid] = palavras(ementa)
+            for w in toks[pid]:
+                df[w] += 1
+    c_ = {"em": datetime.now(), "linhas": linhas, "toks": toks, "df": df, "n": max(len(toks), 1)}
+    _cache_ind["autoria"] = c_
+    return c_
+
+
+def _frentes():
+    c_ = _cache_ind.get("frentes")
+    if c_ and (datetime.now() - c_["em"]).total_seconds() < 1800:
+        return c_["dados"]
+    dados = {}
+    with engine.connect() as c:
+        for cod, fr in c.execute(text("SELECT codigo, frentes FROM perfis")):
+            try:
+                lst = json.loads(fr or "[]") or []
+            except ValueError:
+                lst = []
+            dados[cod] = sorted({(x.get("titulo") or "").strip() for x in lst if isinstance(x, dict)} - {""})
+    _cache_ind["frentes"] = {"em": datetime.now(), "dados": dados}
+    return dados
+
+
+def limpar_cache_individual():
+    _cache_ind.clear()
+
+
+def alvo_tema(t):
+    """Palavras do tema do termômetro: ementa, palavras-chave e temas da proposição."""
+    return palavras(" ".join([t.get("ementa") or "", (t.get("palavras") or "").replace(",", " "),
+                              (t.get("temas_proposicao") or "").replace(",", " ")]))
+
+
+def autorias_parecidas(t, alvo=None):
+    """{deputado: [proposições de autoria parecidas com o termômetro]} (a própria proposição fica de fora)."""
+    alvo = alvo if alvo is not None else alvo_tema(t)
+    if not alvo:
+        return {}
+    c_ = _corpus_autoria()
+    idf = lambda w: math.log(1 + c_["n"] / (1 + c_["df"].get(w, 0)))  # noqa: E731
+    sims = dict(_cosseno_idf(alvo, c_["toks"].items(), idf))
+    out = defaultdict(list)
+    propria = parse_identificacao(t.get("identificacao"))
+    for cod, principal, pid, ident, ementa in c_["linhas"]:
+        if pid == t.get("proposicao_id") or (propria and parse_identificacao(ident) == propria):
+            continue
+        sim = sims.get(pid, 0)
+        if sim >= SIM_AUTORIA:
+            out[cod].append({"id": pid, "identificacao": ident, "ementa": ementa, "principal": bool(principal),
+                             "sim": round(sim, 2)})
+    for lst in out.values():
+        lst.sort(key=lambda x: (-x["sim"], not x["principal"]))
+    return out
+
+
+def frentes_do_tema(alvo):
+    """{deputado: [frentes parlamentares cujo nome casa com o tema]}."""
+    out = {}
+    if not alvo:
+        return out
+    for cod, lst in _frentes().items():
+        casam = [f for f in lst if len(palavras(f.replace("Frente Parlamentar", "")) & alvo) >= 1]
+        if casam:
+            out[cod] = casam
+    return out
+
+
+def bandeiras(cod=None):
+    q = select(deputado_bandeiras).order_by(deputado_bandeiras.c.origem, deputado_bandeiras.c.tema)
+    if cod is not None:
+        q = q.where(deputado_bandeiras.c.codigo_deputado == cod)
+    out = defaultdict(list)
+    with engine.connect() as c:
+        for r in c.execute(q).mappings():
+            out[r["codigo_deputado"]].append(dict(r))
+    return out if cod is None else out.get(cod, [])
+
+
+def bandeira_casa(b, alvo):
+    """A bandeira do deputado casa com o tema do termômetro? Devolve as palavras em comum (ou vazio)."""
+    tb = palavras(b.get("tema")) | palavras((b.get("palavras") or "").replace(",", " "))
+    comuns = tb & alvo
+    titulo = palavras(b.get("tema")) & alvo
+    return comuns if (len(comuns) >= 2 or titulo) else set()
+
+
+def salvar_bandeira(cod, tema, palavras_, autor, origem="equipe", justificativa=None):
+    tema = (tema or "").strip()[:120]
+    if not tema:
+        raise ValueError("Informe o tema.")
+    with engine.begin() as c:
+        c.execute(insert(deputado_bandeiras).values(codigo_deputado=cod, tema=tema,
+                                                    palavras=(palavras_ or "").strip()[:500] or None,
+                                                    justificativa=justificativa, origem=origem, autor=autor,
+                                                    criado_em=datetime.now()))
+
+
+def apagar_bandeira(cod, bid):
+    with engine.begin() as c:
+        c.execute(delete(deputado_bandeiras).where(deputado_bandeiras.c.id == bid,
+                                                   deputado_bandeiras.c.codigo_deputado == cod))
+
+
+def salvar_fator(tid, cod, direcao, motivo, autor):
+    direcao = {"SIM": "SIM", "NAO": "NÃO", "NÃO": "NÃO"}.get(sem_acento(direcao or "").upper())
+    with engine.begin() as c:
+        c.execute(delete(termometro_fatores).where(termometro_fatores.c.termometro_id == tid,
+                                                   termometro_fatores.c.codigo_deputado == cod))
+        if direcao:
+            c.execute(insert(termometro_fatores).values(termometro_id=tid, codigo_deputado=cod, direcao=direcao,
+                                                        motivo=(motivo or "").strip()[:1000] or None, autor=autor,
+                                                        atualizado_em=datetime.now()))
+
+
+def salvar_impacto(tid, dados, autor=None, origem="equipe"):
+    efeito = dados.get("efeito_pauta") if dados.get("efeito_pauta") in ("favorece", "contraria") else "favorece"
+    valores = {"ufs_favorecidas": ",".join(ufs_de(dados.get("ufs_favorecidas"))) or None,
+               "ufs_prejudicadas": ",".join(ufs_de(dados.get("ufs_prejudicadas"))) or None,
+               "temas_proposicao": (dados.get("temas_proposicao") or "").strip()[:1000] or None,
+               "efeito_pauta": efeito, "impacto_origem": origem, "impacto_em": datetime.now(),
+               "atualizado_em": datetime.now()}
+    if "impacto_resumo" in dados:
+        valores["impacto_resumo"] = (dados.get("impacto_resumo") or "").strip()[:2000] or None
+    with engine.begin() as c:
+        c.execute(update(termometros).where(termometros.c.id == tid).values(**valores))
+
+
+def fatores_individuais(t, cad):
+    """{deputado: [fatores]} — cada fator: {tipo, rotulo, direcao (SIM/NÃO), peso, detalhe}."""
+    alvo = alvo_tema(t)
+    contraria = t.get("efeito_pauta") == "contraria"
+    dir_pauta = "NÃO" if contraria else "SIM"
+    fav, prej = set(ufs_de(t.get("ufs_favorecidas"))), set(ufs_de(t.get("ufs_prejudicadas")))
+    bands = bandeiras()
+    auts = autorias_parecidas(t, alvo)
+    frs = frentes_do_tema(alvo)
+    avulsos = _por_termometro(termometro_fatores, t["id"]) if t.get("id") else {}
+    out = defaultdict(list)
+    for cod, s in cad.items():
+        uf = s.get("uf")
+        if uf in fav:
+            out[cod].append({"tipo": "uf", "rotulo": f"Beneficia {uf}, estado do deputado", "direcao": "SIM",
+                             "peso": PESO_UF})
+        elif uf in prej:
+            out[cod].append({"tipo": "uf", "rotulo": f"Prejudica {uf}, estado do deputado", "direcao": "NÃO",
+                             "peso": PESO_UF})
+        for b in bands.get(cod, []):
+            comuns = bandeira_casa(b, alvo)
+            if comuns:
+                out[cod].append({"tipo": "bandeira", "direcao": dir_pauta, "peso": PESO_BANDEIRA,
+                                 "rotulo": f"Bandeira: {b['tema']} ({'IA' if b['origem'] == 'ia' else 'equipe'})",
+                                 "detalhe": ", ".join(sorted(comuns))})
+                break
+        a = auts.get(cod) or []
+        if a:
+            principais = sum(1 for x in a if x["principal"])
+            peso = min(0.12 + 0.06 * len(a) + 0.04 * principais, PESO_BANDEIRA)
+            out[cod].append({"tipo": "autoria", "direcao": dir_pauta, "peso": round(peso, 2),
+                             "rotulo": f"Autor de {len(a)} proposição(ões) parecida(s)",
+                             "detalhe": ", ".join(x["identificacao"] or "" for x in a[:4]), "lista": a[:10]})
+        if frs.get(cod) and not any(f["tipo"] == "bandeira" for f in out[cod]):
+            out[cod].append({"tipo": "frente", "direcao": dir_pauta, "peso": PESO_FRENTE,
+                             "rotulo": frs[cod][0] + (f" (+{len(frs[cod]) - 1})" if len(frs[cod]) > 1 else ""),
+                             "detalhe": "; ".join(frs[cod])})
+        av = avulsos.get(cod)
+        if av and av.get("direcao") in ("SIM", "NÃO"):
+            out[cod].append({"tipo": "avulso", "direcao": av["direcao"], "peso": PESO_AVULSO,
+                             "rotulo": f"Fator da equipe: {av.get('motivo') or 'informado'}",
+                             "autor": av.get("autor")})
+    return out
+
+
+# ---------------- IA: impacto da proposição e temas caros do deputado ----------------
+
+SISTEMA_IMPACTO = """Você é analista legislativo da Câmara dos Deputados. Analise a proposição e responda apenas com JSON:
+{"ufs_favorecidas": ["siglas de UF que a proposição beneficia de forma clara e concentrada"],
+ "ufs_prejudicadas": ["siglas de UF prejudicadas de forma clara e concentrada"],
+ "temas": ["2 a 5 temas curtos da proposição, ex.: segurança pública, proteção animal, agronegócio"],
+ "palavras": ["até 8 palavras-chave do tema"],
+ "efeito_pauta": "favorece" ou "contraria" — o que a proposição faz com essas pautas, do ponto de vista de quem as defende
+   (ex.: endurecer penas favorece a pauta da segurança pública; flexibilizar o porte de armas contraria a pauta do desarmamento),
+ "resumo": "até 40 palavras: a quem a proposição interessa"}
+Use listas vazias de UF quando o efeito for nacional e espalhado. Não invente: baseie-se na ementa."""
+
+SISTEMA_BANDEIRAS = """Você é analista legislativo da Câmara dos Deputados. Com base SOMENTE nos dados fornecidos \
+(frentes parlamentares, comissões e proposições de autoria), identifique de 3 a 6 temas caros ao deputado: \
+as causas que ele defende com constância. Responda apenas com JSON:
+{"temas": [{"tema": "nome curto, ex.: Segurança pública", "palavras": ["até 6 palavras-chave"],
+            "justificativa": "até 25 palavras, citando os dados"}]}
+Não deduza pelo partido. Se os dados forem poucos, devolva menos temas."""
+
+
+def _chamar_ia(msg, sistema, ia=None, max_tokens=1200):
+    import questoes
+    if ia:
+        return ia(msg), "teste"
+    resp = questoes.chamar_ia(msg, sistema=sistema, modelo_=questoes.modelo_rapido(), max_tokens=max_tokens,
+                              timeout=90, preferir=questoes.preferidas_radar())
+    return resp, getattr(questoes.ULTIMA, "provedor", None)
+
+
+def analisar_impacto(tid, autor=None, ia=None):
+    """IA lê a ementa e diz quais estados a proposição beneficia/prejudica, os temas e o efeito sobre as pautas."""
+    import radar
+    t = obter(tid)
+    if not t:
+        return None
+    msg = f"Proposição: {t.get('identificacao')}\nEmenta: {t.get('ementa') or '—'}"
+    if t.get("palavras"):
+        msg += f"\nPalavras-chave informadas pela equipe: {t['palavras']}"
+    resp, _ = _chamar_ia(msg, SISTEMA_IMPACTO, ia)
+    d = radar.extrair_json(resp)
+    lista = lambda v: v if isinstance(v, list) else [v] if v else []  # noqa: E731
+    temas = [str(x).strip() for x in lista(d.get("temas")) if str(x).strip()][:5]
+    extras = [str(x).strip() for x in lista(d.get("palavras")) if str(x).strip()][:8]
+    dados = {"ufs_favorecidas": ",".join(map(str, lista(d.get("ufs_favorecidas")))),
+             "ufs_prejudicadas": ",".join(map(str, lista(d.get("ufs_prejudicadas")))),
+             "temas_proposicao": ", ".join(temas + [p for p in extras if p.lower() not in {x.lower() for x in temas}]),
+             "efeito_pauta": d.get("efeito_pauta"), "impacto_resumo": str(d.get("resumo") or "")[:600]}
+    salvar_impacto(tid, dados, autor, origem="ia")
+    return obter(tid)
+
+
+def dados_deputado_para_ia(cod):
+    import paineis
+    pf = paineis.perfil(cod)
+    with engine.connect() as c:
+        props = c.execute(text("SELECT p.identificacao, p.ementa, a.principal FROM autorias a "
+                               "JOIN processos p ON p.id = a.processo_id WHERE a.codigo_deputado = :c "
+                               "ORDER BY a.principal DESC, p.data_apresentacao DESC LIMIT 40"), {"c": cod}).all()
+    return {"frentes": pf.get("frentes_lista") or [],
+            "comissoes": [f"{x['sigla']} ({x['participacao']})" for x in pf.get("comissoes") or []][:20],
+            "proposicoes": [f"{'1º autor' if pr else 'coautor'} — {i}: {(e or '')[:200]}" for i, e, pr in props]}
+
+
+def identificar_bandeiras(cod, autor=None, ia=None):
+    """IA identifica os temas caros do deputado e grava como bandeiras (substitui as da IA; mantém as da equipe)."""
+    import radar
+    with engine.connect() as c:
+        dep = c.execute(select(deputados).where(deputados.c.codigo == cod)).mappings().first()
+    if not dep:
+        return []
+    dd = dados_deputado_para_ia(cod)
+    if not (dd["frentes"] or dd["comissoes"] or dd["proposicoes"]):
+        return []
+    msg = (f"Deputado(a): {dep['nome']} ({dep.get('partido') or '—'}-{dep.get('uf') or '—'})\n\n"
+           "Frentes parlamentares:\n" + ("\n".join("- " + x for x in dd["frentes"][:60]) or "—") +
+           "\n\nComissões:\n" + ("\n".join("- " + x for x in dd["comissoes"]) or "—") +
+           "\n\nProposições de autoria:\n" + ("\n".join("- " + x for x in dd["proposicoes"]) or "—"))
+    resp, _ = _chamar_ia(msg, SISTEMA_BANDEIRAS, ia, max_tokens=1500)
+    d = radar.extrair_json(resp)
+    temas = [x for x in (d.get("temas") or []) if isinstance(x, dict) and str(x.get("tema") or "").strip()][:6]
+    with engine.begin() as c:
+        c.execute(delete(deputado_bandeiras).where(deputado_bandeiras.c.codigo_deputado == cod,
+                                                   deputado_bandeiras.c.origem == "ia"))
+        for x in temas:
+            pal = x.get("palavras")
+            pal = ", ".join(map(str, pal)) if isinstance(pal, list) else str(pal or "")
+            c.execute(insert(deputado_bandeiras).values(
+                codigo_deputado=cod, tema=str(x["tema"]).strip()[:120], palavras=pal[:500] or None,
+                justificativa=str(x.get("justificativa") or "")[:500] or None, origem="ia", autor=autor,
+                criado_em=datetime.now()))
+    return temas
 
 
 # ---------------- rotas ----------------
@@ -925,6 +1267,9 @@ def novo():
         flash(str(e), "erro")
         return redirect(url_for("termometro"))
     flash("Termômetro criado.", "ok")
+    import questoes
+    if questoes.configurado():                 # a IA já identifica estados e temas da proposição
+        analisar_em_segundo_plano(tid, [0], _usuario().get("login"), tipo="impacto")
     return redirect(url_for("termometro.ver", tid=tid))
 
 
@@ -1002,7 +1347,7 @@ def apagar(tid):
     if t["criado_por"] != u.get("login") and not u.get("admin"):
         abort(403)
     with engine.begin() as c:
-        for tab in (termometro_ia, termometro_posicoes, termometro_notas, termometro_partidos):
+        for tab in (termometro_ia, termometro_posicoes, termometro_notas, termometro_partidos, termometro_fatores):
             c.execute(delete(tab).where(tab.c.termometro_id == tid))
         c.execute(delete(termometros).where(termometros.c.id == tid))
     flash("Termômetro apagado.", "ok")
@@ -1017,6 +1362,94 @@ def partidos(tid):
     salvar_orientacoes_partidos(tid, valores, _usuario().get("login"))
     flash("Orientações dos partidos salvas.", "ok")
     return redirect(url_for("termometro.ver", tid=tid) + "#partidos")
+
+
+def _ia_ok():
+    import questoes
+    if not questoes.configurado():
+        flash("Nenhuma IA configurada no Railway (GEMINI_API_KEY ou uma reserva).", "erro")
+        return False
+    return True
+
+
+def _enfileirar(tid, cods, tipo, msg_ok):
+    if not cods:
+        flash("Nada a analisar.", "ok")
+    elif analisar_em_segundo_plano(tid, cods, _usuario().get("login"), tipo=tipo):
+        flash(msg_ok + " A página se atualiza sozinha.", "ok")
+    else:
+        flash("Já há uma análise da IA em andamento neste termômetro. Tente de novo quando ela terminar.", "erro")
+
+
+@bp.post("/<int:tid>/impacto")
+def impacto(tid):
+    if not obter(tid):
+        abort(404)
+    salvar_impacto(tid, request.form, _usuario().get("login"))
+    flash("Estados e temas da proposição salvos.", "ok")
+    return redirect(url_for("termometro.ver", tid=tid) + "#individual")
+
+
+@bp.post("/<int:tid>/impacto/ia")
+def impacto_ia(tid):
+    if not obter(tid):
+        abort(404)
+    if _ia_ok():
+        _enfileirar(tid, [0], "impacto", "IA lendo a proposição para identificar estados e temas.")
+    return redirect(url_for("termometro.ver", tid=tid) + "#individual")
+
+
+def escolher_para_bandeiras(prev, limite=LOTE_IA):
+    """Deputados sem temas caros identificados, dos mais indefinidos para os mais decididos."""
+    com = set(bandeiras())
+    cand = [d for d in prev["deputados"] if d["codigo"] not in com and not d["manual"]]
+    cand.sort(key=lambda d: (abs(d["p_sim"] - 0.5), d["nome"]))
+    return [d["codigo"] for d in cand[:limite]]
+
+
+@bp.post("/<int:tid>/bandeiras/ia")
+def bandeiras_ia(tid):
+    t = obter(tid)
+    if not t:
+        abort(404)
+    if _ia_ok():
+        cods = escolher_para_bandeiras(calcular(t))
+        _enfileirar(tid, cods, "bandeiras", f"IA identificando os temas caros de {len(cods)} deputado(s).")
+    return redirect(url_for("termometro.ver", tid=tid) + "#individual")
+
+
+@bp.post("/<int:tid>/deputado/<int:cod>/bandeiras/ia")
+def bandeiras_ia_deputado(tid, cod):
+    if not obter(tid):
+        abort(404)
+    if _ia_ok():
+        _enfileirar(tid, [cod], "bandeiras", "IA identificando os temas caros do deputado.")
+    return redirect(url_for("termometro.deputado", tid=tid, cod=cod) + "#individual")
+
+
+@bp.post("/<int:tid>/deputado/<int:cod>/bandeira")
+def bandeira_nova(tid, cod):
+    try:
+        salvar_bandeira(cod, request.form.get("tema"), request.form.get("palavras"), _usuario().get("login"))
+        flash("Tema caro salvo. Ele vale para todos os termômetros.", "ok")
+    except ValueError as e:
+        flash(str(e), "erro")
+    return redirect(url_for("termometro.deputado", tid=tid, cod=cod) + "#individual")
+
+
+@bp.post("/<int:tid>/deputado/<int:cod>/bandeira/<int:bid>/apagar")
+def bandeira_apagar(tid, cod, bid):
+    apagar_bandeira(cod, bid)
+    return redirect(url_for("termometro.deputado", tid=tid, cod=cod) + "#individual")
+
+
+@bp.post("/<int:tid>/deputado/<int:cod>/fator")
+def fator(tid, cod):
+    if not obter(tid):
+        abort(404)
+    salvar_fator(tid, cod, request.form.get("direcao"), request.form.get("motivo"), _usuario().get("login"))
+    flash("Fator individual salvo.", "ok")
+    return redirect(url_for("termometro.deputado", tid=tid, cod=cod) + "#individual")
 
 
 @bp.post("/<int:tid>/nota")
@@ -1083,7 +1516,9 @@ def deputado(tid, cod):
     u = _usuario()
     return render_template("termometro_dep.html", **_contexto_base(), t=t, d=d, historico=historico, ia=ia,
                            evid=evid, notas=notas(tid, cod),
-                           prev_mesmas=[s for s in prev["similares"] if s["mesma"]], posicoes=POSICOES, rotulo_posicao=ROTULO_POSICAO,
+                           prev_mesmas=[s for s in prev["similares"] if s["mesma"]],
+                           bandeiras_dep=bandeiras(cod), fator_dep=_por_termometro(termometro_fatores, tid).get(cod),
+                           frentes_dep=_frentes().get(cod, []), posicoes=POSICOES, rotulo_posicao=ROTULO_POSICAO,
                            rotulo_faixa=ROTULO_FAIXA, rotulo_ia=ROTULO_IA, gabinete=telefone_gabinete(cod),
                            msg=mensagem_padrao(t, d, None, u), msg_contato=lambda c_: mensagem_padrao(t, d, c_, u),
                            link_whatsapp=link_whatsapp, fila=status_fila(tid),

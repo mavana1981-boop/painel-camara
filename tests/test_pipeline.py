@@ -3644,3 +3644,65 @@ def test_termometro_orientacao_do_partido_entra_na_conta():
     assert tm.calcular(tm.obter(tid))["partidos_materia"]["PT"]["fonte"] == "estimada"
     cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
     assert _q("SELECT COUNT(*) FROM termometro_partidos")[0][0] == 0
+
+
+def test_termometro_individualidade_estado_bandeiras_autoria_e_fator():
+    import termometro as tm
+    tm.limpar_cache_individual()
+    assert tm.ufs_de("am, PA; Nordeste")[:3] == ["AM", "PA", "AL"] and "BA" in tm.ufs_de("Nordeste")
+    cli = _cliente()
+    tok = _csrf(cli, "/termometro")
+    tid = tm.criar({"identificacao": "PL 9999/2025", "ementa": "Endurece as penas de crimes contra a segurança "
+                    "pública e cria programa de bolsas para atletas policiais.", "orientacao_oposicao": "SIM"}, "admin")
+
+    def dep(tid_):
+        return {x["codigo"]: x for x in tm.calcular(tm.obter(tid_))["deputados"]}
+    d = dep(tid)
+    tipos = lambda cod: {f["tipo"] for f in d[cod]["fatores"]}  # noqa: E731
+    assert "frente" in tipos(101)                       # Frente Parlamentar da Segurança Pública
+    assert "autoria" in tipos(106)                      # autora do PL 2100/2025 (bolsas para atletas)
+    assert "individual" in d[106]["fonte"]
+    base_106 = d[106]["p_sim"]
+
+    # estados: Nordeste beneficiado → deputados da BA, PE e PB puxados para SIM
+    cli.post(f"/termometro/{tid}/impacto", data={"_csrf": tok, "ufs_favorecidas": "Nordeste", "ufs_prejudicadas": "RS",
+                                                 "temas_proposicao": "segurança pública", "efeito_pauta": "favorece"})
+    d = dep(tid)
+    assert any(f["tipo"] == "uf" and f["direcao"] == "SIM" for f in d[102]["fatores"])
+    assert any(f["tipo"] == "uf" and f["direcao"] == "NÃO" for f in d[104]["fatores"])
+
+    # tema caro informado pela equipe + "contraria a pauta" → puxa para NÃO
+    cli.post(f"/termometro/{tid}/deputado/106/bandeira", data={"_csrf": tok, "tema": "Segurança pública",
+                                                               "palavras": "polícia, crimes"})
+    cli.post(f"/termometro/{tid}/impacto", data={"_csrf": tok, "ufs_favorecidas": "", "temas_proposicao":
+                                                 "segurança pública", "efeito_pauta": "contraria"})
+    d = dep(tid)
+    f106 = [f for f in d[106]["fatores"] if f["tipo"] == "bandeira"]
+    assert f106 and f106[0]["direcao"] == "NÃO" and d[106]["p_sim"] < base_106
+
+    # fator avulso da equipe
+    cli.post(f"/termometro/{tid}/deputado/107/fator", data={"_csrf": tok, "direcao": "NÃO",
+                                                            "motivo": "base eleitoral contrária"})
+    d = dep(tid)
+    assert any(f["tipo"] == "avulso" and "base eleitoral" in f["rotulo"] for f in d[107]["fatores"])
+    html = cli.get(f"/termometro/{tid}").get_data(as_text=True)
+    assert "Individualidade dos parlamentares" in html and "Fator da equipe: base eleitoral contrária → NÃO" in html
+    html = cli.get(f"/termometro/{tid}/deputado/106").get_data(as_text=True)
+    assert "Individualidade do parlamentar" in html and "Segurança pública" in html and "PL 2100/2025" in html
+
+    # IA: impacto da proposição e temas caros do deputado
+    t = tm.analisar_impacto(tid, "admin", ia=lambda m: '{"ufs_favorecidas": ["Norte"], "ufs_prejudicadas": [], '
+                            '"temas": ["Segurança pública"], "palavras": ["polícia"], "efeito_pauta": "favorece", '
+                            '"resumo": "Interessa às bancadas da segurança."}')
+    assert t["ufs_favorecidas"].startswith("AC,AM") and t["impacto_origem"] == "ia" and t["efeito_pauta"] == "favorece"
+    temas = tm.identificar_bandeiras(101, "admin", ia=lambda m: '{"temas": [{"tema": "Segurança pública", '
+                                     '"palavras": ["polícia", "crime"], "justificativa": "Frente da Segurança."}]}')
+    assert temas and tm.bandeiras(101)[0]["origem"] == "ia"
+    tm.identificar_bandeiras(101, "admin", ia=lambda m: '{"temas": [{"tema": "Empreendedorismo"}]}')  # substitui as da IA
+    assert [b["tema"] for b in tm.bandeiras(101)] == ["Empreendedorismo"]
+    assert [b["tema"] for b in tm.bandeiras(106)] == ["Segurança pública"]                         # equipe fica
+    bid = tm.bandeiras(106)[0]["id"]
+    cli.post(f"/termometro/{tid}/deputado/106/bandeira/{bid}/apagar", data={"_csrf": tok})
+    assert tm.bandeiras(106) == []
+    cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
+    assert _q("SELECT COUNT(*) FROM termometro_fatores")[0][0] == 0

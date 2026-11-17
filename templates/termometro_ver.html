@@ -41,7 +41,7 @@
 </details>
 
 {% if fila and fila.rodando %}
-<div class="tm-fila">⏳ IA lendo discursos e entrevistas: {{ fila.feitos }} de {{ fila.total }} deputado(s)… A página se atualiza sozinha.</div>
+<div class="tm-fila">⏳ {% if fila.tipo == 'impacto' %}IA lendo a proposição para identificar estados e temas…{% elif fila.tipo == 'bandeiras' %}IA identificando temas caros: {{ fila.feitos }} de {{ fila.total }} deputado(s)…{% else %}IA lendo discursos e entrevistas: {{ fila.feitos }} de {{ fila.total }} deputado(s)…{% endif %} A página se atualiza sozinha.</div>
 <script>setTimeout(function(){location.reload()}, 8000)</script>
 {% elif fila and fila.erros %}
 <div class="aviso erro">A última análise da IA teve {{ fila.erros|length }} falha(s): {{ fila.erros[-1] }}</div>
@@ -112,6 +112,43 @@
   </details>
 </section>
 
+{% set n_ind = prev.deputados|selectattr('fatores')|list|length %}
+<section class="card neu" style="margin-bottom:14px" id="individual">
+  <h2>Individualidade dos parlamentares <small>estado e temas caros podem pesar mais que o partido · {{ n_ind }} deputado(s) com fator individual</small></h2>
+  <div style="padding:10px 14px 0">
+    <div><b>Estados beneficiados:</b> {{ (t.ufs_favorecidas or '—')|replace(',', ', ') }}
+      · <b>prejudicados:</b> {{ (t.ufs_prejudicadas or '—')|replace(',', ', ') }}</div>
+    <div style="margin-top:4px"><b>Temas da proposição:</b>
+      {% for p in (t.temas_proposicao or '').split(',') if p.strip() %}<span class="tm-kw">{{ p.strip() }}</span>{% else %}<span class="tm-sub">—</span>{% endfor %}
+      · para quem defende esses temas, a proposição <b>{{ 'contraria a pauta (puxa para NÃO)' if t.efeito_pauta == 'contraria' else 'favorece a pauta (puxa para SIM)' }}</b></div>
+    {% if t.impacto_resumo %}<p class="tm-sub" style="margin:4px 0 0">{{ t.impacto_resumo }}</p>{% endif %}
+    <p class="tm-sub" style="margin:4px 0 0">{% if t.impacto_em %}{{ 'Identificado pela IA' if t.impacto_origem == 'ia' else 'Informado pela equipe' }} em {{ t.impacto_em|dt_curta }}.{% else %}Ainda não analisado.{% endif %}
+      Entram na conta: deputados dos estados afetados, temas caros (IA ou equipe) que casam com a proposição, autoria de proposições parecidas, frentes parlamentares do tema e fatores informados pela equipe na ficha de cada deputado.</p>
+  </div>
+  <div class="form-linha">
+    <form method="post" action="{{ url_for('termometro.impacto_ia', tid=t.id) }}" style="margin:0"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn sec" {{ 'disabled' if fila and fila.rodando }}>✨ IA: estados e temas da proposição</button></form>
+    <form method="post" action="{{ url_for('termometro.bandeiras_ia', tid=t.id) }}" style="margin:0"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn sec" {{ 'disabled' if fila and fila.rodando }}>✨ IA: temas caros dos {{ lote }} mais indefinidos</button></form>
+  </div>
+  <details>
+    <summary style="padding:9px 14px;cursor:pointer;font-size:13px;font-weight:600;border-top:1px solid var(--linha)">Editar estados e temas da proposição</summary>
+    <form class="tm-form" method="post" action="{{ url_for('termometro.impacto', tid=t.id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <div class="lin">
+        <label>Estados beneficiados <span style="text-transform:none;font-weight:400">(siglas ou regiões: AM, PA, Nordeste)</span><input name="ufs_favorecidas" value="{{ (t.ufs_favorecidas or '')|replace(',', ', ') }}"></label>
+        <label>Estados prejudicados<input name="ufs_prejudicadas" value="{{ (t.ufs_prejudicadas or '')|replace(',', ', ') }}"></label>
+      </div>
+      <label>Temas da proposição (vírgulas)<input name="temas_proposicao" value="{{ t.temas_proposicao or '' }}" placeholder="segurança pública, proteção animal…"></label>
+      <label>Para quem defende esses temas, a proposição…<select name="efeito_pauta">
+        <option value="favorece" {{ 'selected' if t.efeito_pauta != 'contraria' }}>favorece a pauta (puxa para SIM)</option>
+        <option value="contraria" {{ 'selected' if t.efeito_pauta == 'contraria' }}>contraria a pauta (puxa para NÃO)</option></select></label>
+      <label>Resumo<input name="impacto_resumo" value="{{ t.impacto_resumo or '' }}"></label>
+      <div><button class="btn">Salvar</button></div>
+    </form>
+  </details>
+</section>
+
 <section class="card neu" style="margin-bottom:14px">
   <h2>Discursos e entrevistas <small>leitura por IA</small></h2>
   <div class="form-linha">
@@ -159,6 +196,7 @@
             {% if d.n_similares %}{{ d.n_similares }} votação(ões) parecida(s){% if d.com_oposicao_tema is not none %} · {{ d.com_oposicao_tema }}% com a Oposição{% endif %}{% else %}sem votações parecidas{% endif %}
             {% if d.mesma %}{% set u = d.mesma[0] %}<br><b style="color:var(--tinta)">{{ u.etapa }} ({{ u.data|data }}): votou {{ u.voto }} — Oposição orientou {{ u.ori_opo }}</b>{% if d.mesma|length > 1 %} +{{ d.mesma|length - 1 }}{% endif %}{% endif %}
             {% if d.partido_materia.orientacao %}<br>{{ d.partido }} {{ 'libera' if d.partido_materia.orientacao == 'LIVRE' else 'orienta ' ~ d.partido_materia.orientacao }} ({{ d.partido_materia.fonte }}){% if d.fidelidade is not none %} · segue o partido em {{ d.fidelidade }}%{% endif %}{% endif %}
+            {% for f in d.fatores %}<br><b style="color:{{ '#17703a' if f.direcao == 'SIM' else '#b03021' }}">{{ {'uf': '🏠', 'bandeira': '⭐', 'autoria': '✍️', 'frente': '🤝', 'avulso': '📌'}.get(f.tipo) }} {{ f.rotulo }} → {{ f.direcao }}</b>{% endfor %}
             {% if d.oposicionismo is not none %}<br>oposicionismo geral {{ d.oposicionismo|pct }}{% endif %}
             <span class="tm-ver">ver votações ▾</span>
           </summary>

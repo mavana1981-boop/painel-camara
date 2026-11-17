@@ -235,6 +235,13 @@ proposição buscada ou de um tema digitado, sempre informando como a Oposição
   estimada pela orientação do partido na votação anterior mais recente da matéria (ex.: urgência; se orientou com a
   Oposição lá, supõe-se que acompanhe a Oposição agora) — puxa a chance do deputado na proporção da fidelidade dele ao
   partido na legislatura (peso 50% se informada, 35% se estimada; liberado não conta).
+- **Individualidade do parlamentar** (pode contrariar partido e liderança): (a) estados beneficiados/prejudicados
+  pela proposição — a IA identifica ao criar o termômetro (ou pelo botão) e a equipe edita (aceita regiões:
+  "Nordeste"); (b) temas caros de cada deputado — a IA lê frentes, comissões e proposições de autoria, e a equipe
+  acrescenta temas avulsos (valem para todos os termômetros, tabela `deputado_bandeiras`); (c) autoria de
+  proposições parecidas (`TERMOMETRO_SIM_AUTORIA`, 0,3); (d) frentes parlamentares do tema; (e) fator avulso da equipe
+  no termômetro (puxa para SIM/NÃO, com motivo). O campo "para quem defende esses temas, a proposição favorece/contraria
+  a pauta" define a direção dos temas. Juntos pesam até `TERMOMETRO_TETO_INDIVIDUAL` (40%; 55% com fator da equipe).
 - **Discursos e entrevistas (IA)**: por botão (um deputado, ou os `TERMOMETRO_IA_LOTE` = 15 mais indefinidos), a IA lê os
   discursos do deputado no Plenário (API `/deputados/{id}/discursos`, desde o início da legislatura) e notícias dos
   últimos 12 meses com o nome dele e o tema (Google Notícias) e responde a favor / contra / indefinido, com confiança e
