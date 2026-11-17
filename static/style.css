@@ -1228,3 +1228,15 @@ details.rn-acomp .rn-form{margin-top:6px}
 .filtros .tm-chk label{flex-direction:row;align-items:center;gap:4px;text-transform:none;letter-spacing:0;cursor:pointer}
 .filtros .tm-chk input{min-width:0;margin:0}
 @media (max-width:640px){.tm-term{min-width:110px}.tm-tabela .m-esc{display:none}}
+
+.tm-basecel{white-space:normal;min-width:260px}
+.tm-basecel summary{cursor:pointer;list-style:none;border-radius:6px;padding:3px 5px;margin:-3px -5px}
+.tm-basecel summary::-webkit-details-marker{display:none}
+.tm-basecel summary:hover{background:var(--pri-cl)}
+.tm-ver{display:inline-block;margin-top:2px;color:var(--pri);font-weight:600}
+.tm-basecel details[open] .tm-ver{display:none}
+.tm-votos{margin-top:6px;border:1px solid var(--linha);border-radius:8px;background:#fff;max-width:440px}
+.tm-votos>a,.tm-votos>div{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border-bottom:1px solid #edf1f6;text-decoration:none;color:var(--tinta)}
+.tm-votos>a:hover{background:#f7f9fc}
+.tm-votos .pill{min-width:0;padding:0 5px}
+.tm-votos a.tm-ficha{color:var(--pri);font-weight:600;border-bottom:0}
