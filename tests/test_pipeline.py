@@ -3576,7 +3576,7 @@ def test_termometro_ia_le_discursos_e_noticias():
     t = tm.obter(tid)
     prev = tm.calcular(t)
     d = {x["codigo"]: x for x in prev["deputados"]}
-    assert d[102]["fonte"] == "votos + IA" and d[102]["ia"]["posicao"] == "favor"
+    assert d[102]["fonte"] == "votos + partido + IA" and d[102]["ia"]["posicao"] == "favor"
     assert 102 not in tm.escolher_para_ia(prev) and 101 not in tm.escolher_para_ia(prev)
     cli = _cliente()
     html = cli.get(f"/termometro/{tid}/deputado/102").get_data(as_text=True)
@@ -3616,3 +3616,31 @@ def test_termometro_busca_proposicao_sem_sigla_e_pela_api():
     tid = int(re.search(r"/termometro/(\d+)", r.headers["Location"]).group(1))
     assert tm.obter(tid)["identificacao"] == "PL 4675/2025"
     cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
+
+
+def test_termometro_orientacao_do_partido_entra_na_conta():
+    import termometro as tm
+    cli = _cliente()
+    tok = _csrf(cli, "/termometro")
+    tid = tm.criar({"proposicao_id": 2480001, "orientacao_oposicao": "NÃO"}, "admin")
+    prev = tm.calcular(tm.obter(tid))
+    pm = prev["partidos_materia"]
+    # PT orientou contra a Oposição nas votações anteriores da matéria → estimado SIM; PL com a Oposição → NÃO
+    assert pm["PT"]["orientacao"] == "SIM" and pm["PT"]["fonte"] == "estimada"
+    assert pm["PL"]["orientacao"] == "NÃO"
+    d = {x["codigo"]: x for x in prev["deputados"]}
+    assert "partido" in d[102]["fonte"] and d[102]["partido_materia"]["orientacao"] == "SIM"
+    antes = d[102]["p_sim"]
+    # equipe informa que o PT vai orientar NÃO: a chance de SIM do Bruno cai
+    r = cli.post(f"/termometro/{tid}/partidos", data={"_csrf": tok, "ori_PT": "NÃO", "ori_PL": ""})
+    assert r.status_code == 302
+    d = {x["codigo"]: x for x in tm.calcular(tm.obter(tid))["deputados"]}
+    assert d[102]["partido_materia"]["fonte"] == "informada" and d[102]["p_sim"] < antes
+    html = cli.get(f"/termometro/{tid}").get_data(as_text=True)
+    assert "Orientação dos partidos nesta matéria" in html and "PT orienta NÃO (informada)" in html
+    html = cli.get(f"/termometro/{tid}/deputado/102").get_data(as_text=True)
+    assert "orientação do PT nesta matéria" in html and "segue a orientação do partido" in html
+    cli.post(f"/termometro/{tid}/partidos", data={"_csrf": tok, "ori_PT": ""})            # volta à estimativa
+    assert tm.calcular(tm.obter(tid))["partidos_materia"]["PT"]["fonte"] == "estimada"
+    cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
+    assert _q("SELECT COUNT(*) FROM termometro_partidos")[0][0] == 0
