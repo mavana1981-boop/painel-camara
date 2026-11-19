@@ -3706,3 +3706,107 @@ def test_termometro_individualidade_estado_bandeiras_autoria_e_fator():
     assert tm.bandeiras(106) == []
     cli.post(f"/termometro/{tid}/apagar", data={"_csrf": tok})
     assert _q("SELECT COUNT(*) FROM termometro_fatores")[0][0] == 0
+
+
+# ======================= Ex-deputado acompanhado (Subtenente Gonzaga / Luísa) =======================
+
+def test_ex_deputado_gonzaga_para_luisa():
+    """Ex-deputado fora da legislatura: cadastro protegido, vínculo com a Luísa, proposições dos anos do
+    mandato, aprovações pela tramitação e tela 'Mandato e aprovações'; nada disso entra nos rankings."""
+    import collector
+    import ex_deputados
+    import paineis
+    from db import meta
+    from sqlalchemy import delete as dele
+    cod = 177282
+    adm = _cliente()
+    tok = _tok(adm, "/usuarios")
+    adm.post("/usuarios", data={"_csrf": tok, "acao": "criar", "login": "luisa.m",
+                                "nome": "Luísa Martins", "senha": "senha-segura-9"})
+    with engine.begin() as c:
+        c.execute(dele(meta).where(meta.c.chave.like("ex:%")))
+    assert ex_deputados.garantir_cadastro() == 1 and ex_deputados.garantir_cadastro() == 0
+    assert ex_deputados.vincular_usuarios() >= 1      # toda Luísa ativa (ex.: Luisa.Marreco, do Minha Pauta)
+    uid = _q("SELECT id FROM usuarios WHERE login='luisa.m'")[0][0]
+    assert _q(f"SELECT 1 FROM usuario_deputados WHERE usuario_id={uid} AND codigo_deputado={cod}")
+    assert ex_deputados.vincular_usuarios() == 0      # uma vez só (o admin pode desvincular depois)
+
+    with engine.begin() as c:
+        collector.limpar_deputados_sem_atividade(c)   # sem voto nem despesa, mas continua no cadastro
+    assert paineis.deputado(cod)["nome"] == "Subtenente Gonzaga"
+
+    # perfil (API fictícia)
+    det = {"dados": {"nomeCivil": "LUIZ GONZAGA RIBEIRO", "dataNascimento": "1962-05-31",
+                     "municipioNascimento": "Manhuaçu", "ufNascimento": "MG",
+                     "ultimoStatus": {"nomeEleitoral": "Subtenente Gonzaga", "siglaPartido": "PSD", "siglaUf": "MG",
+                                      "situacao": "Fim de Mandato"}}}
+    hist = {"dados": [{"idLegislatura": 55, "siglaPartido": "PDT", "siglaUf": "MG", "situacao": "Exercício",
+                       "condicaoEleitoral": "Titular"},
+                      {"idLegislatura": 56, "siglaPartido": "PDT", "siglaUf": "MG", "situacao": "Exercício"},
+                      {"idLegislatura": 56, "siglaPartido": "PSD", "siglaUf": "MG", "situacao": "Exercício"}]}
+    resp = {f"/deputados/{cod}": det, f"/deputados/{cod}/historico": hist, f"/deputados/{cod}/frentes": {"dados": []}}
+    org = [{"siglaOrgao": "CREDN", "nomeOrgao": "Comissão de Relações Exteriores e de Defesa Nacional",
+            "titulo": "Titular", "dataInicio": "2019-03-13T00:00", "dataFim": "2021-03-01T00:00"}]
+    ex_deputados.carregar_perfil(cod, ler=lambda u: resp.get(u), ler_paginas=lambda u: org)
+
+    # proposições de 2019 (layout dos arquivos anuais)
+    def prop(pid, sigla, num, sit, data_sit="2021-07-01T10:00"):
+        return {"id": str(pid), "siglaTipo": sigla, "numero": str(num), "ano": "2019", "ementa": f"Ementa {sigla} {num}",
+                "dataApresentacao": "2019-03-01T10:00", "ultimoStatus_dataHora": data_sit,
+                "ultimoStatus_descricaoSituacao": sit, "descricaoTipo": sigla}
+    props = [prop(880001, "PL", 1, "Transformado em Norma Jurídica"),
+             prop(880002, "PL", 2, "Aguardando Apreciação pelo Senado Federal"),
+             prop(880003, "PL", 3, "Arquivada"),                   # aprovado só em comissão (tramitação)
+             prop(880004, "PL", 4, "Arquivada"),                   # nunca aprovado
+             prop(880005, "REQ", 5, "Aprovado"),                   # requerimento: não é projeto
+             prop(880006, "PL", 6, "Transformado em Norma Jurídica")]   # de outro deputado
+    auts = [{"idProposicao": str(p), "idDeputadoAutor": str(cod), "nomeAutor": "Subtenente Gonzaga",
+             "ordemAssinatura": "2" if p == 880002 else "1", "proponente": "1"}
+            for p in (880001, 880002, 880003, 880004, 880005)]
+    auts.insert(0, {"idProposicao": "880002", "idDeputadoAutor": "999", "nomeAutor": "Outro", "ordemAssinatura": "1",
+                    "proponente": "1"})                            # coautoria
+    auts.append({"idProposicao": "880006", "idDeputadoAutor": "999", "nomeAutor": "Outro", "ordemAssinatura": "1",
+                 "proponente": "1"})
+    with engine.begin() as c:
+        assert ex_deputados.gravar_ano(c, cod, 2019, props, auts) == 5
+    assert ex_deputados.anos_do_mandato(cod) == list(range(2015, 2023))
+
+    trams = {880003: [{"dataHora": "2020-11-10T10:00", "siglaOrgao": "CSPCCO", "despacho": "Aprovado o Parecer."}],
+             880001: [{"dataHora": "2020-05-05T10:00", "siglaOrgao": "PLEN", "despacho": "Aprovado o Projeto."}]}
+    lidos = []
+
+    def ler(pid, ini, fim):
+        lidos.append(pid)
+        return trams.get(pid, [])
+    ex_deputados.carregar_aprovacoes(cod, ler=ler)
+    assert 880005 not in lidos and 880001 in lidos               # requerimento não é lido
+
+    ap = {p["identificacao"]: p for p in ex_deputados.projetos_aprovados(cod)}
+    assert set(ap) == {"PL 1/2019", "PL 2/2019", "PL 3/2019"}
+    assert ap["PL 1/2019"]["classe"] == "lei" and ap["PL 2/2019"]["classe"] == "senado"
+    assert ap["PL 3/2019"]["classe"] == "comissao" and ap["PL 3/2019"]["etapas"][0]["data"] == "2020-11-10"
+    assert ap["PL 2/2019"]["principal"] is False and ap["PL 1/2019"]["principal"] is True
+    assert [p["identificacao"] for p in ex_deputados.projetos_aprovados(cod)][0] == "PL 1/2019"   # norma primeiro
+
+    # rankings da legislatura não incluem o ex-deputado
+    assert cod not in {r["codigo"] for r in paineis.ranking_proposicoes()}
+
+    # tela da Luísa
+    with engine.begin() as c:
+        c.execute(dele(meta).where(meta.c.chave == f"ex:carga:{cod}"))
+        from sqlalchemy import insert as ins
+        c.execute(ins(meta).values(chave=f"ex:carga:{cod}", valor="2026-11-19T10:00:00"))
+    lu = _cliente_usuario("luisa.m", "senha-segura-9")
+    r = lu.get("/meu/", follow_redirects=True)
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200 and "Subtenente Gonzaga" in html and "Mandato e aprovações" in html
+    assert "LUIZ GONZAGA RIBEIRO" in html and "Manhuaçu" in html and "CREDN" in html
+    assert "56ª legislatura" in html and "PDT → PSD" in html
+    assert "PL 1/2019" in html and "Virou norma jurídica" in html and "PL 3/2019" in html and "PL 4/2019" not in html
+    assert "Agenda" not in re.search(r'<nav class="mh-nav">(.*?)</nav>', html, re.S).group(1)
+    so_lei = lu.get(f"/meu/{cod}?secao=visao&aprov=lei").get_data(as_text=True)
+    assert "PL 1/2019" in so_lei and "PL 2/2019" not in so_lei
+    assert lu.get(f"/meu/{cod}?secao=clipping").status_code == 200
+    assert lu.get(f"/meu/{cod}?secao=agenda").status_code == 200          # cai na visão geral
+    assert lu.get(f"/perfil?deputado={cod}").status_code == 200
+    assert "PL 1/2019" in lu.get(f"/proposicoes?deputado={cod}").get_data(as_text=True)

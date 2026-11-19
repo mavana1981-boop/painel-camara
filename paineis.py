@@ -69,7 +69,8 @@ def _atual(x, hoje):
     return not fim or fim >= hoje.isoformat()
 
 
-def perfil(codigo):
+def perfil(codigo, historico=False):
+    """historico=True (ex-deputado): todas as comissões e frentes do mandato, não só as atuais."""
     with engine.connect() as c:
         r = c.execute(text("SELECT detalhe, orgaos, frentes FROM perfis WHERE codigo = :c"),
                       {"c": codigo}).mappings().first()
@@ -112,7 +113,7 @@ def perfil(codigo):
         out["telefones"] = [t if t.startswith("(") else f"(61) {t}"]
 
     hoje = date.today()
-    orgs = [x for x in json.loads(r["orgaos"] or "[]") or [] if isinstance(x, dict) and _atual(x, hoje)]
+    orgs = [x for x in json.loads(r["orgaos"] or "[]") or [] if isinstance(x, dict) and (historico or _atual(x, hoje))]
     vistos = set()
     for x in orgs:
         chave = (x.get("siglaOrgao"), x.get("titulo"))
@@ -122,7 +123,8 @@ def perfil(codigo):
         nome = x.get("nomePublicacao") or x.get("nomeOrgao")
         titulo = (x.get("titulo") or "").strip()
         out["comissoes"].append({"sigla": x.get("siglaOrgao"), "nome": nome, "casa": "CD",
-                                 "participacao": titulo, "desde": (x.get("dataInicio") or "")[:10]})
+                                 "participacao": titulo, "desde": (x.get("dataInicio") or "")[:10],
+                                 "ate": (x.get("dataFim") or "")[:10]})
         if titulo and titulo not in ("Titular", "Suplente"):
             out["cargos"].append({"cargo": titulo, "sigla": x.get("siglaOrgao"), "nome": nome,
                                   "desde": (x.get("dataInicio") or "")[:10]})
@@ -138,7 +140,8 @@ def perfil(codigo):
     out["cargos"].sort(key=lambda x: (_peso(x["nome"]), x["sigla"] or ""))
 
     fr = [x for x in json.loads(r["frentes"] or "[]") or [] if isinstance(x, dict)]
-    fr = [x for x in fr if not x.get("idLegislatura") or int(x["idLegislatura"]) == metrics_legislatura()]
+    if not historico:
+        fr = [x for x in fr if not x.get("idLegislatura") or int(x["idLegislatura"]) == metrics_legislatura()]
     out["frentes_lista"] = sorted({(x.get("titulo") or "").strip() for x in fr} - {""})
     out["frentes"] = len(out["frentes_lista"])
     out["grupos"] = sum(1 for x in out["comissoes"] if "grupo parlamentar" in (x["nome"] or "").lower())
@@ -484,7 +487,10 @@ def relatorias_pauta_extras(codigo, ids_ja_listados=()):
 
 
 def ranking_proposicoes(inicio=None, fim=None, so_projetos=True, so_autor=True):
+    import ex_deputados
     cond, p = ["1=1"], {}
+    if ex_deputados.codigos():   # ex-deputados acompanhados não entram no ranking da legislatura
+        cond.append("s.codigo NOT IN (" + ",".join(str(int(x)) for x in sorted(ex_deputados.codigos())) + ")")
     if so_projetos:
         cond.append(f"pr.sigla IN {SIGLAS_PROJETO}")
     if so_autor:

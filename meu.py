@@ -26,6 +26,9 @@ bp = Blueprint("meu", __name__, url_prefix="/meu")
 SECOES = [("visao", "Visão geral"), ("agenda", "Agenda"), ("notificacoes", "Notificações"),
           ("solicitacoes", "Solicitações"), ("questoes", "Questões de ordem"), ("radar", "Radar de notícias"),
           ("rankings", "Rankings"), ("clipping", "Clipping")]
+# ex-deputado (fora da legislatura atual): sem agenda, questões de ordem e rankings da legislatura
+SECOES_EX = [("visao", "Mandato e aprovações"), ("notificacoes", "Notificações"), ("solicitacoes", "Solicitações"),
+             ("radar", "Radar de notícias"), ("clipping", "Clipping")]
 STATUS = [("aberta", "Aberta"), ("andamento", "Em andamento"), ("concluida", "Concluída"),
           ("arquivada", "Arquivada")]
 EXTENSOES = {"pdf", "doc", "docx", "odt", "rtf", "txt", "xls", "xlsx", "ods", "csv", "ppt", "pptx",
@@ -1005,8 +1008,11 @@ def painel(cod):
     s = paineis.deputado(cod)
     if not s:
         abort(404)
+    import ex_deputados
+    ex = ex_deputados.eh_ex(cod)
+    secoes_dep = SECOES_EX if ex else SECOES
     secao = request.args.get("secao", "visao")
-    if secao not in dict(SECOES):
+    if secao not in dict(secoes_dep):
         secao = "visao"
     if not pleno and secao != "solicitacoes":   # quem só recebeu tarefa vê apenas as próprias solicitações
         return redirect(url_for("meu.painel", cod=cod, secao="solicitacoes"))
@@ -1016,10 +1022,13 @@ def painel(cod):
     hoje = agora_brt().date()
     meus = set(deputados_do_usuario()) | (set() if pleno else {cod})
     ctx = {"aba": "meu", "s": s, "cod": cod, "secao": secao, "pleno": pleno, "status": STATUS,
-           "secoes": SECOES if pleno else [x for x in SECOES if x[0] == "solicitacoes"],
+           "secoes": secoes_dep if pleno else [x for x in secoes_dep if x[0] == "solicitacoes"], "ex": ex,
            "meus": [x for x in paineis.lista_deputados() if x["codigo"] in meus],
            "hoje": hoje}
-    if secao == "visao":
+    if secao == "visao" and ex:     # ex-deputado: dados do mandato e projetos aprovados
+        ctx["xd"] = ex_deputados.resumo(cod)
+        ctx["filtro_aprov"] = request.args.get("aprov", "")
+    elif secao == "visao":
         ctx["v"] = visao(cod)
     elif secao == "agenda":
         import coleta_meu
@@ -1173,6 +1182,16 @@ def _post(cod, secao, s, autor, pleno=True):
             else:
                 flash("Já há uma busca da legislatura em andamento. Aguarde terminar e recarregue a página.", "ok")
             destino = url_for("meu.painel", cod=cod, secao="clipping")
+        elif secao == "visao" and acao == "recarregar_ex":
+            import ex_deputados
+            if not ex_deputados.eh_ex(cod):
+                abort(400)
+            if ex_deputados.estado["rodando"]:
+                flash("A busca dos dados do mandato já está em andamento.", "ok")
+            else:
+                ex_deputados.atualizar_em_segundo_plano(forcar=True)
+                flash("Buscando na Câmara os dados, as proposições e as aprovações do mandato. Leva alguns minutos; "
+                      "recarregue a página depois.", "ok")
         elif acao == "atualizar":
             ok = atualizar_em_segundo_plano(cod)
             flash("Atualização iniciada. Recarregue a página em alguns minutos." if ok else

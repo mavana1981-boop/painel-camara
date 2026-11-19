@@ -101,6 +101,7 @@
       <h1>{{ s.nome }}</h1>
       <div class="mh-chips">
         <span>{{ s.partido or 'Sem partido' }}</span>{% if s.uf %}<span>{{ s.uf }}</span>{% endif %}
+        {% if ex %}<span class="mh-ex">Ex-deputado · fora da legislatura atual</span>{% endif %}
         <span class="mh-hoje">{{ dias_semana[hoje.weekday()]|capitalize }}, {{ (hoje|string)|data }}</span>
       </div>
     </div>
@@ -116,8 +117,89 @@
   </nav>
 </header>
 
+{# =================== EX-DEPUTADO: MANDATO E APROVAÇÕES =================== #}
+{% if secao == 'visao' and ex %}
+{% set b = xd.perfil.basicos %}
+{% if xd.carregando or not xd.ultima_carga %}
+<div class="xd-aviso">{% if xd.carregando %}Buscando na Câmara os dados do mandato ({{ xd.estado.fase or 'início' }}{% if xd.estado.total %}: {{ xd.estado.feito }} de {{ xd.estado.total }}{% endif %}). A lista vai se completando — recarregue a página em alguns minutos.
+{% else %}Os dados do mandato ainda não foram buscados na Câmara.{% endif %}</div>
+{% endif %}
+<section class="mk-grade">
+  <div class="mk ou"><span class="mk-ic">{{ ic('clipping') }}</span><b>{{ xd.aprovados|length }}</b><span>Projetos aprovados</span>
+    <small>{{ xd.n_lei }} {{ 'virou' if xd.n_lei == 1 else 'viraram' }} norma jurídica · {{ xd.n_camara }} aprovado{{ 's' if xd.n_camara != 1 }} na Câmara</small></div>
+  <div class="mk az"><span class="mk-ic">{{ ic('solicitacoes') }}</span><b>{{ xd.projetos|mil }}</b><span>Projetos apresentados</span>
+    <small>PL, PLP, PEC, PDL/PDC e PRC, autoria e coautoria</small></div>
+  <a class="mk vd" href="{{ url_for('proposicoes', deputado=cod) }}"><span class="mk-ic">{{ ic('seta') }}</span><b>{{ xd.proposicoes|mil }}</b><span>Proposições no total</span>
+    <small>{{ xd.como_autor|mil }} como 1º autor · inclui requerimentos</small></a>
+  <div class="mk"><span class="mk-ic">{{ ic('agenda') }}</span><b>{{ xd.mandatos|length or '—' }}</b><span>Mandato{{ 's' if xd.mandatos|length != 1 }} na Câmara</span>
+    <small>{% for mdt in xd.mandatos %}{{ mdt.legislatura }}ª ({{ mdt.periodo }}){{ ' · ' if not loop.last }}{% endfor %}</small></div>
+</section>
+
+<section class="grade">
+  <div class="card neu"><h2>Dados do parlamentar</h2>
+    <div class="ficha">
+      <div><b>Nome parlamentar</b>{{ s.nome }}</div>
+      {% if b.nome_completo or s.nome_completo %}<div><b>Nome civil</b>{{ b.nome_completo or s.nome_completo }}</div>{% endif %}
+      {% if b.nascimento %}<div><b>Nascimento</b>{{ b.nascimento|data }}{% if b.idade %} ({{ b.idade }} anos){% endif %}</div>{% endif %}
+      {% if b.naturalidade %}<div><b>Naturalidade</b>{{ b.naturalidade }}{% if b.uf_naturalidade %}-{{ b.uf_naturalidade }}{% endif %}</div>{% endif %}
+      <div><b>Partido / UF</b>{{ s.partido or '—' }}{% if s.uf %} · {{ s.uf }}{% endif %} <span class="xd-suave">(último registro)</span></div>
+      {% if b.escolaridade %}<div><b>Escolaridade</b>{{ b.escolaridade }}</div>{% endif %}
+      {% if b.email %}<div><b>E-mail</b><a href="mailto:{{ b.email }}">{{ b.email }}</a></div>{% endif %}
+      {% if b.situacao %}<div><b>Situação</b>{{ b.situacao }}{% if b.condicao %} · {{ b.condicao }}{% endif %}</div>{% endif %}
+      {% for r in b.redes %}<div><b>{{ 'Redes sociais' if loop.first else '' }}</b><a href="{{ r }}" target="_blank" rel="noopener">{{ r|replace('https://','')|replace('http://','')|replace('www.','') }}</a></div>{% endfor %}
+      <div><b>Página oficial</b><a href="https://www.camara.leg.br/deputados/{{ cod }}" target="_blank" rel="noopener">camara.leg.br ↗</a></div>
+    </div>
+    {% if xd.mandatos %}
+    <h2 style="border-top:1px solid var(--linha)">Mandatos</h2>
+    <table><tbody>
+    {% for mdt in xd.mandatos %}<tr><td><b>{{ mdt.legislatura }}ª legislatura</b> <span class="xd-suave">{{ mdt.periodo }}</span></td>
+      <td>{{ mdt.partidos|join(' → ') }}{% if mdt.uf %}-{{ mdt.uf }}{% endif %}</td>
+      <td class="xd-suave">{{ mdt.condicao or '' }}</td></tr>{% endfor %}
+    </tbody></table>
+    {% endif %}
+  </div>
+  <div class="card neu"><h2>Comissões que integrou <small>{{ xd.perfil.comissoes|length }}</small></h2>
+    <div class="rolagem" style="max-height:420px"><table><tbody>
+    {% for x in xd.perfil.comissoes %}<tr><td><b>{{ x.sigla }}</b> <span class="xd-suave">{{ x.nome }}</span></td>
+      <td class="c">{{ x.participacao }}</td>
+      <td class="n xd-suave" style="white-space:nowrap">{{ x.desde[:4] }}{% if x.ate and x.ate[:4] != x.desde[:4] %}–{{ x.ate[:4] }}{% endif %}</td></tr>
+    {% else %}<tr><td class="vazio-msg">Sem participações registradas.</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if xd.perfil.frentes_lista %}<p class="nota">{{ xd.perfil.frentes }} frentes parlamentares.</p>{% endif %}
+  </div>
+</section>
+
+{% set fa = filtro_aprov %}
+<section class="card neu">
+  <h2>Projetos aprovados <small>{{ xd.aprovados|length }}</small>
+    <span class="xd-filtros">
+      {% for k, r in [('', 'Todos'), ('lei', 'Viraram norma'), ('camara', 'Aprovados na Câmara'), ('autor', 'Só como 1º autor')] %}
+      <a href="{{ url_for('meu.painel', cod=cod, secao='visao', aprov=k or None) }}" class="{{ 'ativo' if fa == k }}">{{ r }}</a>{% endfor %}
+    </span></h2>
+  {% set lista_ap = xd.aprovados|selectattr('classe', 'equalto', 'lei')|list if fa == 'lei'
+       else xd.aprovados|rejectattr('classe', 'equalto', 'lei')|list if fa == 'camara'
+       else xd.aprovados|selectattr('principal')|list if fa == 'autor' else xd.aprovados %}
+  {% for p in lista_ap %}
+  <div class="xd-proj {{ p.classe }}">
+    <div class="xd-topo"><a href="{{ p.url }}" target="_blank" rel="noopener"><b>{{ p.identificacao }}</b></a>
+      <i class="xd-selo {{ p.classe }}">{{ p.rotulo }}</i>
+      <i class="xd-papel">{{ '1º autor' if p.principal else 'coautor' }}</i>
+      {% if p.ultima %}<span class="xd-suave">{{ p.ultima|data }}</span>{% endif %}</div>
+    {% if p.ementa %}<div class="notif-ementa">{{ p.ementa }}</div>{% endif %}
+    {% if p.situacao %}<div class="xd-suave">Situação atual: {{ p.situacao }}{% if p.data_situacao %} ({{ p.data_situacao|data }}){% endif %}</div>{% endif %}
+    {% if p.etapas %}<ul class="xd-etapas">{% for e in p.etapas %}<li><span>{{ e.data|data }}</span> {{ e.situacao }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% else %}<div class="vazio-msg">{{ 'Nenhum projeto aprovado encontrado.' if xd.ultima_carga else 'A lista aparece quando a busca na Câmara terminar.' }}</div>{% endfor %}
+  <p class="nota">Projetos (PL, PLP, PEC, PDL/PDC, PRC) de autoria ou coautoria com aprovação registrada na Câmara: viraram norma jurídica,
+    foram enviados ao Senado ou à sanção, ou tiveram o mérito aprovado em comissão ou no Plenário (pela tramitação).
+    {% if xd.ultima_carga %}Atualizado em {{ xd.ultima_carga[:10]|data }}; a busca se repete a cada semana.{% endif %}</p>
+  {% if pleno %}<form method="post" style="margin-top:8px"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="recarregar_ex">
+    <button class="btn sec" {{ 'disabled' if xd.carregando }}>{{ ic('refresh') }} Buscar de novo na Câmara</button></form>{% endif %}
+</section>
+{% endif %}
+
 {# =================== VISÃO GERAL =================== #}
-{% if secao == 'visao' %}
+{% if secao == 'visao' and not ex %}
 <section class="mk-grade">
   <a class="mk" href="{{ url_for('meu.painel', cod=cod, secao='agenda') }}"><span class="mk-ic">{{ ic('agenda') }}</span>
     <b>{{ v.agenda|sum(attribute='itens', start=[])|length }}</b><span>Compromissos nos próximos 7 dias</span></a>

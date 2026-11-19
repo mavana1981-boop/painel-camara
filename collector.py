@@ -821,6 +821,8 @@ def coletar_perfis(codigos=None):
         if codigos:
             q = q.where(deputados.c.codigo.in_(codigos))
         alvo = [r[0] for r in c.execute(q)]
+    import ex_deputados
+    alvo = [x for x in alvo if x not in ex_deputados.codigos()]   # perfil próprio (período do mandato)
     for cod in alvo:
         try:
             det = get_json(f"/deputados/{cod}")
@@ -841,8 +843,10 @@ def limpar_deputados_sem_atividade(conn):
     from sqlalchemy import exists
     sem_voto = ~exists().where(votos.c.codigo_deputado == deputados.c.codigo)
     sem_desp = ~exists().where(despesas.c.codigo_deputado == deputados.c.codigo)
+    import ex_deputados
     alvo = [r[0] for r in conn.execute(select(deputados.c.codigo).where(
-        deputados.c.em_exercicio.is_not(True), sem_voto, sem_desp))]
+        deputados.c.em_exercicio.is_not(True), sem_voto, sem_desp))
+        if r[0] not in ex_deputados.codigos()]     # ex-deputado acompanhado fica no cadastro
     if alvo:
         conn.execute(delete(autorias).where(autorias.c.codigo_deputado.in_(alvo)))
         conn.execute(delete(perfis).where(perfis.c.codigo.in_(alvo)))
@@ -913,6 +917,8 @@ def executar(desde: date | None = None, so_deputados=False):
             limpar_deputados_sem_atividade(c)
         _passo("proposições", coletar_processos, anos if desde is not None else anos_legislatura(hoje))
         _passo("perfis", coletar_perfis)
+        import ex_deputados
+        _passo("ex-deputados", ex_deputados.atualizar)
         import coleta_meu
         _passo("meu parlamentar", coleta_meu.executar)
     with engine.begin() as c:

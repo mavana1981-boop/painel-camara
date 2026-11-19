@@ -258,7 +258,7 @@ def perfil():
     s = paineis.deputado(cod)
     return render_template(
         "perfil.html", aba="perfil", op=op, lista=lista, s=s, cod=cod,
-        perfil=paineis.perfil(cod), ind=paineis.indicadores_deputado(cod),
+        perfil=paineis.perfil(cod, historico=__import__("ex_deputados").eh_ex(cod)), ind=paineis.indicadores_deputado(cod),
         props=paineis.proposicoes(cod, limite=0), cota=paineis.cota_deputado(cod))
 
 
@@ -520,6 +520,8 @@ if os.environ.get("AUTO_CARGA") != "0" and (os.environ.get("RAILWAY_ENVIRONMENT"
     import clipping_auto  # noqa: E402
     threading.Thread(target=clipping_auto.carga_inicial_se_preciso, daemon=True).start()  # aprovações 7 dias (1x)
     threading.Thread(target=clipping_auto.carga_legislatura_ao_iniciar, daemon=True).start()  # desde fev/2023
+    import ex_deputados  # noqa: E402
+    ex_deputados.atualizar_em_segundo_plano()   # ex-deputados acompanhados (ex.: Subtenente Gonzaga, da Luísa)
     if os.environ.get("AUTO_COLETA") != "0":
         threading.Thread(target=_agendador_diario, daemon=True).start()
         threading.Thread(target=_agendador_agenda, daemon=True).start()
