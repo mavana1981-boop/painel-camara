@@ -29,6 +29,7 @@ EX_DEPUTADOS = {
         "nome": "Subtenente Gonzaga", "partido": "PSD", "uf": "MG",
         "inicio": "2015-02-01", "fim": "2023-01-31",      # 55ª e 56ª legislaturas
         "usuarios": ["luisa"],                             # login ou primeiro nome (sem acento)
+        "foto": "/static/fotos/dep-177282.jpg",            # foto enviada pela equipe (prevalece sobre a da Câmara)
     },
 }
 PROJETOS = {"PL", "PLP", "PEC", "PDL", "PDC", "PRC", "PLV"}  # PDC: decreto legislativo antes de 2019
@@ -73,10 +74,12 @@ def garantir_cadastro():
         existentes = {r[0] for r in c.execute(select(deputados.c.codigo).where(deputados.c.codigo.in_(codigos())))}
         for cod, cfg in EX_DEPUTADOS.items():
             if cod in existentes:
+                if cfg.get("foto"):
+                    c.execute(update(deputados).where(deputados.c.codigo == cod).values(foto=cfg["foto"]))
                 continue
             c.execute(insert(deputados).values(
                 codigo=cod, nome=cfg["nome"], nome_norm=norm_nome(cfg["nome"]), partido=cfg.get("partido"),
-                uf=cfg.get("uf"), foto=_foto(cod), em_exercicio=False))
+                uf=cfg.get("uf"), foto=cfg.get("foto") or _foto(cod), em_exercicio=False))
             n += 1
     return n
 
@@ -210,6 +213,8 @@ def carregar_perfil(cod, ler=None, ler_paginas=None):
                  "uf": st.get("siglaUf") or None, "foto": st.get("urlFoto") or None,
                  "email": st.get("email") or None}
         novos = {k: v for k, v in novos.items() if v}
+        if config(cod).get("foto"):
+            novos["foto"] = config(cod)["foto"]
         if novos.get("nome"):
             novos["nome_norm"] = norm_nome(novos["nome"])
         if novos:

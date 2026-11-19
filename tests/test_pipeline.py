@@ -3734,6 +3734,7 @@ def test_ex_deputado_gonzaga_para_luisa():
     with engine.begin() as c:
         collector.limpar_deputados_sem_atividade(c)   # sem voto nem despesa, mas continua no cadastro
     assert paineis.deputado(cod)["nome"] == "Subtenente Gonzaga"
+    assert paineis.deputado(cod)["foto"] == "/static/fotos/dep-177282.jpg"
 
     # perfil (API fictícia)
     det = {"dados": {"nomeCivil": "LUIZ GONZAGA RIBEIRO", "dataNascimento": "1962-05-31",
@@ -3748,6 +3749,7 @@ def test_ex_deputado_gonzaga_para_luisa():
     org = [{"siglaOrgao": "CREDN", "nomeOrgao": "Comissão de Relações Exteriores e de Defesa Nacional",
             "titulo": "Titular", "dataInicio": "2019-03-13T00:00", "dataFim": "2021-03-01T00:00"}]
     ex_deputados.carregar_perfil(cod, ler=lambda u: resp.get(u), ler_paginas=lambda u: org)
+    assert paineis.deputado(cod)["foto"] == "/static/fotos/dep-177282.jpg"   # a da Câmara não substitui
 
     # proposições de 2019 (layout dos arquivos anuais)
     def prop(pid, sigla, num, sit, data_sit="2021-07-01T10:00"):
