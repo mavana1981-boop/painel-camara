@@ -138,16 +138,18 @@ def gravar_ano(conn, cod, ano, linhas_props, linhas_autores, notificar=False):
     linhas, auts = [], []
     for r in linhas_props:
         pid = collector._int(r.get("id"))
-        if pid not in alvo:
+        # autoria/coautoria dele, ou matéria em que ele é o relator registrado (último relator designado)
+        if pid is None or (pid not in alvo and collector.id_da_uri(r.get("ultimoStatus_uriRelator")) != cod):
             continue
         p = collector.parse_proposicao(r, ano)
         if p["sigla"] in collector.TIPOS_EXCLUIDOS:
             continue
         lst = sorted(autores[pid])
         p["autoria"] = ", ".join(n for _, n, _ in lst if n)[:2000] or None
-        dele = min(o for o, _, c in lst if c == cod)
         linhas.append(p)
-        auts.append({"processo_id": pid, "codigo_deputado": cod, "principal": dele == lst[0][0]})
+        if pid in alvo:
+            dele = min(o for o, _, c in lst if c == cod)
+            auts.append({"processo_id": pid, "codigo_deputado": cod, "principal": dele == lst[0][0]})
     ids = [p["id"] for p in linhas]
     antes = {}
     for i in range(0, len(ids), 900):
@@ -350,16 +352,27 @@ def _rotulo(sit, norma):
     return "comissao", "Aprovado na Câmara"
 
 
-def projetos_aprovados(cod):
-    """Projetos de autoria/coautoria aprovados: viraram norma, aprovados na Câmara (Senado, sanção) ou
-    com aprovação registrada na tramitação (comissões/Plenário), com as etapas de aprovação."""
+def _aprovado(p, etapas):
+    s = norm_nome(p["situacao"] or "")
+    import clipping_auto
+    return (bool(p["virou_norma"]) or clipping_auto.eh_aprovacao(p["situacao"] or "")
+            or ("senado" in s and "rejeitad" not in s) or bool(etapas))
+
+
+def projetos(cod, todas=False):
+    """Todos os projetos ligados ao ex-deputado — autoria, coautoria e relatoria — com a situação de cada um.
+    todas=True: também requerimentos, indicações e demais proposições.
+    classe: lei | sancao | senado | comissao (aprovados) | tramita | encerrado."""
     import clipping_auto
     with engine.connect() as c:
-        props = {r["id"]: dict(r) for r in c.execute(text("""
-            SELECT pr.id, pr.sigla, pr.identificacao, pr.ementa, pr.situacao, pr.data_situacao, pr.url,
-                   pr.virou_norma, pr.data_apresentacao, a.principal
-            FROM processos pr JOIN autorias a ON a.processo_id = pr.id
-            WHERE a.codigo_deputado = :c"""), {"c": cod}).mappings()}
+        props = {}
+        for r in c.execute(text("""
+                SELECT pr.id, pr.sigla, pr.identificacao, pr.ementa, pr.situacao, pr.data_situacao, pr.url,
+                       pr.virou_norma, pr.tramitando, pr.data_apresentacao, pr.autoria, pr.relator_id, pr.orgao,
+                       a.principal, a.codigo_deputado AS autor
+                FROM processos pr LEFT JOIN autorias a ON a.processo_id = pr.id AND a.codigo_deputado = :c
+                WHERE a.codigo_deputado = :c OR pr.relator_id = :c"""), {"c": cod}).mappings():
+            props[r["id"]] = dict(r)
         etapas = defaultdict(list)
         for r in c.execute(text("""SELECT chave, data, situacao, colegiado, identificacao, ementa FROM clipping_aprovacoes
                                    WHERE codigo_deputado = :c AND tipo = 'autoria' ORDER BY data"""),
@@ -373,29 +386,57 @@ def projetos_aprovados(cod):
             etapas[pid].append({"data": r["data"], "situacao": r["situacao"], "colegiado": r["colegiado"]})
     out = []
     for pid, p in props.items():
-        if (p["sigla"] or "").upper() not in PROJETOS:
+        projeto = (p["sigla"] or "").upper() in PROJETOS
+        if not todas and not projeto:
             continue
+        autor = p["autor"] is not None
+        relator = p["relator_id"] == cod
+        papel = ("1º autor" if p["principal"] else "coautor") if autor else "relator"
+        if autor and relator:
+            papel += " e relator"
+        et = etapas.get(pid, [])
         sit = p["situacao"] or ""
         s = norm_nome(sit)
-        aprovado = (bool(p["virou_norma"]) or clipping_auto.eh_aprovacao(sit)
-                    or ("senado" in s and "rejeitad" not in s) or bool(etapas.get(pid)))
-        if not aprovado:
-            continue
-        cls, rot = _rotulo(sit, p["virou_norma"])
-        if cls == "senado" and not ("aguardando" in s or "remetid" in s or "enviad" in s):
-            cls, rot = "comissao", "Aprovado na Câmara"
-        ult = max([e["data"] for e in etapas.get(pid, []) if e["data"]]
-                  + ([p["data_situacao"]] if p["data_situacao"] and cls != "comissao" else []), default="")
-        out.append({**p, "classe": cls, "rotulo": rot, "etapas": etapas.get(pid, []), "ultima": ult,
-                    "principal": bool(p["principal"])})
-    ordem = {"lei": 0, "sancao": 1, "senado": 2, "comissao": 3}
-    # Virou norma → sanção → Senado → aprovado na Câmara; 1º autor antes de coautor; mais recente primeiro
+        if projeto and _aprovado(p, et):
+            cls, rot = _rotulo(sit, p["virou_norma"])
+            if cls == "senado" and not ("aguardando" in s or "remetid" in s or "enviad" in s):
+                cls, rot = "comissao", "Aprovado na Câmara"
+        elif p["tramitando"] or (p["tramitando"] is None and sit):
+            cls, rot = "tramita", ("Em tramitação" if projeto else (sit[:40] or "Em tramitação"))
+        else:
+            cls, rot = "encerrado", (sit.split(" - ")[0][:40] if sit else "Sem situação")
+        ult = max([e["data"] for e in et if e["data"]] + ([p["data_situacao"]] if p["data_situacao"] else []),
+                  default="")
+        out.append({**p, "classe": cls, "rotulo": rot, "etapas": et, "ultima": ult, "papel": papel,
+                    "principal": bool(p["principal"]) and autor, "autor": autor, "relator": relator,
+                    "aprovado": cls in ("lei", "sancao", "senado", "comissao"), "projeto": projeto})
+    ordem = {"lei": 0, "sancao": 1, "senado": 2, "comissao": 3, "tramita": 4, "encerrado": 5}
+    # aprovados primeiro (norma → sanção → Senado → Câmara), depois em tramitação e encerrados; mais recente primeiro
+    out.sort(key=lambda x: x["data_apresentacao"] or "", reverse=True)
     out.sort(key=lambda x: x["ultima"] or "", reverse=True)
     out.sort(key=lambda x: (ordem[x["classe"]], not x["principal"]))
     return out
 
 
-def resumo(cod):
+def projetos_aprovados(cod):
+    """Só os projetos (autoria/coautoria) aprovados."""
+    return [p for p in projetos(cod) if p["aprovado"] and p["autor"]]
+
+
+FILTROS = [("", "Todos"), ("aprovados", "Aprovados"), ("lei", "Viraram norma"), ("tramita", "Em tramitação"),
+           ("encerrado", "Arquivados/encerrados"), ("autor", "1º autor"), ("coautor", "Coautor"),
+           ("relator", "Relator")]
+
+
+def filtrar(lista, f):
+    regra = {"aprovados": lambda p: p["aprovado"], "lei": lambda p: p["classe"] == "lei",
+             "tramita": lambda p: p["classe"] == "tramita", "encerrado": lambda p: p["classe"] == "encerrado",
+             "autor": lambda p: p["principal"], "coautor": lambda p: p["autor"] and not p["principal"],
+             "relator": lambda p: p["relator"]}.get(f)
+    return [p for p in lista if regra(p)] if regra else list(lista)
+
+
+def resumo(cod, todas=False):
     """Dados para a visão geral do ex-deputado."""
     import paineis
     with engine.connect() as c:
@@ -406,14 +447,16 @@ def resumo(cod):
                                 FROM processos pr JOIN autorias a ON a.processo_id = pr.id
                                 WHERE a.codigo_deputado = :c"""), {"c": cod}).mappings().first()
     det = json.loads(r[0]) if r and r[0] else {}
-    aprov = projetos_aprovados(cod)
+    todos = projetos(cod, todas)
+    aprov = [p for p in todos if p["aprovado"] and p["autor"]]
     cfg = config(cod)
     return {
         "perfil": paineis.perfil(cod, historico=True),
         "mandatos": mandatos(det),
         "periodo": (cfg.get("inicio"), cfg.get("fim")),
         "proposicoes": int(tot["n"] or 0), "como_autor": int(tot["autor"] or 0), "projetos": int(tot["projetos"] or 0),
-        "aprovados": aprov,
+        "aprovados": aprov, "todos": todos,
+        "contagem": {k: len(filtrar(todos, k)) for k, _ in FILTROS},
         "n_lei": sum(a["classe"] == "lei" for a in aprov),
         "n_camara": sum(a["classe"] != "lei" for a in aprov),
         "ultima_carga": ultima_carga(cod),

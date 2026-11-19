@@ -3759,16 +3759,19 @@ def test_ex_deputado_gonzaga_para_luisa():
              prop(880003, "PL", 3, "Arquivada"),                   # aprovado só em comissão (tramitação)
              prop(880004, "PL", 4, "Arquivada"),                   # nunca aprovado
              prop(880005, "REQ", 5, "Aprovado"),                   # requerimento: não é projeto
-             prop(880006, "PL", 6, "Transformado em Norma Jurídica")]   # de outro deputado
+             prop(880006, "PL", 6, "Transformado em Norma Jurídica"),   # de outro deputado
+             {**prop(880007, "PL", 7, "Aguardando Parecer do Relator na Comissão de Segurança Pública"),
+              "ultimoStatus_uriRelator": f"https://dadosabertos.camara.leg.br/api/v2/deputados/{cod}"}]  # relator
     auts = [{"idProposicao": str(p), "idDeputadoAutor": str(cod), "nomeAutor": "Subtenente Gonzaga",
              "ordemAssinatura": "2" if p == 880002 else "1", "proponente": "1"}
             for p in (880001, 880002, 880003, 880004, 880005)]
     auts.insert(0, {"idProposicao": "880002", "idDeputadoAutor": "999", "nomeAutor": "Outro", "ordemAssinatura": "1",
                     "proponente": "1"})                            # coautoria
-    auts.append({"idProposicao": "880006", "idDeputadoAutor": "999", "nomeAutor": "Outro", "ordemAssinatura": "1",
-                 "proponente": "1"})
+    for pid in ("880006", "880007"):
+        auts.append({"idProposicao": pid, "idDeputadoAutor": "999", "nomeAutor": "Outro", "ordemAssinatura": "1",
+                     "proponente": "1"})
     with engine.begin() as c:
-        assert ex_deputados.gravar_ano(c, cod, 2019, props, auts) == 5
+        assert ex_deputados.gravar_ano(c, cod, 2019, props, auts) == 6     # 5 de autoria + 1 relatoria
     assert ex_deputados.anos_do_mandato(cod) == list(range(2015, 2023))
 
     trams = {880003: [{"dataHora": "2020-11-10T10:00", "siglaOrgao": "CSPCCO", "despacho": "Aprovado o Parecer."}],
@@ -3802,9 +3805,17 @@ def test_ex_deputado_gonzaga_para_luisa():
     assert r.status_code == 200 and "Subtenente Gonzaga" in html and "Mandato e aprovações" in html
     assert "LUIZ GONZAGA RIBEIRO" in html and "Manhuaçu" in html and "CREDN" in html
     assert "56ª legislatura" in html and "PDT → PSD" in html
-    assert "PL 1/2019" in html and "Virou norma jurídica" in html and "PL 3/2019" in html and "PL 4/2019" not in html
+    assert "PL 1/2019" in html and "Virou norma jurídica" in html and "PL 3/2019" in html
+    assert "PL 4/2019" in html and "Arquivada" in html                   # todos os projetos, não só os aprovados
+    assert "PL 7/2019" in html and "Em tramitação" in html and ">relator<" in html
+    assert "REQ 5/2019" not in html and "PL 6/2019" not in html
+    todos = {p["identificacao"]: p for p in ex_deputados.projetos(cod)}
+    assert todos["PL 4/2019"]["classe"] == "encerrado" and todos["PL 7/2019"]["papel"] == "relator"
+    assert "REQ 5/2019" in lu.get(f"/meu/{cod}?secao=visao&tipo=todas").get_data(as_text=True)
+    rel = lu.get(f"/meu/{cod}?secao=visao&f=relator").get_data(as_text=True)
+    assert "PL 7/2019" in rel and "PL 1/2019" not in rel
     assert "Agenda" not in re.search(r'<nav class="mh-nav">(.*?)</nav>', html, re.S).group(1)
-    so_lei = lu.get(f"/meu/{cod}?secao=visao&aprov=lei").get_data(as_text=True)
+    so_lei = lu.get(f"/meu/{cod}?secao=visao&f=lei").get_data(as_text=True)
     assert "PL 1/2019" in so_lei and "PL 2/2019" not in so_lei
     assert lu.get(f"/meu/{cod}?secao=clipping").status_code == 200
     assert lu.get(f"/meu/{cod}?secao=agenda").status_code == 200          # cai na visão geral

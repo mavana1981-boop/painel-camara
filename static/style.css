@@ -1257,3 +1257,8 @@ details.rn-acomp .rn-form{margin-top:6px}
 .xd-selo.comissao{background:#fef7e0;color:#8a5a00}
 .xd-etapas{margin:6px 0 0;padding-left:18px;font-size:13px}
 .xd-etapas li span{color:var(--suave);font-variant-numeric:tabular-nums;margin-right:4px}
+.xd-proj.tramita{border-left-color:#7b61ff}.xd-proj.encerrado{border-left-color:#c4c9d0}
+.xd-selo.tramita{background:#efeaff;color:#5b3fd6}.xd-selo.encerrado{background:#f1f3f4;color:#5f6368}
+.xd-barra{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 16px 4px;font-size:13px}
+.xd-barra input{flex:1 1 260px;font:inherit;padding:7px 10px;border:1px solid var(--linha);border-radius:8px}
+.xd-filtros a b{font-weight:600;margin-left:2px}

@@ -1026,8 +1026,12 @@ def painel(cod):
            "meus": [x for x in paineis.lista_deputados() if x["codigo"] in meus],
            "hoje": hoje}
     if secao == "visao" and ex:     # ex-deputado: dados do mandato e projetos aprovados
-        ctx["xd"] = ex_deputados.resumo(cod)
-        ctx["filtro_aprov"] = request.args.get("aprov", "")
+        ctx["todas_props"] = request.args.get("tipo") == "todas"
+        ctx["xd"] = ex_deputados.resumo(cod, ctx["todas_props"])
+        f = request.args.get("f", "")
+        ctx["filtro_proj"] = f if f in dict(ex_deputados.FILTROS) else ""
+        ctx["filtros_proj"] = ex_deputados.FILTROS
+        ctx["lista_proj"] = ex_deputados.filtrar(ctx["xd"]["todos"], ctx["filtro_proj"])
     elif secao == "visao":
         ctx["v"] = visao(cod)
     elif secao == "agenda":

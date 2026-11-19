@@ -127,8 +127,8 @@
 <section class="mk-grade">
   <div class="mk ou"><span class="mk-ic">{{ ic('clipping') }}</span><b>{{ xd.aprovados|length }}</b><span>Projetos aprovados</span>
     <small>{{ xd.n_lei }} {{ 'virou' if xd.n_lei == 1 else 'viraram' }} norma jurídica · {{ xd.n_camara }} aprovado{{ 's' if xd.n_camara != 1 }} na Câmara</small></div>
-  <div class="mk az"><span class="mk-ic">{{ ic('solicitacoes') }}</span><b>{{ xd.projetos|mil }}</b><span>Projetos apresentados</span>
-    <small>PL, PLP, PEC, PDL/PDC e PRC, autoria e coautoria</small></div>
+  <div class="mk az"><span class="mk-ic">{{ ic('solicitacoes') }}</span><b>{{ xd.projetos|mil }}</b><span>Projetos de autoria</span>
+    <small>{{ xd.contagem.tramita }} em tramitação · {{ xd.contagem.relator }} como relator{{ ' (projetos)' if not todas_props }}</small></div>
   <a class="mk vd" href="{{ url_for('proposicoes', deputado=cod) }}"><span class="mk-ic">{{ ic('seta') }}</span><b>{{ xd.proposicoes|mil }}</b><span>Proposições no total</span>
     <small>{{ xd.como_autor|mil }} como 1º autor · inclui requerimentos</small></a>
   <div class="mk"><span class="mk-ic">{{ ic('agenda') }}</span><b>{{ xd.mandatos|length or '—' }}</b><span>Mandato{{ 's' if xd.mandatos|length != 1 }} na Câmara</span>
@@ -169,33 +169,44 @@
   </div>
 </section>
 
-{% set fa = filtro_aprov %}
-<section class="card neu">
-  <h2>Projetos aprovados <small>{{ xd.aprovados|length }}</small>
+{% set fp_ = filtro_proj %}{% set tp_ = 'todas' if todas_props else None %}
+<section class="card neu" id="projetos">
+  <h2>{{ 'Proposições' if todas_props else 'Projetos' }} <small>{{ xd.todos|length }}</small>
     <span class="xd-filtros">
-      {% for k, r in [('', 'Todos'), ('lei', 'Viraram norma'), ('camara', 'Aprovados na Câmara'), ('autor', 'Só como 1º autor')] %}
-      <a href="{{ url_for('meu.painel', cod=cod, secao='visao', aprov=k or None) }}" class="{{ 'ativo' if fa == k }}">{{ r }}</a>{% endfor %}
+      {% for k, r in filtros_proj %}{% if xd.contagem[k] or not k %}
+      <a href="{{ url_for('meu.painel', cod=cod, secao='visao', f=k or None, tipo=tp_) }}#projetos" class="{{ 'ativo' if fp_ == k }}">{{ r }} <b>{{ xd.contagem[k] }}</b></a>{% endif %}{% endfor %}
     </span></h2>
-  {% set lista_ap = xd.aprovados|selectattr('classe', 'equalto', 'lei')|list if fa == 'lei'
-       else xd.aprovados|rejectattr('classe', 'equalto', 'lei')|list if fa == 'camara'
-       else xd.aprovados|selectattr('principal')|list if fa == 'autor' else xd.aprovados %}
-  {% for p in lista_ap %}
-  <div class="xd-proj {{ p.classe }}">
+  <div class="xd-barra">
+    <input type="search" id="xd-busca" placeholder="Buscar por número ou assunto…" oninput="xdBuscar(this.value)">
+    <a href="{{ url_for('meu.painel', cod=cod, secao='visao', f=fp_ or None, tipo=None if todas_props else 'todas') }}#projetos">
+      {{ 'Só projetos (PL, PLP, PEC, PDL/PDC, PRC)' if todas_props else 'Incluir requerimentos e demais proposições' }}</a>
+    <span class="xd-suave" id="xd-n">{{ lista_proj|length }} na lista</span>
+  </div>
+  {% for p in lista_proj %}
+  <div class="xd-proj {{ p.classe }}" data-busca="{{ (p.identificacao ~ ' ' ~ (p.ementa or '') ~ ' ' ~ (p.situacao or ''))|lower }}">
     <div class="xd-topo"><a href="{{ p.url }}" target="_blank" rel="noopener"><b>{{ p.identificacao }}</b></a>
       <i class="xd-selo {{ p.classe }}">{{ p.rotulo }}</i>
-      <i class="xd-papel">{{ '1º autor' if p.principal else 'coautor' }}</i>
-      {% if p.ultima %}<span class="xd-suave">{{ p.ultima|data }}</span>{% endif %}</div>
+      <i class="xd-papel">{{ p.papel }}</i>
+      {% if p.data_apresentacao %}<span class="xd-suave">apresentado em {{ p.data_apresentacao|data }}</span>{% endif %}</div>
     {% if p.ementa %}<div class="notif-ementa">{{ p.ementa }}</div>{% endif %}
-    {% if p.situacao %}<div class="xd-suave">Situação atual: {{ p.situacao }}{% if p.data_situacao %} ({{ p.data_situacao|data }}){% endif %}</div>{% endif %}
+    {% if p.situacao %}<div class="xd-suave">Situação atual: {{ p.situacao }}{% if p.orgao %} · {{ p.orgao }}{% endif %}{% if p.data_situacao %} ({{ p.data_situacao|data }}){% endif %}</div>{% endif %}
+    {% if not p.principal and p.autoria %}<div class="xd-suave">Autoria: {{ p.autoria|truncate(160) }}</div>{% endif %}
     {% if p.etapas %}<ul class="xd-etapas">{% for e in p.etapas %}<li><span>{{ e.data|data }}</span> {{ e.situacao }}</li>{% endfor %}</ul>{% endif %}
   </div>
-  {% else %}<div class="vazio-msg">{{ 'Nenhum projeto aprovado encontrado.' if xd.ultima_carga else 'A lista aparece quando a busca na Câmara terminar.' }}</div>{% endfor %}
-  <p class="nota">Projetos (PL, PLP, PEC, PDL/PDC, PRC) de autoria ou coautoria com aprovação registrada na Câmara: viraram norma jurídica,
-    foram enviados ao Senado ou à sanção, ou tiveram o mérito aprovado em comissão ou no Plenário (pela tramitação).
+  {% else %}<div class="vazio-msg">{{ 'Nada neste filtro.' if xd.ultima_carga else 'A lista aparece quando a busca na Câmara terminar.' }}</div>{% endfor %}
+  <p class="nota">Todos os projetos de autoria, coautoria ou relatoria dele apresentados de 2015 a 2022 (e os da legislatura atual, se houver).
+    Relatoria: matérias em que ele é o último relator designado, segundo a Câmara. Aprovados: viraram norma jurídica, foram ao Senado
+    ou à sanção, ou tiveram o mérito aprovado em comissão ou no Plenário (pela tramitação).
     {% if xd.ultima_carga %}Atualizado em {{ xd.ultima_carga[:10]|data }}; a busca se repete a cada semana.{% endif %}</p>
   {% if pleno %}<form method="post" style="margin-top:8px"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="recarregar_ex">
     <button class="btn sec" {{ 'disabled' if xd.carregando }}>{{ ic('refresh') }} Buscar de novo na Câmara</button></form>{% endif %}
 </section>
+<script>
+function xdBuscar(q){q=(q||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();var n=0;
+document.querySelectorAll('#projetos .xd-proj').forEach(function(el){var t=(el.dataset.busca||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+var ok=!q||q.split(/\s+/).every(function(w){return t.indexOf(w)>=0});el.style.display=ok?'':'none';if(ok)n++;});
+document.getElementById('xd-n').textContent=n+' na lista';}
+</script>
 {% endif %}
 
 {# =================== VISÃO GERAL =================== #}
