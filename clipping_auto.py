@@ -245,8 +245,12 @@ def passou_pela_camara(situacao):
     return bool(_PASSOU_CAMARA.search(s)) and "rejeitad" not in s and "arquivad" not in s
 
 
+PROVISORIO = "situacao_atual"         # origem do registro feito só pela situação atual (a tramitação não foi lida)
+
+
 def sem_aprovacao_registrada(cod):
-    """Proposições de autoria do deputado já aprovadas na Câmara (pela situação atual) sem registro de mérito."""
+    """Proposições de autoria do deputado já aprovadas na Câmara (pela situação atual) sem registro de mérito
+    lido da tramitação (o registro provisório, feito só pela situação atual, não conta: a leitura é refeita)."""
     with engine.connect() as c:
         props = [dict(r) for r in c.execute(text("""
             SELECT pr.id, pr.sigla, pr.identificacao, pr.ementa, pr.situacao, pr.data_situacao, pr.url, a.principal
@@ -254,34 +258,58 @@ def sem_aprovacao_registrada(cod):
             WHERE a.codigo_deputado = :c AND pr.situacao IS NOT NULL
             ORDER BY pr.data_situacao DESC"""), {"c": cod}).mappings()]
         regs = c.execute(select(clipping_aprovacoes.c.chave, clipping_aprovacoes.c.situacao,
-                                clipping_aprovacoes.c.identificacao, clipping_aprovacoes.c.ementa)
+                                clipping_aprovacoes.c.identificacao, clipping_aprovacoes.c.ementa,
+                                clipping_aprovacoes.c.origem)
                          .where(clipping_aprovacoes.c.codigo_deputado == cod,
                                 clipping_aprovacoes.c.tipo == "autoria")).all()
-    com_merito = {r[0] for r in regs if natureza({"situacao": r[1], "identificacao": r[2], "ementa": r[3]}) == "merito"}
+    com_merito = {r[0] for r in regs if r[4] != PROVISORIO
+                  and natureza({"situacao": r[1], "identificacao": r[2], "ementa": r[3]}) == "merito"}
     return [p for p in props if (p["sigla"] or "").upper() not in SIGLAS_SEM_VOTACAO
             and passou_pela_camara(p["situacao"]) and f"p:{p['id']}" not in com_merito]
 
 
-def completar_aprovadas(cod, ler=None, limite=MAX_COMPLETAR, hoje=None):
+def _ler_rapido(pid, inicio, fim):
+    """Uma tentativa só, com tempo curto (para não travar a geração do relatório quando a API da Câmara cai)."""
+    from collector import API, sess
+    r = sess.get(f"{API}/proposicoes/{pid}/tramitacoes?dataInicio={inicio}&dataFim={fim}", timeout=12)
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    return (r.json() or {}).get("dados") or []
+
+
+def completar_aprovadas(cod, ler=None, limite=MAX_COMPLETAR, hoje=None, rapido=False, prazo=25):
     """Lê a tramitação completa das proposições aprovadas na Câmara que faltam no histórico e as registra.
-    Devolve quantos registros entraram."""
-    ler = ler or _ler_tramitacoes
+    Se a leitura falhar, entra um registro provisório com a situação atual (refeito quando a API responder).
+    rapido=True (relatório): uma tentativa por proposição, no máximo `prazo` segundos no total e, na primeira
+    falha, as demais ficam só com o registro provisório. Devolve quantos registros entraram."""
+    import time
+    ler = ler or (_ler_rapido if rapido else _ler_tramitacoes)
     ini, fim = INICIO_LEGISLATURA, (hoje or date.today()).isoformat()
-    extras = []
+    extras, lidas, api_ok, t0 = [], set(), True, time.monotonic()
     for p in sem_aprovacao_registrada(cod)[:limite]:
         base = {"tipo": "autoria", "chave": f"p:{p['id']}", "identificacao": p["identificacao"],
                 "ementa": p["ementa"], "url": p["url"], "principal": bool(p["principal"])}
-        achadas = []
-        try:
-            achadas = [a for a in aprovacoes_na_tramitacao(ler(p["id"], ini, fim), ini, fim)
-                       if natureza({**base, **a}) == "merito"]
-        except Exception as e:
-            log.warning("tramitação de %s: %s", p["identificacao"], e)
+        achadas = None
+        if api_ok and not (rapido and time.monotonic() - t0 > prazo):
+            try:
+                achadas = [a for a in aprovacoes_na_tramitacao(ler(p["id"], ini, fim), ini, fim)
+                           if natureza({**base, **a}) == "merito"]
+            except Exception as e:
+                log.warning("tramitação de %s: %s", p["identificacao"], e)
+                api_ok = not rapido
         if achadas:
+            lidas.add(base["chave"])
             extras += [{**base, "origem": "tramitacao", **a} for a in achadas]
         elif p["data_situacao"]:
-            extras.append({**base, "origem": "proposicao", "situacao": p["situacao"], "data": p["data_situacao"],
+            extras.append({**base, "origem": PROVISORIO, "situacao": p["situacao"], "data": p["data_situacao"],
                            "colegiado": None})
+    if lidas:                              # a data real substitui o registro provisório
+        from sqlalchemy import delete
+        with engine.begin() as c:
+            c.execute(delete(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == cod,
+                                                        clipping_aprovacoes.c.origem == PROVISORIO,
+                                                        clipping_aprovacoes.c.chave.in_(lidas)))
     return registrar(cod, extras) if extras else 0
 
 

@@ -3853,5 +3853,21 @@ def test_clipping_completa_projeto_aprovado_fora_da_janela():
     regs = {(r["identificacao"], r["data"]) for r in clipping_auto.do_periodo(101, date(2026, 1, 1), date(2026, 12, 31))}
     assert ("PL 1845/2025", "2026-07-08") in regs                     # data real da aprovação, pela tramitação
     assert ("PL 1846/2025", "2026-07-15") in regs                     # sem tramitação: situação atual
-    assert clipping_auto.sem_aprovacao_registrada(101) == []
+    pend = [p["identificacao"] for p in clipping_auto.sem_aprovacao_registrada(101)]
+    assert "PL 1845/2025" not in pend and "PL 1846/2025" in pend            # provisório: será relido
     assert clipping_auto.completar_aprovadas(101, ler=ler, hoje=date(2026, 11, 23)) == 0     # sem duplicar
+
+    # relatório com a API fora do ar: não trava — uma falha e o resto fica provisório
+    chamadas = []
+
+    def fora(pid, ini, fim):
+        chamadas.append(pid)
+        raise RuntimeError("HTTP 504")
+    clipping_auto.completar_aprovadas(101, ler=fora, hoje=date(2026, 11, 23), rapido=True)
+    assert len(chamadas) == 1
+    # a API voltou: a data real substitui o provisório
+    trams[8952] = [{"dataHora": "2026-07-01T18:00", "siglaOrgao": "PLEN", "despacho": "Aprovado o Projeto."}]
+    assert clipping_auto.completar_aprovadas(101, ler=lambda pid, i, f: trams.get(pid, []),
+                                             hoje=date(2026, 11, 23)) >= 1
+    regs = {(r["identificacao"], r["data"]) for r in clipping_auto.do_periodo(101, date(2026, 1, 1), date(2026, 12, 31))}
+    assert ("PL 1846/2025", "2026-07-01") in regs and ("PL 1846/2025", "2026-07-15") not in regs

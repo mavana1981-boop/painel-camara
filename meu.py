@@ -637,7 +637,7 @@ def eventos_relatorio(cod, inicio, fim, com_aprovacoes=True):
     if com_aprovacoes and os.environ.get("CLIPPING_TRAMITACAO") != "0":
         import clipping_auto
         try:      # projetos já aprovados na Câmara que ficaram fora do histórico (ex.: aprovação antiga)
-            clipping_auto.completar_aprovadas(cod)
+            clipping_auto.completar_aprovadas(cod, rapido=True)
         except Exception:
             logging.getLogger(__name__).exception("completar aprovações do relatório")
     clip = clipping(cod, inicio, fim)
