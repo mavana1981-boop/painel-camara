@@ -3823,3 +3823,35 @@ def test_ex_deputado_gonzaga_para_luisa():
     assert lu.get(f"/meu/{cod}?secao=agenda").status_code == 200          # cai na visão geral
     assert lu.get(f"/perfil?deputado={cod}").status_code == 200
     assert "PL 1/2019" in lu.get(f"/proposicoes?deputado={cod}").get_data(as_text=True)
+
+
+def test_clipping_completa_projeto_aprovado_fora_da_janela():
+    """PL 1845/2025 (Carlos Jordy): aprovado no Plenário em 08/07/2026 e hoje "Aguardando Apreciação pelo Senado".
+    A aprovação caiu fora da janela de 7 dias e da carga da legislatura — o relatório tem de trazê-la."""
+    from datetime import date
+    import clipping_auto
+    from db import autorias, clipping_aprovacoes, processos
+    from sqlalchemy import insert as ins, delete as dele
+    with engine.begin() as c:
+        c.execute(dele(clipping_aprovacoes).where(clipping_aprovacoes.c.codigo_deputado == 101))
+        for pid, ident in ((8951, "PL 1845/2025"), (8952, "PL 1846/2025")):
+            c.execute(ins(processos).values(id=pid, identificacao=ident, sigla="PL", ementa="Ementa " + ident,
+                                            situacao="Aguardando Apreciação pelo Senado Federal",
+                                            data_situacao="2026-07-15"))
+            c.execute(ins(autorias).values(processo_id=pid, codigo_deputado=101, principal=True))
+    trams = {8951: [{"dataHora": "2026-07-08T13:55", "siglaOrgao": "PLEN",
+                     "despacho": "Aprovado o Substitutivo ao Projeto de Lei nº 1.845, de 2025, adotado pelo relator "
+                                 "da CCJC. (Sessão Deliberativa Extraordinária de 08/07/2026)"}]}
+
+    def ler(pid, ini, fim):
+        if pid == 8952:
+            raise RuntimeError("API fora do ar")
+        return trams.get(pid, [])
+    ids = [p["identificacao"] for p in clipping_auto.sem_aprovacao_registrada(101)]
+    assert "PL 1845/2025" in ids and "PL 1846/2025" in ids
+    assert clipping_auto.completar_aprovadas(101, ler=ler, hoje=date(2026, 11, 23)) >= 2
+    regs = {(r["identificacao"], r["data"]) for r in clipping_auto.do_periodo(101, date(2026, 1, 1), date(2026, 12, 31))}
+    assert ("PL 1845/2025", "2026-07-08") in regs                     # data real da aprovação, pela tramitação
+    assert ("PL 1846/2025", "2026-07-15") in regs                     # sem tramitação: situação atual
+    assert clipping_auto.sem_aprovacao_registrada(101) == []
+    assert clipping_auto.completar_aprovadas(101, ler=ler, hoje=date(2026, 11, 23)) == 0     # sem duplicar

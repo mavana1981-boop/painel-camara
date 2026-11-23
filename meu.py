@@ -5,6 +5,7 @@ radar de notícias, rankings (posição + sugestões) e clipping diário de apro
 """
 import io
 import logging
+import os
 import re
 import threading
 import unicodedata
@@ -633,6 +634,12 @@ def realizacoes(cod, inicio, fim):
 def eventos_relatorio(cod, inicio, fim, com_aprovacoes=True):
     """Lista plana para o relatório de realizações em PDF."""
     import fotos
+    if com_aprovacoes and os.environ.get("CLIPPING_TRAMITACAO") != "0":
+        import clipping_auto
+        try:      # projetos já aprovados na Câmara que ficaram fora do histórico (ex.: aprovação antiga)
+            clipping_auto.completar_aprovadas(cod)
+        except Exception:
+            logging.getLogger(__name__).exception("completar aprovações do relatório")
     clip = clipping(cod, inicio, fim)
     out = []
     for d in clip["dias"]:

@@ -225,6 +225,66 @@ def buscar_tramitacoes(cod, dias=DIAS_TRAMITACAO, hoje=None, ler=None):
     return out
 
 
+# ---------------- proposições que já passaram pela Câmara sem aprovação registrada ----------------
+# A coleta diária só lê a tramitação dos últimos 7 dias e a carga da legislatura roda uma vez por deputado.
+# Se a aprovação caiu fora dessas janelas (ou a carga foi feita antes de a proposição existir na base), o
+# projeto aprovado nunca entrava no clipping nem no relatório de realizações — ex.: PL 1845/2025 (Carlos Jordy),
+# aprovado no Plenário em 08/07/2026, hoje "Aguardando Apreciação pelo Senado Federal".
+# Aqui: toda proposição do deputado cuja situação atual mostra que ela já foi aprovada na Câmara e que ainda não
+# tem aprovação de mérito no histórico tem a tramitação completa lida; se a leitura falhar ou nada for achado,
+# entra a própria situação atual (com a data dela) para a aprovação não sumir do relatório.
+
+_PASSOU_CAMARA = re.compile(r"aguardando apreciacao pelo senado|transformad[ao] em norma|aguardando (sancao|promulgacao)|"
+                            r"remetid[ao] (a|ao) (senado|sancao)|enviad[ao] (a|ao) (senado|sancao)|"
+                            r"aguardando (envio|remessa) ao senado|promulgad|sancionad")
+MAX_COMPLETAR = 30                     # por chamada (cada uma lê a tramitação de uma proposição na Câmara)
+
+
+def passou_pela_camara(situacao):
+    s = _sem_acento(situacao)
+    return bool(_PASSOU_CAMARA.search(s)) and "rejeitad" not in s and "arquivad" not in s
+
+
+def sem_aprovacao_registrada(cod):
+    """Proposições de autoria do deputado já aprovadas na Câmara (pela situação atual) sem registro de mérito."""
+    with engine.connect() as c:
+        props = [dict(r) for r in c.execute(text("""
+            SELECT pr.id, pr.sigla, pr.identificacao, pr.ementa, pr.situacao, pr.data_situacao, pr.url, a.principal
+            FROM processos pr JOIN autorias a ON a.processo_id = pr.id
+            WHERE a.codigo_deputado = :c AND pr.situacao IS NOT NULL
+            ORDER BY pr.data_situacao DESC"""), {"c": cod}).mappings()]
+        regs = c.execute(select(clipping_aprovacoes.c.chave, clipping_aprovacoes.c.situacao,
+                                clipping_aprovacoes.c.identificacao, clipping_aprovacoes.c.ementa)
+                         .where(clipping_aprovacoes.c.codigo_deputado == cod,
+                                clipping_aprovacoes.c.tipo == "autoria")).all()
+    com_merito = {r[0] for r in regs if natureza({"situacao": r[1], "identificacao": r[2], "ementa": r[3]}) == "merito"}
+    return [p for p in props if (p["sigla"] or "").upper() not in SIGLAS_SEM_VOTACAO
+            and passou_pela_camara(p["situacao"]) and f"p:{p['id']}" not in com_merito]
+
+
+def completar_aprovadas(cod, ler=None, limite=MAX_COMPLETAR, hoje=None):
+    """Lê a tramitação completa das proposições aprovadas na Câmara que faltam no histórico e as registra.
+    Devolve quantos registros entraram."""
+    ler = ler or _ler_tramitacoes
+    ini, fim = INICIO_LEGISLATURA, (hoje or date.today()).isoformat()
+    extras = []
+    for p in sem_aprovacao_registrada(cod)[:limite]:
+        base = {"tipo": "autoria", "chave": f"p:{p['id']}", "identificacao": p["identificacao"],
+                "ementa": p["ementa"], "url": p["url"], "principal": bool(p["principal"])}
+        achadas = []
+        try:
+            achadas = [a for a in aprovacoes_na_tramitacao(ler(p["id"], ini, fim), ini, fim)
+                       if natureza({**base, **a}) == "merito"]
+        except Exception as e:
+            log.warning("tramitação de %s: %s", p["identificacao"], e)
+        if achadas:
+            extras += [{**base, "origem": "tramitacao", **a} for a in achadas]
+        elif p["data_situacao"]:
+            extras.append({**base, "origem": "proposicao", "situacao": p["situacao"], "data": p["data_situacao"],
+                           "colegiado": None})
+    return registrar(cod, extras) if extras else 0
+
+
 def registrar_todos(com_tramitacao=True, dias=DIAS_TRAMITACAO):
     """Etapa da coleta diária: todos os deputados acompanhados no Meu Parlamentar
     (com a tramitação dos últimos `dias` na Câmara, se com_tramitacao)."""
@@ -240,6 +300,8 @@ def registrar_todos(com_tramitacao=True, dias=DIAS_TRAMITACAO):
                 except Exception:
                     log.exception("tramitação do deputado %s", cod)
             n += registrar(cod, extras)
+            if com_tramitacao and os.environ.get("CLIPPING_TRAMITACAO") != "0":
+                n += completar_aprovadas(cod)
         except Exception:
             log.exception("clipping automático do deputado %s", cod)
     log.info("clipping automático: %d aprovação(ões) nova(s) registrada(s)", n)
