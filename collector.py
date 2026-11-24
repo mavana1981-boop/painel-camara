@@ -511,10 +511,61 @@ _COLS_SIMB = ("id", "ano", "data", "sigla_materia", "numero_materia", "ano_mater
               "descricao_materia", "descricao_votacao", "aprovacao", "etapa")
 
 
+def _plano_txt(s):
+    return " ".join(sem_acento(s or "").lower().split())
+
+
+def _materia_da_simbolica(conn, simb, buscar_api=True, limite_api=400):
+    """Muitas simbólicas (aprovação de MPV, redação final, urgência...) não vêm ligadas a nenhuma proposição
+    no arquivo. O id da votação começa pelo id da proposição votada ("2643429-30" -> MPV 1383/2026):
+    usa esse id e acha sigla/número/ano no cadastro, no que já estava gravado ou, por último, na API."""
+    sem = [v for v in simb.values() if not v.get("proposicao_id")]
+    for v in sem:
+        v["proposicao_id"] = _int(str(v["id"]).split("-")[0])
+    falta = {v["proposicao_id"] for v in simb.values() if v.get("proposicao_id") and not v.get("sigla_materia")}
+    if not falta:
+        return
+    conhecidas = {}
+    lst = sorted(falta)
+    for i in range(0, len(lst), 900):
+        parte = lst[i:i + 900]
+        for r in conn.execute(select(processos.c.id, processos.c.sigla, processos.c.numero, processos.c.ano,
+                                     processos.c.ementa).where(processos.c.id.in_(parte))):
+            conhecidas[r[0]] = (r[1], _int(r[2]), r[3], r[4])
+        for r in conn.execute(select(votacoes_simbolicas.c.proposicao_id, votacoes_simbolicas.c.sigla_materia,
+                                     votacoes_simbolicas.c.numero_materia, votacoes_simbolicas.c.ano_materia,
+                                     votacoes_simbolicas.c.descricao_materia)
+                              .where(votacoes_simbolicas.c.proposicao_id.in_(parte),
+                                     votacoes_simbolicas.c.sigla_materia.is_not(None))):
+            conhecidas.setdefault(r[0], (r[1], r[2], r[3], r[4]))
+    pedidos = 0
+    for pid in lst:
+        if pid in conhecidas or not buscar_api or pedidos >= limite_api:
+            continue
+        pedidos += 1
+        try:
+            dd = (get_json(f"/proposicoes/{pid}") or {}).get("dados") or {}
+        except Exception as e:
+            log.warning("proposição %s (votação simbólica): %s", pid, e)
+            continue
+        if dd.get("siglaTipo"):
+            conhecidas[pid] = (dd["siglaTipo"], _int(dd.get("numero")), _int(dd.get("ano")), dd.get("ementa"))
+    for v in simb.values():
+        k = conhecidas.get(v.get("proposicao_id"))
+        if k and not v.get("sigla_materia"):
+            v.update(sigla_materia=k[0], numero_materia=k[1], ano_materia=k[2],
+                     descricao_materia=v.get("descricao_materia") or k[3])
+    if pedidos:
+        log.info("votações simbólicas: %d matéria(s) identificada(s) pela API", pedidos)
+
+
 def _gravar_simbolicas(conn, ano, simb):
     """Substitui as votações simbólicas do Plenário do ano (só as ligadas a uma matéria)."""
+    _materia_da_simbolica(conn, simb, buscar_api=VOTACOES_API)
     linhas = [{k: v.get(k) for k in _COLS_SIMB} for v in simb.values()
-              if v.get("proposicao_id") or v.get("sigla_materia")]
+              if (v.get("proposicao_id") or v.get("sigla_materia"))
+              and (v.get("sigla_materia") or "").upper() != "REQ"        # repetem a votação do lado da matéria
+              and not _plano_txt(v.get("descricao_votacao")).startswith("alteracao do regime de tramitacao")]
     ids = [x["id"] for x in linhas]
     conn.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.ano == ano))
     for i in range(0, len(ids), 900):
@@ -1096,7 +1147,7 @@ def executar(desde: date | None = None, so_deputados=False):
 def _marcar_recarga_etapas(anos):
     """Uma vez só (por versão): a coluna 'etapa' e depois as votações simbólicas surgiram depois — os anos
     antigos (que a rotina não relê) entram como pendentes para serem recarregados com elas."""
-    for chave in ("votacoes_etapa_v1", "votacoes_simbolicas_v1"):
+    for chave in ("votacoes_etapa_v1", "votacoes_simbolicas_v2"):
         _marcar_recarga(chave, anos)
 
 

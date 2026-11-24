@@ -304,6 +304,20 @@ def test_simbolicas_e_pdf_em_lote():
     import metrics
     import proposicao_pdf
     assert {r[0] for r in _q("SELECT id FROM votacoes_simbolicas")} == {V_SIMB}
+    import collector
+    from db import engine
+    simb = {"2480001-40": {"id": "2480001-40", "proposicao_id": None, "sigla_materia": None},
+            "2999999-3": {"id": "2999999-3", "proposicao_id": None, "sigla_materia": None}}
+    orig = collector.get_json
+    collector.get_json = lambda c: {"dados": {"siglaTipo": "MPV", "numero": 1383, "ano": 2026, "ementa": "Crédito"}} \
+        if c == "/proposicoes/2999999" else None
+    try:
+        with engine.connect() as c:
+            collector._materia_da_simbolica(c, simb)
+    finally:
+        collector.get_json = orig
+    assert (simb["2480001-40"]["proposicao_id"], simb["2480001-40"]["sigla_materia"]) == (2480001, "PL")
+    assert (simb["2999999-3"]["sigla_materia"], simb["2999999-3"]["numero_materia"]) == ("MPV", 1383)
     assert V_SIMB not in {r[0] for r in _q("SELECT id FROM votacoes")}
     d = proposicao_pdf.dados(pid=2480001, buscar=False)
     vs = [x["votacao"]["id"] for x in d["votacoes"]]
