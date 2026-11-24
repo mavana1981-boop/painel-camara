@@ -21,6 +21,7 @@ os.environ["ADMIN_PASSWORD"] = "senha-de-teste-123"
 os.environ["SECRET_KEY"] = "teste"
 os.environ["GEMINI_INTERVALO"] = "0"        # sem espera entre chamadas da IA nos testes
 os.environ["AGENDA_AO_ACESSAR"] = "0"
+os.environ["VOTACOES_API"] = "0"           # a coleta de votações não completa pela API nos testes (salvo no teste próprio)
 os.environ["CLIPPING_TRAMITACAO"] = "0"     # a coleta não lê tramitações na API da Câmara nos testes     # a tela da agenda não chama a API da Câmara nos testes
 os.environ.pop("RAILWAY_ENVIRONMENT", None)
 os.environ.pop("CEAP_REAJUSTES", None)
@@ -457,6 +458,83 @@ def test_coleta_recupera_anos_que_falharam():
     finally:
         collector.baixar = original
     assert len(_q("SELECT id FROM votacoes")) == 5
+
+
+def test_votacoes_completadas_pela_api_e_orientacoes_preservadas():
+    """Arquivo anual atrasado: as votações do Plenário depois da última data dele vêm da API.
+    Arquivo de orientações vazio: as orientações já gravadas não são apagadas."""
+    from datetime import date as _date
+    original, orig_pag, orig_get = collector.baixar, collector.paginado, collector.get_json
+    pedidos = []
+
+    def fake_baixar(url):
+        nome = url.rsplit("/", 1)[1]
+        destino = os.path.join(_tmp, "api-" + nome)
+        if "votacoesOrientacoes" in nome:   # arquivo de orientações veio só com o cabeçalho
+            Path(destino).write_text((FIX / nome).read_text(encoding="utf-8-sig").splitlines()[0] + "\n",
+                                     encoding="utf-8-sig")
+        else:
+            Path(destino).write_bytes((FIX / nome).read_bytes())
+        return destino
+
+    nova = "2655570-39"
+    def fake_pag(caminho, limite_paginas=200):
+        pedidos.append(caminho)
+        if caminho.startswith("/votacoes?"):
+            return [{"id": nova, "siglaOrgao": "PLEN", "data": "2025-11-23"},
+                    {"id": "2655570-26", "siglaOrgao": "CCP", "data": "2025-11-23"},
+                    {"id": "2655570-34", "siglaOrgao": "PLEN", "data": "2025-11-23"}]   # simbólica
+        if caminho == f"/votacoes/{nova}/votos":
+            return [{"tipoVoto": "Sim", "deputado_": {"id": 101, "nome": "Ana Oposição", "siglaPartido": "PL", "siglaUf": "SP"}},
+                    {"tipoVoto": "Não", "deputado_": {"id": 102, "nome": "Bruno", "siglaPartido": "PT", "siglaUf": "BA"}},
+                    {"tipoVoto": "Abstenção", "deputado_": {"id": 103, "nome": "Carla", "siglaPartido": "PSD", "siglaUf": "MG"}}]
+        return []
+
+    def fake_get(caminho):
+        if caminho == f"/votacoes/{nova}":
+            return {"dados": {"id": nova, "siglaOrgao": "PLEN", "data": "2025-11-23",
+                              "dataHoraRegistro": "2025-11-23T21:10:00", "aprovacao": 1,
+                              "descricao": "Aprovado o Projeto de Lei Complementar nº 299, de 2026, ressalvados os destaques.",
+                              "proposicoesAfetadas": [{"id": 2655570, "siglaTipo": "PLP", "numero": 299, "ano": 2026,
+                                                       "ementa": "Dispõe sobre ..."}],
+                              "objetosPossiveis": [{"id": 2655570, "siglaTipo": "PLP", "numero": 299, "ano": 2026,
+                                                    "ementa": "Dispõe sobre ..."}],
+                              "ultimaAberturaVotacao": {"descricao": "Votação do texto-base"},
+                              "ultimaApresentacaoProposicao": {}}}
+        if caminho == f"/votacoes/{nova}/orientacoes":
+            return {"dados": [{"siglaPartidoBloco": "Governo", "orientacaoVoto": "Não", "codTipoLideranca": "G"},
+                              {"siglaPartidoBloco": "PL", "orientacaoVoto": "Sim", "codTipoLideranca": "P"}]}
+        return None
+
+    collector.baixar, collector.paginado, collector.get_json = fake_baixar, fake_pag, fake_get
+    collector.VOTACOES_API = True
+    antes = len(_q("SELECT * FROM orientacoes"))
+    try:
+        collector.coletar_votacoes([2025])
+    finally:
+        collector.baixar, collector.paginado, collector.get_json = original, orig_pag, orig_get
+        collector.VOTACOES_API = False
+    assert antes > 0
+    ids = {r[0] for r in _q("SELECT id FROM votacoes")}
+    assert nova in ids and "2655570-26" not in ids and "2655570-34" not in ids
+    v = _q(f"SELECT sigla_materia, numero_materia, qtd_sim, qtd_nao, qtd_abstencao, aprovacao FROM votacoes WHERE id='{nova}'")[0]
+    assert tuple(v[:5]) == ("PLP", 299, 1, 1, 1) and v[5] in (1, True)
+    assert len(_q(f"SELECT * FROM votos WHERE votacao_id='{nova}'")) == 3
+    assert {(r[0], r[1]) for r in _q(f"SELECT lideranca, voto FROM orientacoes WHERE votacao_id='{nova}'")} == \
+        {("Governo", "NÃO"), ("PL", "SIM")}
+    # as orientações das votações do arquivo continuam lá, mesmo com o arquivo de orientações vazio
+    assert len(_q("SELECT * FROM orientacoes")) == antes + 2
+    # a API foi consultada a partir da última data do arquivo, não do começo do ano
+    assert any(p.startswith("/votacoes?dataInicio=2025-06-10") for p in pedidos)
+    with engine.begin() as c:   # volta ao estado das fixtures para os próximos testes
+        _recarregar_votacoes_fixture(c)
+
+
+def _recarregar_votacoes_fixture(c):
+    ler = lambda n: collector.ler_csv(str(FIX / n))  # noqa: E731
+    collector.gravar_votacoes_ano(c, 2025, ler("votacoes-2025.csv"), ler("votacoesVotos-2025.csv"),
+                                  ler("votacoesOrientacoes-2025.csv"), ler("votacoesProposicoes-2025.csv"),
+                                  ler("votacoesObjetos-2025.csv"))
 
 
 def test_anos_da_rotina():

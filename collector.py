@@ -8,6 +8,7 @@ Uso:
 Fontes (todas públicas, sem chave):
     Arquivos anuais em lote  https://dadosabertos.camara.leg.br/arquivos/{nome}/csv/{nome}-{ano}.csv
         votacoes, votacoesVotos, votacoesOrientacoes, votacoesProposicoes  -> Votações/Orientações
+        (completados pela API /votacoes quando o arquivo anual está atrasado)
         proposicoes, proposicoesAutores                                    -> Proposições
     CEAP (cota)              https://www.camara.leg.br/cotas/Ano-{ano}.csv.zip
         plano B: /api/v2/deputados/{id}/despesas
@@ -515,6 +516,112 @@ def _salvar_pendentes(chave, anos):
             c.execute(insert(meta).values(chave=chave, valor=",".join(str(a) for a in sorted(anos))))
 
 
+# O arquivo anual da Câmara às vezes fica semanas sem ser regenerado (em nov/2026 parou em 14/10),
+# enquanto a API já tem as votações novas. A coleta completa o arquivo com a API: votações do
+# Plenário posteriores à última data do arquivo, com votos, orientações e objetos votados.
+VOTACOES_API = os.environ.get("VOTACOES_API", "1") != "0"
+_NOMES_VOT = ("votacoes", "votacoesVotos", "votacoesOrientacoes", "votacoesProposicoes", "votacoesObjetos")
+
+
+def _data_linha(r):
+    return _dt(r.get("dataHoraRegistro")) or _dt(r.get("data"))
+
+
+def ultima_data_arquivo(linhas_votacoes):
+    """Data da votação do Plenário mais recente no arquivo anual (None se não houver)."""
+    datas = [_data_linha(r) for r in linhas_votacoes
+             if not ORGAO_VOTACOES or (r.get("siglaOrgao") or "").upper() == ORGAO_VOTACOES]
+    datas = [d for d in datas if d]
+    return max(datas).date() if datas else None
+
+
+def _linha_prop(vid, p):
+    """Proposição da API (objetosPossiveis/proposicoesAfetadas) no formato das linhas do arquivo."""
+    sigla, numero, ano = (p.get("siglaTipo") or "").strip(), p.get("numero"), p.get("ano")
+    titulo = f"{sigla} {numero}/{ano}" if sigla and numero and ano else sigla
+    return {"idVotacao": vid, "proposicao_id": str(p.get("id") or ""), "proposicao_ementa": p.get("ementa") or "",
+            "proposicao_siglaTipo": sigla, "proposicao_numero": str(numero or ""),
+            "proposicao_ano": str(ano or ""), "proposicao_titulo": titulo}
+
+
+def _linhas_orientacoes_api(vid):
+    saida = []
+    for o in (get_json(f"/votacoes/{vid}/orientacoes") or {}).get("dados") or []:
+        rot = (o.get("siglaPartidoBloco") or o.get("siglaBancada") or "").strip()
+        if not rot and (o.get("codTipoLideranca") or "").upper() == "G":
+            rot = "Governo"
+        if rot:
+            saida.append({"idVotacao": vid, "siglaBancada": rot,
+                          "orientacao": o.get("orientacaoVoto") or o.get("orientacao") or ""})
+    return saida
+
+
+def votacoes_pela_api(ano, desde, ja=(), hoje=None):
+    """Votações nominais do Plenário de `desde` até hoje, lidas da API e devolvidas no mesmo formato
+    das linhas dos arquivos anuais (para passar por gravar_votacoes_ano). Falha da API propaga."""
+    hoje = hoje or date.today()
+    ini, fim = max(desde, date(ano, 1, 1)), min(hoje, date(ano, 12, 31))
+    out = {n: [] for n in _NOMES_VOT}
+    lista, d = [], ini
+    while d <= fim:   # janelas de 30 dias (a API limita o intervalo de datas)
+        f = min(fim, d + timedelta(days=29))
+        lista += paginado(f"/votacoes?dataInicio={d}&dataFim={f}&itens=200&ordem=ASC&ordenarPor=dataHoraRegistro")
+        d = f + timedelta(days=1)
+    vistos = set(ja)
+    for v in lista:
+        vid = str(v.get("id") or "").strip()
+        if not vid or vid in vistos:
+            continue
+        if ORGAO_VOTACOES and (v.get("siglaOrgao") or "").upper() != ORGAO_VOTACOES:
+            continue
+        vistos.add(vid)
+        votos_ = paginado(f"/votacoes/{vid}/votos")
+        if not votos_:
+            continue   # simbólica (sem voto individual)
+        det = (get_json(f"/votacoes/{vid}") or {}).get("dados") or {}
+        cont = Counter()
+        for x in votos_:
+            dep = x.get("deputado_") or x.get("deputado") or {}
+            voto = x.get("tipoVoto") or x.get("voto") or ""
+            n = norm_voto(voto)
+            cont["sim" if n == "SIM" else "nao" if n == "NÃO" else "outros"] += 1
+            out["votacoesVotos"].append({
+                "idVotacao": vid, "voto": voto, "deputado_id": str(dep.get("id") or ""),
+                "deputado_nome": dep.get("nome") or "", "deputado_siglaPartido": dep.get("siglaPartido") or "",
+                "deputado_siglaUf": dep.get("siglaUf") or ""})
+        aprov = det.get("aprovacao", v.get("aprovacao"))
+        abertura = det.get("ultimaAberturaVotacao") or {}
+        apres = det.get("ultimaApresentacaoProposicao") or {}
+        out["votacoes"].append({
+            "id": vid, "siglaOrgao": v.get("siglaOrgao") or det.get("siglaOrgao") or "",
+            "data": det.get("data") or v.get("data") or "",
+            "dataHoraRegistro": det.get("dataHoraRegistro") or v.get("dataHoraRegistro") or "",
+            "aprovacao": "" if aprov in (None, "") else str(int(aprov)),
+            "votosSim": str(cont["sim"]), "votosNao": str(cont["nao"]), "votosOutros": str(cont["outros"]),
+            "descricao": det.get("descricao") or v.get("descricao") or "",
+            "ultimaAberturaVotacao_descricao": abertura.get("descricao") or "",
+            "ultimaApresentacaoProposicao_descricao": apres.get("descricao") or "",
+            "ultimaApresentacaoProposicao_idProposicao": str(id_da_uri(apres.get("uriProposicaoCitada")) or ""),
+        })
+        out["votacoesOrientacoes"] += _linhas_orientacoes_api(vid)
+        objetos = det.get("objetosPossiveis") or []
+        afetadas = det.get("proposicoesAfetadas") or []
+        ids = set()
+        for p in afetadas + objetos:
+            if p.get("id") not in ids:
+                ids.add(p.get("id"))
+                out["votacoesProposicoes"].append(_linha_prop(vid, p))
+        out["votacoesObjetos"] += [_linha_prop(vid, p) for p in objetos]
+    return out
+
+
+def _orientacoes_guardadas(conn, ano):
+    """Orientações já gravadas do ano, no formato do arquivo (usadas quando o arquivo vem vazio)."""
+    q = (select(orientacoes.c.votacao_id, orientacoes.c.lideranca, orientacoes.c.voto)
+         .where(orientacoes.c.votacao_id.in_(select(votacoes.c.id).where(votacoes.c.ano == ano))))
+    return [{"idVotacao": vid, "siglaBancada": lid, "orientacao": voto} for vid, lid, voto in conn.execute(q)]
+
+
 def coletar_votacoes(anos) -> int:
     """Um ano que falhar não interrompe os seguintes: fica anotado como pendente e é refeito
     automaticamente na próxima coleta."""
@@ -522,6 +629,7 @@ def coletar_votacoes(anos) -> int:
     pendentes = _anos_pendentes(chave)
     alvo = sorted(set(anos) | pendentes)
     total, falhas = 0, set()
+    hoje = date.today()
     for ano in alvo:
         arqs = {}
         try:
@@ -532,15 +640,38 @@ def coletar_votacoes(anos) -> int:
             except Exception as e:
                 log.warning("votacoesObjetos %s indisponível (%s)", ano, e)
                 arqs["votacoesObjetos"] = None
+            linhas = {n: list(ler_csv(arqs[n])) if arqs.get(n) else [] for n in _NOMES_VOT}
             if not arqs["votacoes"] or not arqs["votacoesVotos"]:
+                linhas["votacoes"], linhas["votacoesVotos"] = [], []
+            ultima = ultima_data_arquivo(linhas["votacoes"])
+            com_voto = {(r.get("idVotacao") or "").strip() for r in linhas["votacoesVotos"]}
+            if VOTACOES_API and ano <= hoje.year and (ultima is None or ultima < min(hoje, date(ano, 12, 31))):
+                # a partir do próprio dia da última votação do arquivo (a sessão pode ter seguido)
+                api = votacoes_pela_api(ano, ultima or date(ano, 1, 1), ja=com_voto, hoje=hoje)
+                if api["votacoes"]:
+                    log.info("votações %s: arquivo vai até %s; %d votação(ões) nominal(is) completada(s) pela API",
+                             ano, ultima or "—", len(api["votacoes"]))
+                api_ori = api.pop("votacoesOrientacoes")
+                for n, rows in api.items():
+                    linhas[n] += rows
+            else:
+                api_ori = []
+            if not linhas["votacoes"]:
                 log.info("votações %s: arquivo ainda não publicado", ano)
                 continue
             with engine.begin() as c:
-                total += gravar_votacoes_ano(
-                    c, ano, ler_csv(arqs["votacoes"]), ler_csv(arqs["votacoesVotos"]),
-                    ler_csv(arqs["votacoesOrientacoes"]) if arqs["votacoesOrientacoes"] else [],
-                    ler_csv(arqs["votacoesProposicoes"]) if arqs["votacoesProposicoes"] else [],
-                    ler_csv(arqs["votacoesObjetos"]) if arqs["votacoesObjetos"] else [])
+                if not linhas["votacoesOrientacoes"] and com_voto:
+                    # arquivo de orientações vazio (aconteceu em 23/11/2026): não apaga as que já temos
+                    guardadas = _orientacoes_guardadas(c, ano)
+                    log.warning("votações %s: arquivo de orientações vazio — mantidas %d orientações já gravadas",
+                                ano, len(guardadas))
+                    linhas["votacoesOrientacoes"] = guardadas
+                    if not guardadas and VOTACOES_API:
+                        linhas["votacoesOrientacoes"] = _orientacoes_faltantes_api(linhas)
+                linhas["votacoesOrientacoes"] += api_ori
+                total += gravar_votacoes_ano(c, ano, linhas["votacoes"], linhas["votacoesVotos"],
+                                             linhas["votacoesOrientacoes"], linhas["votacoesProposicoes"],
+                                             linhas["votacoesObjetos"])
         except Exception as e:
             log.error("votações de %s não carregadas (%s) — ficam para a próxima coleta", ano, e)
             falhas.add(ano)
@@ -548,6 +679,22 @@ def coletar_votacoes(anos) -> int:
             _apagar(*arqs.values())
     _salvar_pendentes(chave, (pendentes - set(alvo)) | falhas)
     return total
+
+
+def _orientacoes_faltantes_api(linhas, limite=400):
+    """Sem arquivo e sem nada gravado: busca na API as orientações das votações do Plenário do arquivo."""
+    com_voto = {(r.get("idVotacao") or "").strip() for r in linhas["votacoesVotos"]}
+    ids = [(r.get("id") or "").strip() for r in linhas["votacoes"]
+           if (not ORGAO_VOTACOES or (r.get("siglaOrgao") or "").upper() == ORGAO_VOTACOES)
+           and (r.get("id") or "").strip() in com_voto][:limite]
+    saida = []
+    for vid in ids:
+        try:
+            saida += _linhas_orientacoes_api(vid)
+        except Exception as e:
+            log.warning("orientações de %s pela API: %s", vid, e)
+    log.info("orientações recuperadas pela API: %d (%d votações)", len(saida), len(ids))
+    return saida
 
 
 # ---------------- CEAP (cota parlamentar) ----------------
