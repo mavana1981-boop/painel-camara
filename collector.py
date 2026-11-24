@@ -817,6 +817,12 @@ def atualizar_votacoes_periodo(inicio, fim, hoje=None) -> int:
             depois = _retrato_periodo(c, ini_a, fim_a)
         total += sum(1 for k, v in depois.items() if antes.get(k) != v)
         log.info("votações ao vivo %s a %s: %d lida(s) da API", ini_a, fim_a, len(api["votacoes"]))
+    # simbólicas que a Câmara ainda não publicou em /votacoes, achadas na tramitação das matérias da pauta
+    try:
+        import simbolicas_provisorias
+        total += simbolicas_provisorias.atualizar(inicio, fim)
+    except Exception as e:
+        log.warning("simbólicas provisórias %s a %s: %s", inicio, fim, e)
     return total
 
 

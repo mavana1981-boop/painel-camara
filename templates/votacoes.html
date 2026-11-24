@@ -53,13 +53,13 @@
           <span class="vot-desc">{{ tipos|join(' · ') }}</span>
         {% endif %}
         {% if v.secreta and n == 1 %}<span class="tag">secreta</span>{% endif %}
-        {% if v.simbolica and n == 1 %}<span class="tag">simbólica</span>{% endif %}
+        {% if v.simbolica and n == 1 %}<span class="tag">simbólica{% if v.provisoria %} · provisória{% endif %}</span>{% endif %}
       </a>
       {% if aberto and n > 1 %}
       <div class="vot-sub">
         {% for x in g.votacoes %}
         <a class="vot-subitem {{ 'sel' if x.id == vid }}" href="{{ link_vot(x.id) }}">
-          <span class="vot-data">{{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %}{% if placar_curto(x) %} · {{ placar_curto(x) }}{% endif %}{% if x.secreta %} · secreta{% endif %}{% if x.simbolica %} · simbólica{% endif %}</span>
+          <span class="vot-data">{{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %}{% if placar_curto(x) %} · {{ placar_curto(x) }}{% endif %}{% if x.secreta %} · secreta{% endif %}{% if x.simbolica %} · simbólica{% if x.provisoria %} <span class="tag" title="Achada na tramitação; a Câmara ainda não publicou a votação nos Dados Abertos">provisória</span>{% endif %}{% endif %}</span>
           <span class="vot-desc"><span class="etapa-tag">{{ x.tipo_etapa }}</span> {{ (x.descricao_votacao or '')[:90] }}</span>
         </a>
         {% endfor %}
@@ -101,6 +101,7 @@
         <div style="margin-top:4px;font-size:12px">{% if v.proposicao_id %}<a href="https://www.camara.leg.br/propostas-legislativas/{{ v.proposicao_id }}" target="_blank" rel="noopener">ficha da proposição ↗</a> · {% endif %}<details class="relpdf"><summary>📄 Relatório da proposição (PDF)</summary><span class="relpdf-op"><a href="{{ url_for('proposicao_relatorio_pdf', vid=v.id) }}" target="_blank" rel="noopener" title="Ficha, todas as votações no Plenário, orientações e votos por partido">Completo</a><a href="{{ url_for('proposicao_relatorio_pdf', vid=v.id, modo='sintetico') }}" target="_blank" rel="noopener" title="Uma página: resultado, quadro das votações, bancadas e saldo dos destaques">Sintético</a></span></details></div>
         {% if det.simbolica %}
         <div class="etapa-box" style="margin-top:10px"><span><b>Votação simbólica</b> — o Plenário decidiu sem registro nominal: não há placar, votos individuais nem orientações publicadas.</span></div>
+        {% if v.provisoria %}<div class="aviso info" style="margin-top:8px">Registro <b>provisório</b>, lido da tramitação da proposição: a Câmara ainda não publicou esta votação nos Dados Abertos. Ele é substituído pela votação oficial quando ela sair.</div>{% endif %}
       </div>
     </div>
         {% else %}

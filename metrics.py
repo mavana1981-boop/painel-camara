@@ -308,7 +308,8 @@ def lista_votacoes(f: Filtros, busca: str = "", limite: int = 300, simbolicas: b
 
 
 def _como_simbolica(v):
-    v.update(simbolica=True, secreta=False, qtd_sim=None, qtd_nao=None, dispositivo=v.get("dispositivo"))
+    v.update(simbolica=True, secreta=False, qtd_sim=None, qtd_nao=None, dispositivo=v.get("dispositivo"),
+             provisoria=str(v.get("id") or "").startswith("TRAM-"))
     return v
 
 

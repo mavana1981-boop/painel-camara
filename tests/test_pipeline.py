@@ -4218,3 +4218,46 @@ def test_tela_votacoes_dispara_ao_vivo_e_informa(monkeypatch):
     html = cli.get("/votacoes?inicio=2025-01-01&fim=2025-03-31").get_data(as_text=True)   # período antigo
     assert 'id="aoVivo"' not in html and len(chamadas) == 1
     appmod._ao_vivo.clear()
+
+
+def test_simbolicas_provisorias_pela_tramitacao():
+    """Matéria da pauta com "Aprovado o Projeto" na tramitação do PLEN e sem votação oficial: entra como simbólica
+    provisória; some quando a oficial aparece; decisões de outros órgãos e duplicatas da nominal são ignoradas."""
+    import json as _json
+    from datetime import date as _date, datetime as _dt
+    import simbolicas_provisorias as sp
+    from db import plenario_pautas, votacoes_simbolicas
+    dia = _date(2025, 11, 25)
+    itens = [{"id_principal": "2777010", "projeto": "PL 20/2025", "ementa": "Institui o dia X."},
+             {"id_principal": "2777011", "projeto": "PEC 3/2025", "ementa": "Altera a Constituição."}]
+    with engine.begin() as c:
+        c.execute(plenario_pautas.insert().values(evento_id=999001, data="2025-11-25", titulo="Sessão",
+                                                  itens=_json.dumps(itens)))
+    trams = {
+        2777010: [{"dataHora": "2025-11-25T19:40", "siglaOrgao": "PLEN",
+                   "despacho": "Aprovado o Projeto. A matéria vai ao Senado Federal."},
+                  {"dataHora": "2025-11-25T10:00", "siglaOrgao": "CCJC", "despacho": "Aprovado o Parecer."}],
+        # votação nominal: o despacho traz o placar (já sai em /votacoes) — não vira provisória
+        2777011: [{"dataHora": "2025-11-25T18:00", "siglaOrgao": "PLEN",
+                   "despacho": "Rejeitada a Emenda de Plenário nº 23. Sim: 146; Não: 315; Abstenção: 1; Total: 462."}],
+    }
+    ler = lambda pid, ini, fim: trams.get(pid, [])  # noqa: E731
+    try:
+        assert sp.atualizar(dia, dia, ler=ler) == 1
+        prov = _q("SELECT id, sigla_materia, numero_materia, ano_materia, aprovacao, descricao_votacao "
+                  "FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%'")
+        assert len(prov) == 1 and tuple(prov[0][1:4]) == ("PL", 20, 2025) and prov[0][4] in (1, True)
+        assert prov[0][5] == "Aprovado o Projeto"
+        assert sp.atualizar(dia, dia, ler=ler) == 0                 # nada mudou
+        lista = metrics.lista_votacoes(metrics.Filtros(dia, dia, opostas=False), simbolicas=True)
+        assert any(v.get("provisoria") for v in lista)
+        with engine.begin() as c:   # a Câmara publicou a simbólica oficial: a provisória sai
+            c.execute(votacoes_simbolicas.insert().values(id="2777010-40", ano=2025, data=_dt(2025, 11, 25, 19, 35),
+                                                          proposicao_id=2777010, sigla_materia="PL",
+                                                          descricao_votacao="Aprovado o Projeto. A matéria vai ao Senado."))
+        assert sp.atualizar(dia, dia, ler=ler) == 1
+        assert not _q("SELECT id FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%'")
+    finally:
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM plenario_pautas WHERE evento_id = 999001"))
+            c.execute(text("DELETE FROM votacoes_simbolicas WHERE id = '2777010-40' OR id LIKE 'TRAM-%'"))
