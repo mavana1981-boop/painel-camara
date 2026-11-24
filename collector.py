@@ -519,9 +519,13 @@ def _materia_da_simbolica(conn, simb, buscar_api=True, limite_api=400):
     """Muitas simbólicas (aprovação de MPV, redação final, urgência...) não vêm ligadas a nenhuma proposição
     no arquivo. O id da votação começa pelo id da proposição votada ("2643429-30" -> MPV 1383/2026):
     usa esse id e acha sigla/número/ano no cadastro, no que já estava gravado ou, por último, na API."""
-    sem = [v for v in simb.values() if not v.get("proposicao_id")]
-    for v in sem:
-        v["proposicao_id"] = _int(str(v["id"]).split("-")[0])
+    for v in simb.values():
+        # vale o id do começo da votação: a ligação do arquivo costuma apontar para o requerimento, a emenda
+        # ou o parecer ("Aprovado o Requerimento." do PLP 299/2026 vinha ligado ao REQ e era descartado)
+        pref = _int(str(v["id"]).split("-")[0])
+        if pref and v.get("proposicao_id") != pref:
+            v.update(proposicao_id=pref, sigla_materia=None, numero_materia=None, ano_materia=None,
+                     descricao_materia=None)
     falta = {v["proposicao_id"] for v in simb.values() if v.get("proposicao_id") and not v.get("sigla_materia")}
     if not falta:
         return
@@ -1147,7 +1151,7 @@ def executar(desde: date | None = None, so_deputados=False):
 def _marcar_recarga_etapas(anos):
     """Uma vez só (por versão): a coluna 'etapa' e depois as votações simbólicas surgiram depois — os anos
     antigos (que a rotina não relê) entram como pendentes para serem recarregados com elas."""
-    for chave in ("votacoes_etapa_v1", "votacoes_simbolicas_v2"):
+    for chave in ("votacoes_etapa_v1", "votacoes_simbolicas_v3"):
         _marcar_recarga(chave, anos)
 
 

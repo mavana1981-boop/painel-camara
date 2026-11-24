@@ -14,7 +14,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from agenda_pdf import _p
+from agenda_pdf import _imagens_logos, _p
 from db import sem_acento
 
 AZUL = colors.HexColor("#1b3350")
@@ -397,5 +397,28 @@ def gerar(d, agora=None):
     el += [Spacer(1, 2 * mm),
            Paragraph(f"Fonte: relatório da proposição, Painel da Câmara dos Deputados, {agora:%d/%m/%Y}.",
                      st["fonte"])]
-    doc.build(el)
+    logos = _imagens_logos()
+
+    def topo(c, _doc):
+        """Logos da Oposição e da Minoria: dois quadrinhos separados, pequenos, no alto à direita."""
+        if not logos:
+            return
+        larg_p, alt_p = A4
+        h_card, pad, gap = 11 * mm, 1.4 * mm, 2.5 * mm
+        x, alto = larg_p - 18 * mm, alt_p - 12 * mm
+        c.saveState()
+        c.setFillColor(colors.white)
+        c.setStrokeColor(colors.HexColor("#d6dee8"))
+        c.setLineWidth(0.6)
+        for img in reversed(logos):
+            iw, ih = img.getSize()
+            h = h_card - 2 * pad
+            w = h * iw / ih
+            x -= w + 2 * pad
+            c.roundRect(x, alto - h_card, w + 2 * pad, h_card, 1.5 * mm, stroke=1, fill=1)
+            c.drawImage(img, x + pad, alto - h_card + pad, w, h, mask="auto")
+            x -= gap
+        c.restoreState()
+
+    doc.build(el, onFirstPage=topo, onLaterPages=topo)
     return buf.getvalue()

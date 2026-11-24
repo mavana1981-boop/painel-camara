@@ -32,7 +32,7 @@ import metrics  # noqa: E402
 from db import engine, init_db  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
-V1, V2, V3, V_CCJ, V_SIMB, V6, V7 = ("2500001-10", "2500001-12", "2500002-3", "2500003-1", "2500004-2",
+V1, V2, V3, V_CCJ, V_SIMB, V6, V7 = ("2500001-10", "2500001-12", "2500002-3", "2500003-1", "2480001-50",
                                     "2500005-7", "2500006-2")
 
 
@@ -306,7 +306,7 @@ def test_simbolicas_e_pdf_em_lote():
     assert {r[0] for r in _q("SELECT id FROM votacoes_simbolicas")} == {V_SIMB}
     import collector
     from db import engine
-    simb = {"2480001-40": {"id": "2480001-40", "proposicao_id": None, "sigla_materia": None},
+    simb = {"2480001-40": {"id": "2480001-40", "proposicao_id": 2490456, "sigla_materia": "REQ"},   # ligada ao REQ
             "2999999-3": {"id": "2999999-3", "proposicao_id": None, "sigla_materia": None}}
     orig = collector.get_json
     collector.get_json = lambda c: {"dados": {"siglaTipo": "MPV", "numero": 1383, "ano": 2026, "ementa": "Crédito"}} \
