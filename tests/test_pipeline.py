@@ -364,6 +364,23 @@ def test_simbolicas_na_aba_votacoes():
     html = cli.get(f"/votacoes?id={V1}").get_data(as_text=True)
     assert "(simbólica)" in html                                              # no seletor de etapas
 
+def test_resumo_de_plenario_titulo_e_balanco():
+    import sintese_pdf as sp
+    from datetime import date
+    assert sp.intervalo_extenso(date(2026, 11, 17), date(2026, 11, 21)) == "17 A 21 DE NOVEMBRO DE 2026"
+    assert sp.intervalo_extenso(date(2026, 11, 17), date(2026, 11, 17)) == "17 DE NOVEMBRO DE 2026"
+    assert sp.intervalo_extenso(date(2026, 10, 30), date(2026, 11, 4)) == "30 DE OUTUBRO A 4 DE NOVEMBRO DE 2026"
+    def vt(tipo, aprov, simb):
+        return {"votacao": {"tipo_etapa": tipo, "aprovacao": aprov}, "simbolica": simb}
+    lista = [{"votacoes": [vt("Requerimento", True, True), vt("Texto principal", True, False)]},
+             {"votacoes": [vt("Texto principal", True, True), vt("Redação final", True, True)]},
+             {"votacoes": [vt("Redação final", True, True)]},
+             {"votacoes": [vt("Texto principal", False, False)]},
+             {"votacoes": [vt("Urgência", True, True)]}]
+    b = sp.balanco(lista)
+    assert (b["materias"], b["apr_nominal"], b["apr_simbolica"], b["rejeitadas"], b["outras"]) == (5, 1, 2, 1, 1)
+    assert (b["vot_nominais"], b["vot_simbolicas"]) == (2, 5)
+
 def test_complemento_sem_o_servico():
     import objeto_votacao as ov
     r = ov.descrever({"tipo_etapa": "Requerimento", "descricao_votacao":

@@ -498,7 +498,7 @@ def gerar_varios(lista, titulo="Votações no Plenário", sub="", agora=None, av
     total = sum(len(d["votacoes"]) for d in lista)
     rotulo = f"{len(lista)} matéria(s) · {total} votação(ões)"
     cabecalho = fazer_cabecalho(titulo, sub or CASA["nome"], _selo("CD"), rotulo, agora,
-                                kicker="R E L A T Ó R I O   D E   V O T A Ç Õ E S", rodape="Votações")
+                                kicker="P L E N Á R I O   D A   C Â M A R A", rodape="Resumo de Plenário")
     buf = io.BytesIO()
     larg = A4[0] - 32 * mm
     doc = BaseDocTemplate(buf, pagesize=A4, title=titulo, author=CASA["painel"],
@@ -508,7 +508,25 @@ def gerar_varios(lista, titulo="Votações no Plenário", sub="", agora=None, av
     doc.addPageTemplates([PageTemplate("primeira", [f1], onPage=cabecalho, autoNextPageTemplate="demais"),
                           PageTemplate("demais", [fn], onPage=cabecalho)])
     cab_fundo = colors.HexColor("#eef3f0")
-    el = []
+    import sintese_pdf
+    b = sintese_pdf.balanco(lista)
+    cels = [(b["materias"], "proposições votadas"), (b["apr_nominal"], "aprovadas em votação nominal"),
+            (b["apr_simbolica"], "aprovadas simbolicamente")]
+    if b["rejeitadas"]:
+        cels.append((b["rejeitadas"], "rejeitadas"))
+    if b["outras"]:
+        cels.append((b["outras"], "só com outras votações"))
+    t = Table([[[Paragraph(str(n), st["num"]), Paragraph(r, st["numrot"])] for n, r in cels]],
+              colWidths=[larg / len(cels)] * len(cels))
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), cor_cl), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                           ("LINEAFTER", (0, 0), (-2, 0), 0.6, colors.white),
+                           ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
+    el = [Paragraph("Balanço do período", st["sec"]), t, Spacer(1, 2 * mm),
+          Paragraph(f"{b['vot_nominais']} votação(ões) nominal(is) e {b['vot_simbolicas']} simbólica(s). A matéria "
+                    f"conta como aprovada pela votação do texto-base (ou, sem ela no período, da redação final).",
+                    st["meta"]),
+          Spacer(1, 4 * mm), HRFlowable(width="100%", thickness=1.2, color=cor), Spacer(1, 4 * mm)]
     if aviso:
         el += [Paragraph(_p(aviso), st["meta"]), Spacer(1, 3 * mm)]
     for i, d in enumerate(lista):
@@ -516,7 +534,7 @@ def gerar_varios(lista, titulo="Votações no Plenário", sub="", agora=None, av
         if i:
             el += [Spacer(1, 2 * mm), HRFlowable(width="100%", thickness=1.2, color=cor), Spacer(1, 4 * mm)]
         info = " · ".join(x for x in (pr.get("situacao"), pr.get("orgao"), _rotulo_cab(d)) if x)
-        el += [CondPageBreak(60 * mm), _Marcador(d["ident"], f"m{i}"),
+        el += [CondPageBreak(60 * mm) if i else Spacer(0, 0), _Marcador(d["ident"], f"m{i}"),
                Paragraph(_p(d["ident"]), st["mat"]), Paragraph(_p(info), st["matsub"]), Spacer(1, 2 * mm)]
         el += _corpo(d, st, larg, cab_fundo, cor_cl, compacto=True)
     doc.build(el, canvasmaker=_Numerado)

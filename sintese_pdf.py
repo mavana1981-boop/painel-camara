@@ -460,19 +460,100 @@ def gerar(d, agora=None):
     return buf.getvalue()
 
 
-def gerar_varios(lista, agora=None, aviso=None):
-    """Várias matérias no mesmo PDF, uma abaixo da outra (sem página própria), separadas por um fio."""
+def intervalo_extenso(a, b):
+    """(17/11, 21/11/2026) -> '17 A 21 DE NOVEMBRO DE 2026'; um dia só -> '17 DE NOVEMBRO DE 2026'."""
+    a, b = (a, b) if a and b else (a or b, a or b)
+    if not a:
+        return ""
+    a, b = min(a, b), max(a, b)
+    mes = lambda d: MESES[d.month - 1]  # noqa: E731
+    if a == b:
+        txt = f"{a.day} de {mes(a)} de {a.year}"
+    elif (a.year, a.month) == (b.year, b.month):
+        txt = f"{a.day} a {b.day} de {mes(b)} de {b.year}"
+    elif a.year == b.year:
+        txt = f"{a.day} de {mes(a)} a {b.day} de {mes(b)} de {b.year}"
+    else:
+        txt = f"{a.day} de {mes(a)} de {a.year} a {b.day} de {mes(b)} de {b.year}"
+    return txt.upper()
+
+
+def _decisiva(vots):
+    """A votação que diz se a matéria foi aprovada: o texto-base ou, sem ele no período, a redação final."""
+    tb = texto_base(vots)
+    if tb:
+        return tb
+    return next((x for x in vots if x["votacao"].get("tipo_etapa") == "Redação final"), None)
+
+
+def balanco(lista):
+    """Números do período para o topo do relatório."""
+    b = {"materias": len(lista), "apr_nominal": 0, "apr_simbolica": 0, "rejeitadas": 0, "outras": 0,
+         "vot_nominais": 0, "vot_simbolicas": 0}
+    for d in lista:
+        vs = d["votacoes"]
+        b["vot_simbolicas"] += sum(1 for x in vs if x.get("simbolica"))
+        b["vot_nominais"] += sum(1 for x in vs if not x.get("simbolica"))
+        x = _decisiva(vs)
+        aprov = x["votacao"].get("aprovacao") if x else None
+        if x is None or aprov is None:
+            b["outras"] += 1
+        elif not aprov:
+            b["rejeitadas"] += 1
+        elif x.get("simbolica"):
+            b["apr_simbolica"] += 1
+        else:
+            b["apr_nominal"] += 1
+    return b
+
+
+def _plural(n, um, varios):
+    return f"{n} {um if n == 1 else varios}"
+
+
+def gerar_varios(lista, agora=None, aviso=None, inicio=None, fim=None):
+    """Várias matérias no mesmo PDF, uma abaixo da outra (sem página própria), separadas por um fio,
+    com o título "Resumo de Plenário" e o balanço do período no começo."""
     agora = agora or datetime.now()
     st, larg, buf = _estilos(compacto=True), A4[0] - 36 * mm, io.BytesIO()
-    el = []
+    if not (inicio or fim):
+        datas = [_quando(x["votacao"].get("data")) for d in lista for x in d["votacoes"]]
+        datas = [x.date() for x in datas if x]
+        inicio, fim = (min(datas), max(datas)) if datas else (None, None)
+    periodo = intervalo_extenso(inicio, fim)
+    el = [Paragraph("RESUMO DE PLENÁRIO", ParagraphStyle("rp", fontName="Helvetica-Bold", fontSize=26, leading=30,
+                                                       textColor=AZUL)),
+          Paragraph(periodo, ParagraphStyle("rpd", fontName="Helvetica-Bold", fontSize=13, leading=17,
+                                            textColor=CINZA, spaceBefore=2)),
+          Spacer(1, 5 * mm)]
+    b = balanco(lista)
+    cels = [(b["materias"], "proposições votadas"), (b["apr_nominal"], "aprovadas em votação nominal"),
+            (b["apr_simbolica"], "aprovadas simbolicamente")]
+    if b["rejeitadas"]:
+        cels.append((b["rejeitadas"], "rejeitadas"))
+    if b["outras"]:
+        cels.append((b["outras"], "só com outras votações (requerimentos, emendas...)"))
+    num = ParagraphStyle("bn", fontName="Helvetica-Bold", fontSize=22, leading=26, textColor=AZUL)
+    rot = ParagraphStyle("br", fontName="Helvetica", fontSize=8.5, leading=11, textColor=CINZA)
+    t = Table([[[Paragraph(str(n), num), Paragraph(r, rot)] for n, r in cels]], colWidths=[larg / len(cels)] * len(cels))
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), ZEBRA), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                           ("LINEAFTER", (0, 0), (-2, 0), 1.5, colors.white),
+                           ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
+    el += [t, Spacer(1, 2.5 * mm),
+           Paragraph(f"No período, {_plural(b['vot_nominais'], 'votação nominal', 'votações nominais')} e "
+                     f"{_plural(b['vot_simbolicas'], 'votação simbólica', 'votações simbólicas')}. A matéria conta "
+                     f"como aprovada pela votação do texto-base (ou, sem ela no período, da redação final).",
+                     st["fonte"]),
+           Spacer(1, 6 * mm), HRFlowable(width="100%", thickness=1.2, color=AZUL), Spacer(1, 5 * mm)]
     if aviso:
         el += [Paragraph(_p(aviso), st["corpo"]), Spacer(1, 4 * mm)]
     for i, d in enumerate(lista):
         if i:
             el += [Spacer(1, 3 * mm), HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#c9d3df")),
                    Spacer(1, 4 * mm)]
-        el += [CondPageBreak(70 * mm), _Marcador(d["ident"], f"m{i}")] + _elementos(d, st, larg, compacto=True)
+        el += [CondPageBreak(70 * mm) if i else Spacer(0, 0), _Marcador(d["ident"], f"m{i}")] + _elementos(d, st, larg, compacto=True)
     el += _fonte(st, agora)
     topo = _topo()
-    _doc(buf, "Votações no Plenário — resumo").build(el, onFirstPage=topo)      # logos só na 1ª página
+    _doc(buf, f"Resumo de Plenário — {periodo.lower()}").build(el, onFirstPage=topo)      # logos só na 1ª página
     return buf.getvalue()

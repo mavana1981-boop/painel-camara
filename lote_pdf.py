@@ -70,16 +70,12 @@ def gerar(f, busca="", modo="completo"):
              if len(lista) > LIMITE else None)
     # uma matéria abaixo da outra (sem página própria para cada uma)
     if modo == "sintetico":
-        return sintese_pdf.gerar_varios(ds, aviso=aviso), len(lista), len(ds)
-    return proposicao_pdf.gerar_varios(ds, sub=_periodo(f), aviso=aviso), len(lista), len(ds)
-
-
-def _periodo(f):
-    br = lambda d: d.strftime("%d/%m/%Y")  # noqa: E731
-    if f.inicio and f.fim:
-        return f"De {br(f.inicio)} a {br(f.fim)}" if f.inicio != f.fim else br(f.inicio)
-    if f.inicio:
-        return f"A partir de {br(f.inicio)}"
-    if f.fim:
-        return f"Até {br(f.fim)}"
-    return ""
+        return sintese_pdf.gerar_varios(ds, aviso=aviso, inicio=f.inicio, fim=f.fim), len(lista), len(ds)
+    ini, fim = f.inicio, f.fim
+    if not (ini or fim):
+        datas = [proposicao_pdf._quando(x["votacao"].get("data")) for d in ds for x in d["votacoes"]]
+        datas = [x.date() for x in datas if x]
+        ini, fim = (min(datas), max(datas)) if datas else (None, None)
+    periodo = sintese_pdf.intervalo_extenso(ini, fim)
+    return proposicao_pdf.gerar_varios(ds, titulo="Resumo de Plenário", sub=periodo.lower(),
+                                       aviso=aviso), len(lista), len(ds)
