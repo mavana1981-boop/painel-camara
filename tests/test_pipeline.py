@@ -341,6 +341,12 @@ def test_simbolicas_e_pdf_em_lote():
     r = cli.get("/votacoes/relatorio.pdf?inicio=2025-05-01&fim=2025-05-31&modo=sintetico")
     assert r.status_code == 200 and "2025-05-01-2025-05-31" in r.headers["Content-Disposition"]
     assert cli.get("/votacoes/relatorio.pdf?busca=inexistentexyz").status_code == 404
+    from pypdf import PdfReader
+    import io as _io
+    r = cli.get("/votacoes/relatorio.pdf?modo=sintetico")
+    pdf = PdfReader(_io.BytesIO(r.data))
+    assert len(pdf.pages) < len(lote_pdf.materias(metrics.Filtros(opostas=False)))   # uma abaixo da outra
+    assert len(pdf.outline) == len(lote_pdf.materias(metrics.Filtros(opostas=False)))
     assert "votacoes/relatorio.pdf" in cli.get("/votacoes").get_data(as_text=True)
 
 def test_simbolicas_na_aba_votacoes():

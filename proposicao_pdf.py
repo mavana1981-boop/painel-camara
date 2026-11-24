@@ -12,8 +12,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Frame, KeepTogether, PageTemplate, Paragraph,
-                                Spacer, Table, TableStyle)
+from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame, HRFlowable, KeepTogether,
+                                PageTemplate, Paragraph, Spacer, Table, TableStyle)
 from sqlalchemy import text
 
 import metrics
@@ -405,47 +405,33 @@ def _bloco_votacao(n, x, st, larg, cab_fundo, cor_cl):
     return out
 
 
-def gerar(d, agora=None):
-    agora = agora or datetime.now()
-    cor, cor_esc, cor_cl = (colors.HexColor(CASA[k]) for k in ("cor", "cor_esc", "cor_cl"))
-    st = _estilos(cor_esc)
-    pr = d["proc"] or {}
-    sit = pr.get("situacao") or ""
-    sit = sit if len(sit) <= 48 else sit[:46].rstrip() + "…"
-    sub = " · ".join(x for x in (sit, pr.get("orgao")) if x) or CASA["nome"]
+def _rotulo_cab(d):
     n_simb = sum(1 for x in d["votacoes"] if x.get("simbolica"))
     n = len(d["votacoes"]) - n_simb
     rotulo = (f"{n} votação(ões) nominal(is)" if n else "") + \
         (f"{' e ' if n else ''}{n_simb} simbólica(s)" if n_simb else "")
-    rotulo = f"{rotulo} no Plenário" if rotulo else "Sem votação no Plenário"
-    sigla = (pr.get("sigla") or (d["ident"].split() or [""])[0]) if d["ident"] else ""
-    cabecalho = fazer_cabecalho(d["ident"], sub, _selo(sigla), rotulo, agora,
-                                kicker="R E L A T Ó R I O   D A   P R O P O S I Ç Ã O", rodape="Proposição")
-    buf = io.BytesIO()
-    larg = A4[0] - 32 * mm
-    doc = BaseDocTemplate(buf, pagesize=A4, title=f"Relatório — {d['ident']}", author=CASA["painel"],
-                          leftMargin=16 * mm, rightMargin=16 * mm, topMargin=20 * mm, bottomMargin=20 * mm)
-    f1 = Frame(16 * mm, 20 * mm, larg, A4[1] - 20 * mm - 62 * mm, id="p1", leftPadding=0, rightPadding=0)
-    fn = Frame(16 * mm, 20 * mm, larg, A4[1] - 20 * mm - 21 * mm, id="pn", leftPadding=0, rightPadding=0)
-    doc.addPageTemplates([PageTemplate("primeira", [f1], onPage=cabecalho, autoNextPageTemplate="demais"),
-                          PageTemplate("demais", [fn], onPage=cabecalho)])
-    cab_fundo = colors.HexColor("#eef3f0")
+    return f"{rotulo} no Plenário" if rotulo else "Sem votação no Plenário"
 
+
+def _corpo(d, st, larg, cab_fundo, cor_cl, compacto=False):
+    """Conteúdo de uma matéria (sem o cabeçalho de página)."""
+    pr = d["proc"] or {}
     hist = []
     if pr.get("resumo"):
         hist += [Paragraph("Resumo", st["sec"]), Paragraph(_p(pr["resumo"]), st["resumo"]), Spacer(1, 2 * mm)]
-    if d.get("ementa"):
+    if d.get("ementa") and not (compacto and pr.get("resumo")):      # no lote, o resumo basta
         hist += [Paragraph("Ementa", st["sec"]), Paragraph(_p(d["ementa"]), st["corpo"]), Spacer(1, 3 * mm)]
     ficha = _ficha(d, st, larg)
     if ficha:
         hist += [Paragraph("Ficha", st["sec"]), ficha, Spacer(1, 4 * mm)]
     if d["votacoes"]:
-        hist += [CondPageBreak(60 * mm), Paragraph("Votações no Plenário", st["sec"]),
+        hist += [CondPageBreak(40 * mm if compacto else 60 * mm), Paragraph("Votações no Plenário", st["sec"]),
                  _numeros(d, st, larg, cor_cl), Spacer(1, 3 * mm),
                  _quadro_votacoes(d, st, larg, cab_fundo), Spacer(1, 5 * mm)]
         for i, x in enumerate(d["votacoes"], 1):
             bloco = _bloco_votacao(i, x, st, larg, cab_fundo, cor_cl)
-            hist += [CondPageBreak(50 * mm), KeepTogether(bloco[:4]), *bloco[4:], Spacer(1, 5 * mm)]
+            hist += [CondPageBreak(50 * mm if not compacto else 35 * mm), KeepTogether(bloco[:4]), *bloco[4:],
+                     Spacer(1, (5 if not compacto else 3) * mm)]
     else:
         hist += [Paragraph("Votações no Plenário", st["sec"]),
                  Paragraph("O painel não tem votação desta proposição no Plenário (no período).", st["meta"]),
@@ -459,5 +445,79 @@ def gerar(d, agora=None):
         w = [24 * mm, (larg - 24 * mm) / 2, (larg - 24 * mm) / 2]
         hist += [CondPageBreak(40 * mm), Paragraph("Mudanças de situação acompanhadas pelo painel", st["sec"]),
                  _tabela(linhas, w, cab_fundo)]
+    return hist
+
+
+def gerar(d, agora=None):
+    agora = agora or datetime.now()
+    cor, cor_esc, cor_cl = (colors.HexColor(CASA[k]) for k in ("cor", "cor_esc", "cor_cl"))
+    st = _estilos(cor_esc)
+    pr = d["proc"] or {}
+    sit = pr.get("situacao") or ""
+    sit = sit if len(sit) <= 48 else sit[:46].rstrip() + "…"
+    sub = " · ".join(x for x in (sit, pr.get("orgao")) if x) or CASA["nome"]
+    rotulo = _rotulo_cab(d)
+    sigla = (pr.get("sigla") or (d["ident"].split() or [""])[0]) if d["ident"] else ""
+    cabecalho = fazer_cabecalho(d["ident"], sub, _selo(sigla), rotulo, agora,
+                                kicker="R E L A T Ó R I O   D A   P R O P O S I Ç Ã O", rodape="Proposição")
+    buf = io.BytesIO()
+    larg = A4[0] - 32 * mm
+    doc = BaseDocTemplate(buf, pagesize=A4, title=f"Relatório — {d['ident']}", author=CASA["painel"],
+                          leftMargin=16 * mm, rightMargin=16 * mm, topMargin=20 * mm, bottomMargin=20 * mm)
+    f1 = Frame(16 * mm, 20 * mm, larg, A4[1] - 20 * mm - 62 * mm, id="p1", leftPadding=0, rightPadding=0)
+    fn = Frame(16 * mm, 20 * mm, larg, A4[1] - 20 * mm - 21 * mm, id="pn", leftPadding=0, rightPadding=0)
+    doc.addPageTemplates([PageTemplate("primeira", [f1], onPage=cabecalho, autoNextPageTemplate="demais"),
+                          PageTemplate("demais", [fn], onPage=cabecalho)])
+    cab_fundo = colors.HexColor("#eef3f0")
+
+    hist = _corpo(d, st, larg, cab_fundo, cor_cl)
     doc.build(hist, canvasmaker=_Numerado)
+    return buf.getvalue()
+
+
+class _Marcador(Flowable):
+    """Entrada no sumário lateral do leitor de PDF."""
+    def __init__(self, titulo, chave):
+        super().__init__()
+        self.titulo, self.chave = titulo, chave
+        self.width = self.height = 0
+
+    def draw(self):
+        self.canv.bookmarkPage(self.chave)
+        self.canv.addOutlineEntry(self.titulo, self.chave, level=0)
+
+
+def gerar_varios(lista, titulo="Votações no Plenário", sub="", agora=None, aviso=None):
+    """Várias matérias num só PDF, uma abaixo da outra: um cabeçalho só e, para cada matéria, um título
+    com a situação e as mesmas seções do relatório individual."""
+    agora = agora or datetime.now()
+    cor, cor_esc, cor_cl = (colors.HexColor(CASA[k]) for k in ("cor", "cor_esc", "cor_cl"))
+    st = _estilos(cor_esc)
+    st["mat"] = ParagraphStyle("mat", fontName="Helvetica-Bold", fontSize=19, leading=23, textColor=cor_esc)
+    st["matsub"] = ParagraphStyle("matsub", fontName="Helvetica", fontSize=10, leading=13, textColor=META)
+    total = sum(len(d["votacoes"]) for d in lista)
+    rotulo = f"{len(lista)} matéria(s) · {total} votação(ões)"
+    cabecalho = fazer_cabecalho(titulo, sub or CASA["nome"], _selo("CD"), rotulo, agora,
+                                kicker="R E L A T Ó R I O   D E   V O T A Ç Õ E S", rodape="Votações")
+    buf = io.BytesIO()
+    larg = A4[0] - 32 * mm
+    doc = BaseDocTemplate(buf, pagesize=A4, title=titulo, author=CASA["painel"],
+                          leftMargin=16 * mm, rightMargin=16 * mm, topMargin=20 * mm, bottomMargin=20 * mm)
+    f1 = Frame(16 * mm, 20 * mm, larg, A4[1] - 20 * mm - 62 * mm, id="p1", leftPadding=0, rightPadding=0)
+    fn = Frame(16 * mm, 20 * mm, larg, A4[1] - 20 * mm - 21 * mm, id="pn", leftPadding=0, rightPadding=0)
+    doc.addPageTemplates([PageTemplate("primeira", [f1], onPage=cabecalho, autoNextPageTemplate="demais"),
+                          PageTemplate("demais", [fn], onPage=cabecalho)])
+    cab_fundo = colors.HexColor("#eef3f0")
+    el = []
+    if aviso:
+        el += [Paragraph(_p(aviso), st["meta"]), Spacer(1, 3 * mm)]
+    for i, d in enumerate(lista):
+        pr = d["proc"] or {}
+        if i:
+            el += [Spacer(1, 2 * mm), HRFlowable(width="100%", thickness=1.2, color=cor), Spacer(1, 4 * mm)]
+        info = " · ".join(x for x in (pr.get("situacao"), pr.get("orgao"), _rotulo_cab(d)) if x)
+        el += [CondPageBreak(60 * mm), _Marcador(d["ident"], f"m{i}"),
+               Paragraph(_p(d["ident"]), st["mat"]), Paragraph(_p(info), st["matsub"]), Spacer(1, 2 * mm)]
+        el += _corpo(d, st, larg, cab_fundo, cor_cl, compacto=True)
+    doc.build(el, canvasmaker=_Numerado)
     return buf.getvalue()

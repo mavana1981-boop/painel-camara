@@ -1,12 +1,9 @@
 """PDF das matérias que aparecem nos filtros da aba Votações (completo ou sintético), num arquivo só.
 
-Cada matéria entra com as votações do período escolhido (nominais e simbólicas), uma depois da outra,
-com marcador (sumário lateral do leitor de PDF) por matéria.
+Cada matéria entra com as votações do período escolhido (nominais e simbólicas), uma abaixo da outra
+(sem página própria, para economizar papel), com marcador no sumário lateral do leitor de PDF.
 """
-import io
 import time
-
-from pypdf import PdfReader, PdfWriter
 
 import metrics
 import proposicao_pdf
@@ -58,45 +55,31 @@ def materias(f, busca=""):
     return saida
 
 
-def _aviso(total):
-    from reportlab.lib.pagesizes import A4
-    from reportlab.pdfgen import canvas
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(60, 760, f"Este arquivo traz as {LIMITE} matérias com votação mais recente,")
-    c.drawString(60, 740, f"de {total} encontradas nos filtros.")
-    c.setFont("Helvetica", 11)
-    c.drawString(60, 712, "Para imprimir as demais, diminua o período ou escolha um tipo de matéria.")
-    c.showPage()
-    c.save()
-    return buf.getvalue()
-
-
 def gerar(f, busca="", modo="completo"):
     """(pdf, total de matérias encontradas, matérias no arquivo)."""
     lista = materias(f, busca)
-    escritor = PdfWriter()
-    t0, n = time.monotonic(), 0
+    t0, ds = time.monotonic(), []
     for pid, vid in lista[:LIMITE]:
-        d = proposicao_pdf.dados(pid, vid, inicio=f.inicio, fim=f.fim,
-                                 buscar=time.monotonic() - t0 < PRAZO_BUSCA)
-        if not d or not d["votacoes"]:
-            continue
-        pdf = sintese_pdf.gerar(d) if modo == "sintetico" else proposicao_pdf.gerar(d)
-        leitor = PdfReader(io.BytesIO(pdf))
-        primeira = len(escritor.pages)
-        for pg in leitor.pages:
-            escritor.add_page(pg)
-        escritor.add_outline_item(d["ident"], primeira)
-        n += 1
-    if not n:
+        d = proposicao_pdf.dados(pid, vid, inicio=f.inicio, fim=f.fim, buscar=time.monotonic() - t0 < PRAZO_BUSCA)
+        if d and d["votacoes"]:
+            ds.append(d)
+    if not ds:
         return None, len(lista), 0
-    if len(lista) > LIMITE:
-        aviso = PdfReader(io.BytesIO(_aviso(len(lista))))
-        escritor.insert_page(aviso.pages[0], 0)
-    escritor.add_metadata({"/Title": "Votações no Plenário — " + ("resumo" if modo == "sintetico" else "relatório"),
-                           "/Author": "Painel da Câmara"})
-    buf = io.BytesIO()
-    escritor.write(buf)
-    return buf.getvalue(), len(lista), n
+    aviso = (f"Este arquivo traz as {LIMITE} matérias com votação mais recente, de {len(lista)} encontradas nos "
+             f"filtros. Para imprimir as demais, diminua o período ou escolha um tipo de matéria."
+             if len(lista) > LIMITE else None)
+    # uma matéria abaixo da outra (sem página própria para cada uma)
+    if modo == "sintetico":
+        return sintese_pdf.gerar_varios(ds, aviso=aviso), len(lista), len(ds)
+    return proposicao_pdf.gerar_varios(ds, sub=_periodo(f), aviso=aviso), len(lista), len(ds)
+
+
+def _periodo(f):
+    br = lambda d: d.strftime("%d/%m/%Y")  # noqa: E731
+    if f.inicio and f.fim:
+        return f"De {br(f.inicio)} a {br(f.fim)}" if f.inicio != f.fim else br(f.inicio)
+    if f.inicio:
+        return f"A partir de {br(f.inicio)}"
+    if f.fim:
+        return f"Até {br(f.fim)}"
+    return ""

@@ -12,7 +12,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (CondPageBreak, Flowable, HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table,
+                                TableStyle)
 
 from agenda_pdf import _imagens_logos, _p
 from db import sem_acento
@@ -314,9 +315,7 @@ def _relator(d):
 
 # ---------------- PDF ----------------
 
-def gerar(d, agora=None):
-    agora = agora or datetime.now()
-    vots = d["votacoes"]
+def _estilos(compacto=False):
     ss = dict(fontName="Helvetica", textColor=colors.HexColor("#1d2329"))
     st = {
         "kicker": ParagraphStyle("k", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=CINZA),
@@ -335,16 +334,33 @@ def gerar(d, agora=None):
     st["num"] = ParagraphStyle("num", parent=st["cel"], alignment=1)
     st["numb"] = ParagraphStyle("numb", parent=st["celb"], alignment=1)
     st["cabn"] = ParagraphStyle("cabn", parent=st["cab"], alignment=1)
+    if compacto:      # várias matérias, uma abaixo da outra
+        st["titulo"] = ParagraphStyle("tc", parent=st["titulo"], fontSize=20, leading=24, spaceBefore=3)
+        st["sub"] = ParagraphStyle("sc", parent=st["sub"], fontSize=11, leading=14, spaceBefore=0)
+        st["sec"] = ParagraphStyle("hc", parent=st["sec"], fontSize=11, leading=14, spaceAfter=3)
+    return st
 
-    buf = io.BytesIO()
-    larg = A4[0] - 36 * mm
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=18 * mm,
-                            bottomMargin=16 * mm, title=f"Resumo das votações — {d['ident']}")
+
+class _Marcador(Flowable):
+    """Marcador no sumário lateral do leitor de PDF (uma entrada por matéria)."""
+    def __init__(self, titulo, chave):
+        super().__init__()
+        self.titulo, self.chave = titulo, chave
+        self.width = self.height = 0
+
+    def draw(self):
+        self.canv.bookmarkPage(self.chave)
+        self.canv.addOutlineEntry(self.titulo, self.chave, level=0)
+
+
+def _elementos(d, st, larg, compacto=False):
+    vots = d["votacoes"]
     datas = [_quando(x["votacao"].get("data")) for x in vots]
     quando = datas_extenso(datas)
     el = [Paragraph("PLENÁRIO DA CÂMARA" + (f" | {quando}" if quando else ""), st["kicker"]),
           Paragraph(_p(d["ident"]), st["titulo"]),
-          Paragraph("Resumo das votações", st["sub"]), Spacer(1, 5 * mm)]
+          *([] if compacto else [Paragraph("Resumo das votações", st["sub"])]),
+          Spacer(1, (3 if compacto else 5) * mm)]
     ficha = []
     if _autoria(d):
         ficha.append(f"<b>Autoria</b> {_p(_autoria(d))}")
@@ -394,9 +410,21 @@ def gerar(d, agora=None):
     saldo = frase_destaques(vots)
     if saldo:
         el += [Paragraph(f"<b>Saldo dos destaques.</b> {saldo}", st["corpo"]), Spacer(1, 3 * mm)]
-    el += [Spacer(1, 2 * mm),
-           Paragraph(f"Fonte: relatório da proposição, Painel da Câmara dos Deputados, {agora:%d/%m/%Y}.",
-                     st["fonte"])]
+    return el
+
+
+def _fonte(st, agora):
+    return [Spacer(1, 2 * mm),
+            Paragraph(f"Fonte: relatório da proposição, Painel da Câmara dos Deputados, {agora:%d/%m/%Y}.",
+                      st["fonte"])]
+
+
+def _doc(buf, titulo):
+    return SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=18 * mm,
+                             bottomMargin=16 * mm, title=titulo)
+
+
+def _topo():
     logos = _imagens_logos()
 
     def topo(c, _doc):
@@ -419,6 +447,32 @@ def gerar(d, agora=None):
             c.drawImage(img, x + pad, alto - h_card + pad, w, h, mask="auto")
             x -= gap
         c.restoreState()
+    return topo
 
-    doc.build(el, onFirstPage=topo, onLaterPages=topo)
+
+def gerar(d, agora=None):
+    """Uma matéria."""
+    agora = agora or datetime.now()
+    st, larg, buf = _estilos(), A4[0] - 36 * mm, io.BytesIO()
+    el = _elementos(d, st, larg) + _fonte(st, agora)
+    topo = _topo()
+    _doc(buf, f"Resumo das votações — {d['ident']}").build(el, onFirstPage=topo, onLaterPages=topo)
+    return buf.getvalue()
+
+
+def gerar_varios(lista, agora=None, aviso=None):
+    """Várias matérias no mesmo PDF, uma abaixo da outra (sem página própria), separadas por um fio."""
+    agora = agora or datetime.now()
+    st, larg, buf = _estilos(compacto=True), A4[0] - 36 * mm, io.BytesIO()
+    el = []
+    if aviso:
+        el += [Paragraph(_p(aviso), st["corpo"]), Spacer(1, 4 * mm)]
+    for i, d in enumerate(lista):
+        if i:
+            el += [Spacer(1, 3 * mm), HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#c9d3df")),
+                   Spacer(1, 4 * mm)]
+        el += [CondPageBreak(70 * mm), _Marcador(d["ident"], f"m{i}")] + _elementos(d, st, larg, compacto=True)
+    el += _fonte(st, agora)
+    topo = _topo()
+    _doc(buf, "Votações no Plenário — resumo").build(el, onFirstPage=topo)      # logos só na 1ª página
     return buf.getvalue()
