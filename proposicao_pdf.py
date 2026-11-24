@@ -90,6 +90,8 @@ def dados(pid=None, vid=None):
         ident = f"{v['sigla_materia']} {v['numero_materia']}/{v['ano_materia']}" if v.get("sigla_materia") \
             else "Votação no Plenário"
         ementa = v.get("descricao_materia")
+    import objeto_votacao      # nº e autoria dos destaques, qual requerimento foi votado
+    objeto_votacao.completar(ident, vots)
     return {"pid": pid, "proc": proc, "ident": ident or "Proposição", "ementa": ementa,
             "autores": autores, "votacoes": vots, "historico": historico}
 
@@ -241,13 +243,29 @@ def _resultado(v):
     return "—"
 
 
+def _rotulo(v):
+    return v.get("rotulo") or v.get("tipo_etapa") or "Votação"
+
+
+def _etapa_cel(v):
+    """Etapa no quadro-resumo: 'Requerimento de adiamento da discussão'; 'Destaque nº 7 · PL' + objeto."""
+    txt = f"<b>{_p(_rotulo(v))}</b>"
+    if v.get("dtq_autoria"):
+        txt += f" · autoria: {_p(v['dtq_autoria'])}"
+    compl = v.get("complemento")
+    if compl:
+        compl = compl if len(compl) <= 110 else compl[:108].rstrip() + "…"
+        txt += f'<br/><font size="7">{_p(compl)}</font>'
+    return txt
+
+
 def _quadro_votacoes(d, st, larg, cab_fundo):
     cab = [Paragraph(f"<b>{x}</b>", st["cel"]) for x in
            ("Data", "Etapa", "Resultado", "Sim", "Não", "Abst.", "Governo", "Oposição")]
     linhas = [cab]
     for x in d["votacoes"]:
         v, c = x["votacao"], x["contagem"]
-        linhas.append([Paragraph(_br(v["data"], hora=True), st["cel"]), Paragraph(_p(v["tipo_etapa"]), st["cel"]),
+        linhas.append([Paragraph(_br(v["data"], hora=True), st["cel"]), Paragraph(_etapa_cel(v), st["cel"]),
                        Paragraph(_resultado(v), st["cel"]), Paragraph(str(c["SIM"]), st["cel"]),
                        Paragraph(str(c["NÃO"]), st["cel"]), Paragraph(str(c["ABSTENÇÃO"]), st["cel"]),
                        Paragraph(_voto_txt(x["gov"]), st["cel"]), Paragraph(_voto_txt(x["opo"]), st["cel"])])
@@ -258,8 +276,18 @@ def _quadro_votacoes(d, st, larg, cab_fundo):
 
 def _bloco_votacao(n, x, st, larg, cab_fundo, cor_cl):
     v, c = x["votacao"], x["contagem"]
-    out = [Paragraph(f"{n}. {_p(v['tipo_etapa'])} · {_br(v['data'], hora=True)}", st["vt"])]
-    if v.get("etapa"):
+    out = [Paragraph(f"{n}. {_p(_rotulo(v))} · {_br(v['data'], hora=True)}", st["vt"])]
+    if v.get("dtq_numero") or v.get("dtq_autoria"):
+        out.append(Paragraph(f"<b>Destaque:</b> nº {_p(v.get('dtq_numero') or '—')} · "
+                             f"<b>Autoria:</b> {_p(v.get('dtq_autoria') or 'não informada')}", st["corpo"]))
+        if v.get("dtq_objeto"):
+            out.append(Paragraph(f"<b>Objeto do destaque:</b> {_p(v['dtq_objeto'])}", st["corpo"]))
+    elif v.get("objeto"):      # o título já diz o que foi votado
+        if v.get("complemento"):
+            out.append(Paragraph(f"<b>Requerimento:</b> {_p(v['complemento'])}", st["corpo"]))
+    elif v.get("complemento"):
+        out.append(Paragraph(f"<b>Em votação:</b> {_p(v['complemento'])}", st["corpo"]))
+    elif v.get("etapa"):
         out.append(Paragraph(f"<b>Em votação:</b> {_p(v['etapa'])}", st["corpo"]))
     if v.get("descricao_votacao"):
         out.append(Paragraph(f"<b>Resultado:</b> {_p(v['descricao_votacao'])}", st["corpo"]))

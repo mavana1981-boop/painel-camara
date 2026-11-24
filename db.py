@@ -528,6 +528,13 @@ contatos_assessoria = Table(  # contatos dos gabinetes (valem para todos os term
     Column("atualizado_em", DateTime),
 )
 
+votacoes_objeto = Table(  # o que foi votado (ObjVotacao do serviço da Câmara): nº/autoria do DTQ, tipo de requerimento
+    "votacoes_objeto", metadata,
+    Column("votacao_id", String(30), primary_key=True),
+    Column("objeto", Text),
+    Column("buscado_em", DateTime),
+)
+
 meta = Table(
     "meta", metadata,
     Column("chave", String(60), primary_key=True),

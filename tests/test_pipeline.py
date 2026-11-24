@@ -250,6 +250,50 @@ def test_relatorio_pdf_da_proposicao():
     assert "/proposicao/relatorio.pdf?vid=" in cli.get(f"/votacoes?id={V1}").get_data(as_text=True)
 
 
+
+_XML_OBJ = """<?xml version="1.0" encoding="utf-8"?>
+<proposicao><Sigla>PL</Sigla><Numero>1087</Numero><Ano>2025</Ano><Votacoes>
+<Votacao Resumo="Rejeitado o Requerimento de retirada de pauta. Sim: 2; Não: 3." Data="11/3/2025" Hora="18:01"
+  ObjVotacao="REQUERIMENTO DE RETIRADA DE PAUTA" codSessao="1"><votos/></Votacao>
+<Votacao Resumo="Mantido o texto. Sim: 3; Não: 3." Data="11/3/2025" Hora="19:38"
+  ObjVotacao="DTQ 7 - FDR PSOL-REDE - EMENDA DE PLENÁRIO Nº 38" codSessao="1"><votos/></Votacao>
+</Votacoes></proposicao>"""
+
+
+def test_objeto_da_votacao_no_relatorio(monkeypatch):
+    import objeto_votacao as ov
+    import proposicao_pdf
+    from db import engine, votacoes_objeto, meta
+    with engine.begin() as c:
+        c.execute(votacoes_objeto.delete())
+        c.execute(meta.delete().where(meta.c.chave.like("objvot:%")))
+    chamadas = []
+    monkeypatch.setattr(ov, "_baixar", lambda *a: chamadas.append(a) or _XML_OBJ.encode())
+    d = proposicao_pdf.dados(vid=V2)
+    vs = {x["votacao"]["id"]: x["votacao"] for x in d["votacoes"]}
+    assert chamadas == [("PL", 1087, 2025)]
+    assert vs[V2]["rotulo"] == "Requerimento de retirada de pauta"           # casado pelo resumo
+    assert vs[V1]["rotulo"] == "Destaque nº 7"                               # casado pelo placar (3 × 3)
+    assert vs[V1]["dtq_autoria"] == "Federação PSOL-REDE" and vs[V1]["dtq_objeto"] == "Emenda de Plenário nº 38"
+    assert proposicao_pdf.gerar(d)[:4] == b"%PDF"
+    proposicao_pdf.dados(vid=V2)                                             # já guardado: não busca de novo
+    assert len(chamadas) == 1
+
+
+def test_complemento_sem_o_servico():
+    import objeto_votacao as ov
+    r = ov.descrever({"tipo_etapa": "Requerimento", "descricao_votacao":
+                      "Aprovado o requerimento nº 4504/2026, Do Sr. Paulo Pimenta e outros, que solicita urgência "
+                      "(art. 155) para o PLP 299/2026. Sim: 318; Não: 135."})
+    assert r["rotulo"] == "Requerimento nº 4504/2026 (Dep. Paulo Pimenta e outros)"
+    assert r["complemento"] == "Pede urgência (art. 155) para o PLP 299/2026"
+    r = ov.descrever({"tipo_etapa": "Requerimento", "objeto": "REQUERIMENTO DE ADIAMENTO DA DISCUSSÃO"})
+    assert r["rotulo"] == "Requerimento de adiamento da discussão"
+    r = ov.descrever({"tipo_etapa": "Destaque", "objeto": "DTQ 8 - PL - ART. 2º DO PROJETO DE LEI COMPLEMENTAR Nº 299/2026"})
+    assert (r["dtq_numero"], r["dtq_autoria"]) == ("8", "PL") and r["dtq_objeto"].startswith("Art. 2º do projeto")
+    r = ov.descrever({"tipo_etapa": "Destaque", "etapa": "DTQ 3 — Destaque para votação em separado"})
+    assert r["rotulo"] == "Destaque nº 3"
+
 # ---------------- cota ----------------
 
 def test_tetos_ceap():
