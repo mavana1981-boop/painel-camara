@@ -280,6 +280,25 @@ def test_objeto_da_votacao_no_relatorio(monkeypatch):
     assert len(chamadas) == 1
 
 
+def test_relatorio_sintetico():
+    import sintese_pdf as sp
+    from datetime import datetime as D
+    assert sp.datas_extenso([D(2026, 11, 23, 20), D(2026, 11, 24, 0, 12)]) == "23 E 24 DE NOVEMBRO DE 2026"
+    v = {"tipo_etapa": "Destaque", "dtq_numero": "4", "dtq_autoria": "AVANTE", "dtq_objeto": "Art. 6º-f do projeto",
+         "descricao_votacao": "Mantido o texto. Sim: 333", "aprovacao": True}
+    assert sp.rotulo_curto(v) == "Destaque 4 · Avante · Art. 6º-F" and sp.resultado_curto(v) == "Texto mantido"
+    v = {"tipo_etapa": "Destaque", "dtq_numero": "9", "dtq_autoria": "PL", "dtq_objeto": "Emenda de Plenário nº 23",
+         "descricao_votacao": "Rejeitada a Emenda de Plenário nº 23.", "aprovacao": False}
+    assert sp.rotulo_curto(v) == "Destaque 9 · PL · Emenda 23" and sp.resultado_curto(v) == "Emenda rejeitada"
+    assert sp.rotulo_curto({"tipo_etapa": "Requerimento", "rotulo": "Requerimento de adiamento da discussão"}) \
+        == "Adiamento da discussão"
+    assert sp.resultado_curto({"tipo_etapa": "Urgência", "aprovacao": True}) == "Aprovada"
+    cli = _cliente()
+    r = cli.get(f"/proposicao/relatorio.pdf?vid={V1}&modo=sintetico")
+    assert r.status_code == 200 and r.data[:4] == b"%PDF" and "resumo-pl-1087-2025.pdf" in r.headers["Content-Disposition"]
+    html = cli.get(f"/votacoes?id={V1}").get_data(as_text=True)
+    assert "modo=sintetico" in html and "Completo" in html
+
 def test_complemento_sem_o_servico():
     import objeto_votacao as ov
     r = ov.descrever({"tipo_etapa": "Requerimento", "descricao_votacao":

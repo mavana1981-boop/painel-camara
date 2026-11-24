@@ -343,6 +343,10 @@ def proposicao_relatorio_pdf():
     if not d:
         abort(404)
     nome = re.sub(r"[^A-Za-z0-9]+", "-", d["ident"]).strip("-").lower() or "proposicao"
+    if request.args.get("modo") == "sintetico":     # uma página: resumo das votações
+        import sintese_pdf
+        return Response(sintese_pdf.gerar(d), mimetype="application/pdf",
+                        headers={"Content-Disposition": f'inline; filename="resumo-{nome}.pdf"'})
     return Response(proposicao_pdf.gerar(d), mimetype="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="relatorio-{nome}.pdf"'})
 

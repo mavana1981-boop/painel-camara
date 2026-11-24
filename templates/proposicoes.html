@@ -125,7 +125,7 @@
     {% for p in props.itens %}
       <tr>
         <td style="white-space:nowrap;color:var(--suave)">{{ p.data_apresentacao|data }}</td>
-        <td style="white-space:nowrap"><b>{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.identificacao }}</a>{% else %}{{ p.identificacao }}{% endif %}</b> <a href="{{ url_for('proposicao_relatorio_pdf', id=p.id) }}" target="_blank" rel="noopener" title="Relatório da proposição (PDF)" style="text-decoration:none;font-size:12px">📄</a>
+        <td style="white-space:nowrap"><b>{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.identificacao }}</a>{% else %}{{ p.identificacao }}{% endif %}</b> <details class="relpdf"><summary title="Relatório da proposição (PDF)">📄</summary><span class="relpdf-op"><a href="{{ url_for('proposicao_relatorio_pdf', id=p.id) }}" target="_blank" rel="noopener" title="Ficha, todas as votações, orientações e votos por partido">Completo</a><a href="{{ url_for('proposicao_relatorio_pdf', id=p.id, modo='sintetico') }}" target="_blank" rel="noopener" title="Uma página: resultado, quadro das votações, bancadas e saldo dos destaques">Sintético</a></span></details>
           <div style="font-size:11px;color:var(--suave)">{{ p.papel }}{% if p.virou_norma %} · <b style="color:#8a6d22">norma</b>{% endif %}</div>
           {% if p.grupo_regime == 'urgencia' %}<span class="regime urg" title="{{ p.regime }}">Urgência</span>{% elif p.grupo_regime == 'prioridade' %}<span class="regime pri" title="{{ p.regime }}">Prioridade</span>{% elif p.grupo_regime == 'especial' %}<span class="regime esp" title="{{ p.regime }}">Especial</span>{% endif %}</td>
         <td style="font-size:13px">{{ p.ementa or '' }}
