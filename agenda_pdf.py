@@ -7,6 +7,7 @@ círculo (sem foto, entram as iniciais).
 import html
 import io
 import logging
+import os
 from datetime import date, datetime, timedelta
 
 import requests
@@ -170,10 +171,56 @@ class _Numerado(rl_canvas.Canvas):
         super().save()
 
 
+# Logos da Liderança da Oposição e da Liderança da Minoria (copiados do Minha Pauta): vão em todos os
+# PDFs do painel — cartão branco no canto direito da faixa da 1ª página e pequenos no rodapé das demais.
+LOGOS = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logos", f"{n}.png")
+         for n in ("oposicao", "minoria")]
+
+
+def _imagens_logos():
+    imgs = []
+    for caminho in LOGOS:
+        try:
+            imgs.append(ImageReader(caminho))
+        except Exception:
+            log.warning("PDF: logo %s indisponível", caminho)
+    return imgs
+
+
+def desenhar_logos(c, pagina, imgs):
+    if not imgs:
+        return
+    larg, alt = A4
+    c.saveState()
+    if pagina == 1:
+        w_card, h_card = 42 * mm, 40 * mm
+        x0, y0 = larg - 12 * mm - w_card, alt - 46 * mm
+        c.setFillColor(colors.white)
+        c.roundRect(x0, y0, w_card, h_card, 3 * mm, stroke=0, fill=1)
+        y = y0 + h_card - 3 * mm
+        for img, h in zip(imgs, (17 * mm, 11 * mm)):
+            iw, ih = img.getSize()
+            w = min(w_card - 6 * mm, h * iw / ih)
+            h = w * ih / iw
+            y -= h
+            c.drawImage(img, x0 + (w_card - w) / 2, y, w, h, mask="auto")
+            y -= 3 * mm
+    else:
+        h, x = 6 * mm, larg - 16 * mm - 30 * mm
+        for img in reversed(imgs):
+            iw, ih = img.getSize()
+            w = h * iw / ih
+            x -= w
+            c.drawImage(img, x, 6.5 * mm, w, h, mask="auto")
+            x -= 3 * mm
+    c.restoreState()
+
+
 def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R L A M E N T A R",
                     rodape="Meu Parlamentar"):
     """Função onPage do reportlab: faixa com foto e nome na 1ª página, barra fina nas demais, rodapé."""
     cor, cor_esc, cor_cl = (colors.HexColor(CASA[k]) for k in ("cor", "cor_esc", "cor_cl"))
+    logos = _imagens_logos()
 
     def cabecalho(c, doc):
         larg, alt = A4
@@ -215,6 +262,9 @@ def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R 
             c.drawString(x, alt - 15 * mm, kicker)
             c.setFillColor(colors.white)
             tam = 24 if len(nome) <= 26 else 19
+            livre = larg - 12 * mm - 42 * mm - 4 * mm - x if logos else larg - 16 * mm - x   # não invade os logos
+            while tam > 12 and c.stringWidth(nome, "Helvetica-Bold", tam) > livre:
+                tam -= 1
             c.setFont("Helvetica-Bold", tam)
             c.drawString(x, alt - 26 * mm, nome)
             c.setFont("Helvetica", 12)
@@ -242,6 +292,7 @@ def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R 
         c.drawString(16 * mm, 10 * mm, f"{rodape} · {CASA['painel']} · gerado em "
                                        f"{agora:%d/%m/%Y} às {agora:%H:%M}")
         c.restoreState()
+        desenhar_logos(c, doc.page, logos)
 
     return cabecalho
 

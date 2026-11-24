@@ -6,7 +6,6 @@ e quem votou contra a orientação do próprio partido) e o histórico de mudan�
 Mesmo cabeçalho dos outros PDFs do painel.
 """
 import io
-import os
 from datetime import datetime
 
 from reportlab.lib import colors
@@ -96,55 +95,6 @@ def dados(pid=None, vid=None):
 
 
 # ---------------- PDF ----------------
-
-LOGOS = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logos", f"{n}.png")
-         for n in ("oposicao", "minoria")]
-
-
-def _com_logos(cabecalho):
-    """Cabeçalho dos outros PDFs + cartão branco com os logos da Liderança da Oposição e da Minoria
-    (no canto direito da faixa da 1ª página; nas demais, ao lado do rodapé)."""
-    from reportlab.lib.utils import ImageReader
-    imgs = []
-    for caminho in LOGOS:
-        try:
-            imgs.append(ImageReader(caminho))
-        except Exception:
-            pass
-
-    def desenhar(c, doc):
-        cabecalho(c, doc)
-        if not imgs:
-            return
-        larg, alt = A4
-        c.saveState()
-        if doc.page == 1:
-            w_card, h_card = 46 * mm, 40 * mm
-            x0, y0 = larg - 14 * mm - w_card, alt - 46 * mm
-            c.setFillColor(colors.white)
-            c.roundRect(x0, y0, w_card, h_card, 3 * mm, stroke=0, fill=1)
-            alturas = [17 * mm, 11 * mm][:len(imgs)]
-            y = y0 + h_card - 3 * mm
-            for img, h in zip(imgs, alturas):
-                iw, ih = img.getSize()
-                w = min(w_card - 6 * mm, h * iw / ih)
-                h = w * ih / iw
-                y -= h
-                c.drawImage(img, x0 + (w_card - w) / 2, y, w, h, mask="auto")
-                y -= 3 * mm
-        else:   # demais páginas: logos pequenos no rodapé, antes do "Página x de y"
-            h = 6 * mm
-            x = larg - 16 * mm - 30 * mm
-            for img in reversed(imgs):
-                iw, ih = img.getSize()
-                w = h * iw / ih
-                x -= w
-                c.drawImage(img, x, 6.5 * mm, w, h, mask="auto")
-                x -= 3 * mm
-        c.restoreState()
-
-    return desenhar
-
 
 def _selo(sigla, lado=360):
     """No lugar da foto do deputado: círculo com a sigla da proposição (PL, PEC, MPV...)."""
@@ -371,9 +321,8 @@ def gerar(d, agora=None):
     n = len(d["votacoes"])
     rotulo = f"{n} votação(ões) nominal(is) no Plenário" if n else "Sem votação nominal no Plenário"
     sigla = (pr.get("sigla") or (d["ident"].split() or [""])[0]) if d["ident"] else ""
-    cabecalho = _com_logos(fazer_cabecalho(d["ident"], sub, _selo(sigla), rotulo, agora,
-                                           kicker="R E L A T Ó R I O   D A   P R O P O S I Ç Ã O",
-                                           rodape="Proposição"))
+    cabecalho = fazer_cabecalho(d["ident"], sub, _selo(sigla), rotulo, agora,
+                                kicker="R E L A T Ó R I O   D A   P R O P O S I Ç Ã O", rodape="Proposição")
     buf = io.BytesIO()
     larg = A4[0] - 32 * mm
     doc = BaseDocTemplate(buf, pagesize=A4, title=f"Relatório — {d['ident']}", author=CASA["painel"],
