@@ -31,7 +31,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
 import requests
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 
 from db import (INSTITUCIONAIS, autorias, deputados, despesas, engine, init_db, meta, norm_lideranca,
                 norm_nome, norm_partido, norm_voto, notificacoes, orientacoes, orientacoes_partido, perfis,
@@ -797,7 +797,7 @@ def atualizar_votacoes_periodo(inicio, fim, hoje=None) -> int:
     """Atualização ao vivo: lê na API as votações do Plenário de `inicio` a `fim` e grava só elas,
     sem esperar a coleta diária nem o arquivo anual. As já completas (com votos e orientações) não são
     relidas; as simbólicas e as que ainda vieram sem orientação são conferidas de novo.
-    Devolve quantas votações foram gravadas."""
+    Devolve quantas votações (nominais ou simbólicas) entraram ou mudaram."""
     hoje = hoje or date.today()
     fim = min(fim, hoje)
     total = 0
@@ -811,10 +811,27 @@ def atualizar_votacoes_periodo(inicio, fim, hoje=None) -> int:
         if not api["votacoes"]:
             continue
         with engine.begin() as c:
-            total += gravar_votacoes_ano(c, ano, api["votacoes"], api["votacoesVotos"], api["votacoesOrientacoes"],
-                                         api["votacoesProposicoes"], api["votacoesObjetos"], parcial=True)
+            antes = _retrato_periodo(c, ini_a, fim_a)
+            gravar_votacoes_ano(c, ano, api["votacoes"], api["votacoesVotos"], api["votacoesOrientacoes"],
+                                api["votacoesProposicoes"], api["votacoesObjetos"], parcial=True)
+            depois = _retrato_periodo(c, ini_a, fim_a)
+        total += sum(1 for k, v in depois.items() if antes.get(k) != v)
         log.info("votações ao vivo %s a %s: %d lida(s) da API", ini_a, fim_a, len(api["votacoes"]))
     return total
+
+
+def _retrato_periodo(conn, ini, fim):
+    """{id: placar/orientações} das votações nominais e simbólicas do período, para saber o que mudou."""
+    a, b = datetime.combine(ini, datetime.min.time()), datetime.combine(fim + timedelta(days=1), datetime.min.time())
+    n_ori = select(orientacoes.c.votacao_id, func.count().label("n")).group_by(orientacoes.c.votacao_id).subquery()
+    out = {r[0]: ("N", r[1], r[2], r[3]) for r in conn.execute(
+        select(votacoes.c.id, votacoes.c.qtd_sim, votacoes.c.qtd_nao, n_ori.c.n)
+        .outerjoin(n_ori, n_ori.c.votacao_id == votacoes.c.id)
+        .where(votacoes.c.data >= a, votacoes.c.data < b))}
+    out.update({r[0]: ("S", r[1], r[2]) for r in conn.execute(
+        select(votacoes_simbolicas.c.id, votacoes_simbolicas.c.sigla_materia, votacoes_simbolicas.c.aprovacao)
+        .where(votacoes_simbolicas.c.data >= a, votacoes_simbolicas.c.data < b))})
+    return out
 
 
 # ---------------- CEAP (cota parlamentar) ----------------

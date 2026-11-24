@@ -4154,14 +4154,15 @@ def test_votacoes_ao_vivo_grava_so_o_periodo():
     collector.paginado, collector.get_json = fake_pag, fake_get
     try:
         n = collector.atualizar_votacoes_periodo(_date(2025, 11, 24), _date(2025, 11, 24), hoje=_date(2025, 11, 24))
-        assert n == 1
+        assert n == 2                                       # a nominal e a simbólica são novas
         depois = {r[0] for r in _q("SELECT id FROM votacoes")}
         assert depois == antes | {nova}                     # nada do resto do ano foi apagado
         assert {r[0] for r in _q("SELECT id FROM votacoes_simbolicas")} == antes_simb | {simb}
         assert len(_q(f"SELECT * FROM votos WHERE votacao_id='{nova}'")) == 2
         # segunda busca: a votação já completa não é relida (só a lista do dia e a simbólica)
         pedidos.clear()
-        collector.atualizar_votacoes_periodo(_date(2025, 11, 24), _date(2025, 11, 24), hoje=_date(2025, 11, 24))
+        n = collector.atualizar_votacoes_periodo(_date(2025, 11, 24), _date(2025, 11, 24), hoje=_date(2025, 11, 24))
+        assert n == 0                                       # nada mudou: a página não recarrega à toa
         assert f"/votacoes/{nova}/votos" not in pedidos and f"/votacoes/{simb}/votos" in pedidos
         assert {r[0] for r in _q("SELECT id FROM votacoes")} == depois
     finally:
