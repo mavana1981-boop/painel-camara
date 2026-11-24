@@ -243,7 +243,8 @@ def test_relatorio_pdf_da_proposicao():
     cli = _cliente()
     r = cli.get("/proposicao/relatorio.pdf?id=2480001")
     assert r.status_code == 200 and r.mimetype == "application/pdf" and r.data[:4] == b"%PDF"
-    assert "relatorio-pl-1087-2025.pdf" in r.headers["Content-Disposition"]
+    assert "relatorio-pl-1087-2025-" in r.headers["Content-Disposition"]          # + hora: arquivo sempre novo
+    assert "no-store" in r.headers["Cache-Control"]
     assert cli.get(f"/proposicao/relatorio.pdf?vid={V1}").status_code == 200
     assert cli.get("/proposicao/relatorio.pdf?id=1").status_code == 404
     assert cli.get("/proposicao/relatorio.pdf").status_code == 404
@@ -295,7 +296,7 @@ def test_relatorio_sintetico():
     assert sp.resultado_curto({"tipo_etapa": "Urgência", "aprovacao": True}) == "Aprovada"
     cli = _cliente()
     r = cli.get(f"/proposicao/relatorio.pdf?vid={V1}&modo=sintetico")
-    assert r.status_code == 200 and r.data[:4] == b"%PDF" and "resumo-pl-1087-2025.pdf" in r.headers["Content-Disposition"]
+    assert r.status_code == 200 and r.data[:4] == b"%PDF" and "resumo-pl-1087-2025-" in r.headers["Content-Disposition"]
     html = cli.get(f"/votacoes?id={V1}").get_data(as_text=True)
     assert "modo=sintetico" in html and "Completo" in html
 

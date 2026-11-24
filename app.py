@@ -370,6 +370,24 @@ def votacoes_relatorio_pdf():
                     headers={"Content-Disposition": f'inline; filename="{nome}.pdf"'})
 
 
+@app.after_request
+def _pdf_sempre_novo(resp):
+    """PDFs gerados nunca vêm do cache: o celular (Chrome no Android) baixa o PDF e, com o mesmo nome de
+    arquivo, reabria a versão antiga. Sem cache e com a hora no nome, cada geração é um arquivo novo."""
+    if resp.mimetype == "application/pdf":
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        cd = resp.headers.get("Content-Disposition") or ""
+        m = re.search(r'filename="?([^";]+?)\.pdf"?', cd)
+        if m:
+            from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo
+            agora = _dt.now(ZoneInfo("America/Sao_Paulo")).strftime("%Hh%M%S")
+            novo = f"{m.group(1)}-{agora}.pdf"
+            resp.headers["Content-Disposition"] = re.sub(r'filename="?[^";]+"?', f'filename="{novo}"', cd, count=1)
+    return resp
+
+
 @app.route("/cota")
 def cota():
     cod, lista = _deputado_da_requisicao()
