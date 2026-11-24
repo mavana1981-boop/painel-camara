@@ -221,12 +221,12 @@ def rankings():
 def votacoes():
     f, op = _contexto_filtros()
     busca = (request.args.get("busca") or "").strip()
-    lista = metrics.lista_votacoes(f, busca, limite=600)
+    lista = metrics.lista_votacoes(f, busca, limite=600, simbolicas=True)
     grupos = metrics.agrupar_votacoes(lista)
     vid = (request.args.get("id") or "").strip() or None
     if vid is None and grupos:
         vid = next((g["padrao"]["id"] for g in grupos if not g["padrao"]["secreta"]), grupos[0]["padrao"]["id"])
-    det = metrics.detalhe_votacao(vid) if vid is not None else None
+    det = (metrics.detalhe_votacao(vid) or metrics.detalhe_simbolica(vid)) if vid is not None else None
     etapas = metrics.votacoes_da_proposicao(det["votacao"], f) if det else []
     return render_template("votacoes.html", aba="votacoes", f=f, op=op, busca=busca,
                            lista=lista, grupos=grupos, det=det, vid=vid, etapas=etapas)

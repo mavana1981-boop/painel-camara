@@ -139,11 +139,11 @@ def test_votacoes_agrupadas_por_proposicao():
     assert pl["ids"] == {V1, V2} and [v["id"] for v in pl["votacoes"]] == [V2, V1]   # cronológica
     assert len(grupos) == len(lista) - 1
     irmas = metrics.votacoes_da_proposicao(metrics.detalhe_votacao(V2)["votacao"])
-    assert [x["id"] for x in irmas] == [V2, V1]
-    assert [x["tipo_etapa"] for x in irmas] == ["Retirada de pauta", "Texto principal"]
+    assert [x["id"] for x in irmas] == [V2, V1, V_SIMB]          # + a simbólica da mesma matéria
+    assert [x["tipo_etapa"] for x in irmas] == ["Retirada de pauta", "Texto principal", "Urgência"]
     cli = _cliente()
     html = cli.get(f"/votacoes?id={V2}").get_data(as_text=True)
-    assert "2 votações" in html and "Votações desta proposição" in html and "1 de 2" in html
+    assert "3 votações" in html and "Votações desta proposição" in html and "1 de 3" in html   # 2 nominais + 1 simbólica
     assert "Em votação</b>: REQ 456/2025" in html and "Retirada de pauta" in html
     html = cli.get(f"/votacoes?id={V7}").get_data(as_text=True)
     assert "Votações desta proposição" not in html                 # proposição com uma votação só
@@ -342,6 +342,20 @@ def test_simbolicas_e_pdf_em_lote():
     assert r.status_code == 200 and "2025-05-01-2025-05-31" in r.headers["Content-Disposition"]
     assert cli.get("/votacoes/relatorio.pdf?busca=inexistentexyz").status_code == 404
     assert "votacoes/relatorio.pdf" in cli.get("/votacoes").get_data(as_text=True)
+
+def test_simbolicas_na_aba_votacoes():
+    import metrics
+    lista = metrics.lista_votacoes(metrics.Filtros(opostas=False), "1087", simbolicas=True)
+    assert {v["id"] for v in lista} == {V1, V2, V_SIMB}
+    g = metrics.agrupar_votacoes(lista)[0]
+    assert len(g["votacoes"]) == 3 and not g["padrao"].get("simbolica")      # abre numa nominal
+    cli = _cliente()
+    html = cli.get("/votacoes?busca=1087").get_data(as_text=True)
+    assert "3 votações" in html and "simbólica" in html
+    html = cli.get(f"/votacoes?busca=1087&id={V_SIMB}").get_data(as_text=True)
+    assert "Votação simbólica" in html and "Votos nominais" not in html and "Urgência" in html
+    html = cli.get(f"/votacoes?id={V1}").get_data(as_text=True)
+    assert "(simbólica)" in html                                              # no seletor de etapas
 
 def test_complemento_sem_o_servico():
     import objeto_votacao as ov

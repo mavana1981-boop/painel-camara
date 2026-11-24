@@ -263,8 +263,9 @@ def opcoes_filtro():
 
 # ---------------- Aba Votações ----------------
 
-def lista_votacoes(f: Filtros, busca: str = "", limite: int = 300):
-    """Votações do período para o seletor (mais recentes primeiro)."""
+def lista_votacoes(f: Filtros, busca: str = "", limite: int = 300, simbolicas: bool = False):
+    """Votações do período para o seletor (mais recentes primeiro). simbolicas=True junta as votações
+    simbólicas do Plenário (marcadas com simbolica=True, sem placar)."""
     base = Filtros(f.inicio, f.fim, "", "", f.sigla, opostas=False)
     where, p = base.where_votacoes()
     p["lim"] = limite
@@ -288,11 +289,40 @@ def lista_votacoes(f: Filtros, busca: str = "", limite: int = 300):
                vt.qtd_sim, vt.qtd_nao, vt.aprovacao, vt.proposicao_id, vt.etapa
         FROM votacoes vt WHERE {where}{cond_busca}
         ORDER BY vt.data DESC LIMIT :lim""")
+    sql_s = text(f"""
+        SELECT vt.id, vt.data, vt.sigla_materia, vt.numero_materia, vt.ano_materia,
+               vt.descricao_materia, vt.descricao_votacao, vt.aprovacao, vt.proposicao_id, vt.etapa
+        FROM votacoes_simbolicas vt WHERE {where}{cond_busca}
+        ORDER BY vt.data DESC LIMIT :lim""")
     with engine.connect() as c:
         lista = [dict(r) for r in c.execute(sql, p).mappings()]
+        if simbolicas:
+            for r in c.execute(sql_s, p).mappings():
+                lista.append(_como_simbolica(dict(r)))
+    if simbolicas:
+        lista.sort(key=lambda v: str(v["data"] or ""), reverse=True)
+        lista = lista[:limite]
     for v in lista:
         v["tipo_etapa"] = tipo_etapa(v)
     return lista
+
+
+def _como_simbolica(v):
+    v.update(simbolica=True, secreta=False, qtd_sim=None, qtd_nao=None, dispositivo=v.get("dispositivo"))
+    return v
+
+
+def detalhe_simbolica(vid: str):
+    """Votação simbólica no formato de detalhe_votacao (sem votos, placar nem orientações)."""
+    with engine.connect() as c:
+        v = c.execute(text("SELECT * FROM votacoes_simbolicas WHERE id = :id"), {"id": vid}).mappings().first()
+    if not v:
+        return None
+    v = _como_simbolica(dict(v))
+    v.update(presidente=None, sessao=None, tipo_etapa=tipo_etapa(v))
+    return {"votacao": v, "simbolica": True, "orientacoes": [], "votos": [], "placar": [], "traidores": [],
+            "gov": None, "opo": None,
+            "contagem": {"SIM": 0, "NÃO": 0, "ABSTENÇÃO": 0, "OBSTRUÇÃO": 0, "OUTROS": 0}}
 
 
 # ---------------- etapa e agrupamento por proposição ----------------
@@ -370,7 +400,8 @@ def agrupar_votacoes(lista):
     for chave, g in grupos.items():
         vs = sorted(g["votacoes"], key=lambda v: (v["data"] is None, v["data"]))
         recente = max(vs, key=lambda v: (v["data"] is not None, v["data"] or datetime.min))
-        padrao = next((v for v in reversed(vs) if not v["secreta"]), recente)
+        padrao = next((v for v in reversed(vs) if not v["secreta"] and not v.get("simbolica")),
+                      next((v for v in reversed(vs) if not v["secreta"]), recente))
         saida.append({"chave": chave, "votacoes": vs, "ref": recente, "padrao": padrao,
                       "ids": {v["id"] for v in vs}, "inicio": vs[0]["data"], "fim": recente["data"]})
     saida.sort(key=lambda g: (g["fim"] is not None, g["fim"] or datetime.min), reverse=True)
@@ -392,12 +423,16 @@ def votacoes_da_proposicao(v, f: "Filtros | None" = None):
         p.update(sg=chave[1], nm=chave[2])
     sql = text(f"""SELECT vt.id, vt.data, vt.descricao_votacao, vt.etapa, vt.secreta, vt.qtd_sim, vt.qtd_nao,
                           vt.aprovacao FROM votacoes vt WHERE {where} ORDER BY vt.data""")
+    sql_s = text(f"""SELECT vt.id, vt.data, vt.descricao_votacao, vt.etapa, vt.aprovacao
+                     FROM votacoes_simbolicas vt WHERE {where} ORDER BY vt.data""")
     with engine.connect() as c:
         lista = [dict(r) for r in c.execute(sql, p).mappings()]
+        lista += [_como_simbolica(dict(r)) for r in c.execute(sql_s, p).mappings()]
+    lista.sort(key=lambda x: (x["data"] is None, str(x["data"] or "")))
     if not any(x["id"] == v["id"] for x in lista):   # votação fora do período do filtro
         lista.append({k: v.get(k) for k in ("id", "data", "descricao_votacao", "etapa", "secreta",
-                                           "qtd_sim", "qtd_nao", "aprovacao")})
-        lista.sort(key=lambda x: (x["data"] is None, x["data"]))
+                                           "qtd_sim", "qtd_nao", "aprovacao", "simbolica")})
+        lista.sort(key=lambda x: (x["data"] is None, str(x["data"] or "")))
     for x in lista:
         x["tipo_etapa"] = tipo_etapa(x)
     return lista
