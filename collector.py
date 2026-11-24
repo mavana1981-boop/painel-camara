@@ -374,8 +374,10 @@ def _texto_objeto(r: dict) -> str:
 
 
 def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_orient, linhas_props=(),
-                        linhas_objetos=()):
-    """Substitui as votações nominais do Plenário de um ano (os arquivos são revisados todo dia)."""
+                        linhas_objetos=(), parcial=False):
+    """Substitui as votações nominais do Plenário de um ano (os arquivos são revisados todo dia).
+    parcial=True: substitui só as votações presentes nas linhas (atualização ao vivo de um período),
+    sem apagar as demais do ano."""
     vts = {}
     for r in linhas_votacoes:
         if ORGAO_VOTACOES and (r.get("siglaOrgao") or "").upper() != ORGAO_VOTACOES:
@@ -482,23 +484,29 @@ def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_or
     simb = {k: v for k, v in vts.items() if k not in ids_com_voto}
     vts = {k: v for k, v in vts.items() if k in ids_com_voto}
     oris = {k: d for k, d in oris.items() if k in vts}
-    _gravar_simbolicas(conn, ano, simb)
+    _gravar_simbolicas(conn, ano, simb, parcial=parcial)
+    if parcial:   # uma votação que antes veio sem votos (simbólica) e agora tem votos, ou o contrário
+        ids_nom = list(vts)
+        for i in range(0, len(ids_nom), 900):
+            conn.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.id.in_(ids_nom[i:i + 900])))
     linhas_ori = [{"votacao_id": vid, "lideranca": rot, "voto": voto}
                   for vid, d in oris.items() for rot, voto in d.items()]
     linhas_op = orientacoes_por_partido(oris, partidos)
 
-    antigos = select(votacoes.c.id).where(votacoes.c.ano == ano)
-    conn.execute(delete(votos).where(votos.c.votacao_id.in_(antigos)))
-    conn.execute(delete(orientacoes).where(orientacoes.c.votacao_id.in_(antigos)))
-    conn.execute(delete(orientacoes_partido).where(orientacoes_partido.c.votacao_id.in_(antigos)))
-    novos = list(vts)
+    if not parcial:
+        antigos = select(votacoes.c.id).where(votacoes.c.ano == ano)
+        conn.execute(delete(votos).where(votos.c.votacao_id.in_(antigos)))
+        conn.execute(delete(orientacoes).where(orientacoes.c.votacao_id.in_(antigos)))
+        conn.execute(delete(orientacoes_partido).where(orientacoes_partido.c.votacao_id.in_(antigos)))
+    novos = list(vts) + (list(simb) if parcial else [])
     for i in range(0, len(novos), 900):  # votações que mudaram de ano no arquivo
         parte = novos[i:i + 900]
         conn.execute(delete(votos).where(votos.c.votacao_id.in_(parte)))
         conn.execute(delete(orientacoes).where(orientacoes.c.votacao_id.in_(parte)))
         conn.execute(delete(orientacoes_partido).where(orientacoes_partido.c.votacao_id.in_(parte)))
         conn.execute(delete(votacoes).where(votacoes.c.id.in_(parte)))
-    conn.execute(delete(votacoes).where(votacoes.c.ano == ano))
+    if not parcial:
+        conn.execute(delete(votacoes).where(votacoes.c.ano == ano))
     _lote(conn, votacoes, [{k: v for k, v in x.items() if not k.startswith("_")} for x in vts.values()])
     _lote(conn, votos, lista_votos)
     _lote(conn, orientacoes, linhas_ori)
@@ -563,15 +571,19 @@ def _materia_da_simbolica(conn, simb, buscar_api=True, limite_api=400):
         log.info("votações simbólicas: %d matéria(s) identificada(s) pela API", pedidos)
 
 
-def _gravar_simbolicas(conn, ano, simb):
-    """Substitui as votações simbólicas do Plenário do ano (só as ligadas a uma matéria)."""
+def _gravar_simbolicas(conn, ano, simb, parcial=False):
+    """Substitui as votações simbólicas do Plenário do ano (só as ligadas a uma matéria).
+    parcial=True: substitui só as simbólicas recebidas."""
     _materia_da_simbolica(conn, simb, buscar_api=VOTACOES_API)
     linhas = [{k: v.get(k) for k in _COLS_SIMB} for v in simb.values()
               if (v.get("proposicao_id") or v.get("sigla_materia"))
               and (v.get("sigla_materia") or "").upper() != "REQ"        # repetem a votação do lado da matéria
               and not _plano_txt(v.get("descricao_votacao")).startswith("alteracao do regime de tramitacao")]
     ids = [x["id"] for x in linhas]
-    conn.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.ano == ano))
+    if parcial:
+        ids = list(simb)
+    else:
+        conn.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.ano == ano))
     for i in range(0, len(ids), 900):
         conn.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.id.in_(ids[i:i + 900])))
     _lote(conn, votacoes_simbolicas, linhas)
@@ -769,6 +781,40 @@ def _orientacoes_faltantes_api(linhas, limite=400):
             log.warning("orientações de %s pela API: %s", vid, e)
     log.info("orientações recuperadas pela API: %d (%d votações)", len(saida), len(ids))
     return saida
+
+
+def _ids_completos(conn, ini, fim):
+    """Votações nominais do período já gravadas com votos e orientações: não precisam ser relidas."""
+    q = (select(votacoes.c.id)
+         .where(votacoes.c.data >= datetime.combine(ini, datetime.min.time()),
+                votacoes.c.data < datetime.combine(fim + timedelta(days=1), datetime.min.time()),
+                votacoes.c.id.in_(select(votos.c.votacao_id)),
+                votacoes.c.id.in_(select(orientacoes.c.votacao_id))))
+    return {r[0] for r in conn.execute(q)}
+
+
+def atualizar_votacoes_periodo(inicio, fim, hoje=None) -> int:
+    """Atualização ao vivo: lê na API as votações do Plenário de `inicio` a `fim` e grava só elas,
+    sem esperar a coleta diária nem o arquivo anual. As já completas (com votos e orientações) não são
+    relidas; as simbólicas e as que ainda vieram sem orientação são conferidas de novo.
+    Devolve quantas votações foram gravadas."""
+    hoje = hoje or date.today()
+    fim = min(fim, hoje)
+    total = 0
+    for ano in range(inicio.year, fim.year + 1):
+        ini_a, fim_a = max(inicio, date(ano, 1, 1)), min(fim, date(ano, 12, 31))
+        if ini_a > fim_a:
+            continue
+        with engine.connect() as c:
+            ja = _ids_completos(c, ini_a, fim_a)
+        api = votacoes_pela_api(ano, ini_a, ja=ja, hoje=fim_a)
+        if not api["votacoes"]:
+            continue
+        with engine.begin() as c:
+            total += gravar_votacoes_ano(c, ano, api["votacoes"], api["votacoesVotos"], api["votacoesOrientacoes"],
+                                         api["votacoesProposicoes"], api["votacoesObjetos"], parcial=True)
+        log.info("votações ao vivo %s a %s: %d lida(s) da API", ini_a, fim_a, len(api["votacoes"]))
+    return total
 
 
 # ---------------- CEAP (cota parlamentar) ----------------

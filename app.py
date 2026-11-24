@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import threading
+import time
 from datetime import date
 
 from flask import (Flask, abort, jsonify, redirect, render_template, request, send_from_directory,
@@ -217,9 +218,74 @@ def rankings():
         economia=_filtra(paineis.ranking_economia(ano_ini, ano_fim)))
 
 
+# ---------------- votações ao vivo ----------------
+# A coleta diária só traz as votações uma vez por dia. Ao abrir Votações com um período recente, o painel
+# consulta a API da Câmara em segundo plano e grava só as votações do período; a página se recarrega
+# sozinha quando aparece algo novo.
+VOTACOES_AO_VIVO = os.environ.get("VOTACOES_AO_VIVO", "1") != "0"
+AO_VIVO_DIAS = int(os.environ.get("VOTACOES_AO_VIVO_DIAS", "7"))          # só períodos que tocam a última semana
+AO_VIVO_INTERVALO = int(os.environ.get("VOTACOES_AO_VIVO_INTERVALO", "60"))  # segundos entre consultas iguais
+_ao_vivo = {}   # (inicio, fim) -> {"status": "rodando"|"pronto"|"erro", "quando": epoch, "novas": n}
+
+
+def _janela_ao_vivo(f, hoje=None):
+    """Trecho do filtro que vale conferir na API: a parte dele dentro dos últimos AO_VIVO_DIAS dias.
+    Sem data no filtro: ontem e hoje (a sessão pode passar da meia-noite)."""
+    from datetime import date, timedelta
+    hoje = hoje or date.today()
+    if f.fim and f.fim < hoje - timedelta(days=AO_VIVO_DIAS):
+        return None
+    ini = max(f.inicio or hoje - timedelta(days=1), hoje - timedelta(days=AO_VIVO_DIAS))
+    fim = min(f.fim or hoje, hoje)
+    return (ini, fim) if ini <= fim else None
+
+
+def _rodar_ao_vivo(chave):
+    import collector
+    try:
+        n = collector.atualizar_votacoes_periodo(*chave)
+        _ao_vivo[chave].update(status="pronto", novas=n)
+    except Exception:
+        logging.exception("falha na atualização ao vivo das votações")
+        _ao_vivo[chave].update(status="erro")
+    finally:
+        paineis.limpar_cache()
+        _coleta_lock.release()
+
+
+def iniciar_ao_vivo(f):
+    """Dispara a consulta à API para o período do filtro, se for recente e não tiver sido feita há pouco.
+    Devolve a chave do período (para a página acompanhar) ou None."""
+    if not VOTACOES_AO_VIVO:
+        return None
+    chave = _janela_ao_vivo(f)
+    if not chave:
+        return None
+    est = _ao_vivo.get(chave)
+    if est and (est["status"] == "rodando" or time.time() - est["quando"] < AO_VIVO_INTERVALO):
+        return chave
+    if not _coleta_lock.acquire(blocking=False):   # coleta geral em andamento: ela já traz as votações
+        return None
+    _ao_vivo[chave] = {"status": "rodando", "quando": time.time(), "novas": 0}
+    threading.Thread(target=_rodar_ao_vivo, args=(chave,), daemon=True).start()
+    return chave
+
+
+@app.get("/api/votacoes/ao-vivo")
+def votacoes_ao_vivo_status():
+    from datetime import date
+    try:
+        chave = (date.fromisoformat(request.args.get("inicio", "")), date.fromisoformat(request.args.get("fim", "")))
+    except ValueError:
+        abort(400)
+    est = _ao_vivo.get(chave) or {"status": "desconhecido", "novas": 0}
+    return jsonify(status=est["status"], novas=est.get("novas", 0))
+
+
 @app.route("/votacoes")
 def votacoes():
     f, op = _contexto_filtros()
+    ao_vivo = iniciar_ao_vivo(f)
     busca = (request.args.get("busca") or "").strip()
     lista = metrics.lista_votacoes(f, busca, limite=600, simbolicas=True)
     grupos = metrics.agrupar_votacoes(lista)
@@ -229,7 +295,8 @@ def votacoes():
     det = (metrics.detalhe_votacao(vid) or metrics.detalhe_simbolica(vid)) if vid is not None else None
     etapas = metrics.votacoes_da_proposicao(det["votacao"], f) if det else []
     return render_template("votacoes.html", aba="votacoes", f=f, op=op, busca=busca,
-                           lista=lista, grupos=grupos, det=det, vid=vid, etapas=etapas)
+                           lista=lista, grupos=grupos, det=det, vid=vid, etapas=etapas,
+                           ao_vivo=ao_vivo, ao_vivo_status=(_ao_vivo.get(ao_vivo) or {}).get("status"))
 
 
 # ---------------- abas por deputado ----------------

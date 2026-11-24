@@ -29,6 +29,14 @@
   </span></details>
 </form>
 
+{% if ao_vivo %}
+<div class="aviso info" id="aoVivo" data-inicio="{{ ao_vivo[0] }}" data-fim="{{ ao_vivo[1] }}" data-status="{{ ao_vivo_status or '' }}">
+  {% if ao_vivo_status == 'rodando' %}⟳ Conferindo na Câmara se há votações novas de {{ ao_vivo[0]|data }}{% if ao_vivo[1] != ao_vivo[0] %} a {{ ao_vivo[1]|data }}{% endif %}… a página se atualiza sozinha.
+  {% elif ao_vivo_status == 'erro' %}Não foi possível consultar a Câmara agora; mostrando o que já está no painel.
+  {% else %}✓ Votações do período conferidas na Câmara há menos de um minuto.{% endif %}
+</div>
+{% endif %}
+
 <div class="vot-layout">
   <aside class="card neu vot-lista">
     <h2>Votações <small>{{ grupos|length }} proposiç{{ 'ão' if grupos|length == 1 else 'ões' }} · {{ lista|length }}{% if lista|length >= 600 %}+{% endif %} votaç{{ 'ão' if lista|length == 1 else 'ões' }}</small></h2>
@@ -211,6 +219,24 @@
     cont.textContent=k;
   }
   [nome,voto,part,opo].forEach(el=>el.addEventListener('input',aplicar));
+})();
+</script>
+<script>
+(function(){
+  const el=document.getElementById('aoVivo'); if(!el||el.dataset.status!=='rodando') return;
+  const url='/api/votacoes/ao-vivo?inicio='+el.dataset.inicio+'&fim='+el.dataset.fim;
+  let n=0;
+  const hora=()=>new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  function checar(){
+    fetch(url,{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+      if(d.status==='rodando'){ if(++n<100) setTimeout(checar,3000); return; }
+      if(d.status==='pronto'&&d.novas>0){ location.reload(); return; }
+      el.textContent=d.status==='erro'
+        ? 'Não foi possível consultar a Câmara agora; mostrando o que já está no painel.'
+        : '✓ Conferido na Câmara às '+hora()+': nenhuma votação nova no período.';
+    }).catch(()=>{ if(++n<100) setTimeout(checar,5000); });
+  }
+  setTimeout(checar,2000);
 })();
 </script>
 {% endblock %}

@@ -211,6 +211,7 @@ td.c,th.c{text-align:center}
 .aviso{padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px}
 .aviso.ok{background:#e6f4ea;color:#1d6b34}
 .aviso.erro{background:#fdecea;color:#a12a1d}
+.aviso.info{background:#eef4fb;color:#1f4e79}
 .form-linha{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding:12px 14px}
 .form-linha input,.form-linha select{font:inherit;padding:7px 9px;border:1px solid var(--linha);border-radius:6px}
 .mini{font:inherit;font-size:12px;padding:4px 8px;border-radius:5px;border:1px solid var(--linha);background:#fff;cursor:pointer}

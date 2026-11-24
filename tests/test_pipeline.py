@@ -21,6 +21,7 @@ os.environ["ADMIN_PASSWORD"] = "senha-de-teste-123"
 os.environ["SECRET_KEY"] = "teste"
 os.environ["GEMINI_INTERVALO"] = "0"        # sem espera entre chamadas da IA nos testes
 os.environ["AGENDA_AO_ACESSAR"] = "0"
+os.environ["VOTACOES_AO_VIVO"] = "0"       # a tela de Votações não consulta a API ao vivo nos testes (salvo no teste próprio)
 os.environ["VOTACOES_API"] = "0"           # a coleta de votações não completa pela API nos testes (salvo no teste próprio)
 os.environ["CLIPPING_TRAMITACAO"] = "0"     # a coleta não lê tramitações na API da Câmara nos testes     # a tela da agenda não chama a API da Câmara nos testes
 os.environ.pop("RAILWAY_ENVIRONMENT", None)
@@ -4112,3 +4113,107 @@ def test_clipping_completa_projeto_aprovado_fora_da_janela():
                                              hoje=date(2026, 11, 23)) >= 1
     regs = {(r["identificacao"], r["data"]) for r in clipping_auto.do_periodo(101, date(2026, 1, 1), date(2026, 12, 31))}
     assert ("PL 1846/2025", "2026-07-01") in regs and ("PL 1846/2025", "2026-07-15") not in regs
+
+
+def test_votacoes_ao_vivo_grava_so_o_periodo():
+    """Busca por data recente: as votações do dia vêm da API na hora e só elas são gravadas,
+    sem apagar as demais do ano; as já completas não são relidas."""
+    from datetime import date as _date
+    orig_pag, orig_get = collector.paginado, collector.get_json
+    nova, simb = "2777001-5", "2777002-1"
+    pedidos = []
+
+    def fake_pag(caminho, limite_paginas=200):
+        pedidos.append(caminho)
+        if caminho.startswith("/votacoes?"):
+            return [{"id": nova, "siglaOrgao": "PLEN", "data": "2025-11-24"},
+                    {"id": simb, "siglaOrgao": "PLEN", "data": "2025-11-24"},
+                    {"id": "2777003-1", "siglaOrgao": "CCJC", "data": "2025-11-24"}]
+        if caminho == f"/votacoes/{nova}/votos":
+            return [{"tipoVoto": "Sim", "deputado_": {"id": 101, "nome": "Ana", "siglaPartido": "PL", "siglaUf": "SP"}},
+                    {"tipoVoto": "Não", "deputado_": {"id": 102, "nome": "Bruno", "siglaPartido": "PT", "siglaUf": "BA"}}]
+        return []
+
+    def fake_get(caminho):
+        if caminho == f"/votacoes/{nova}":
+            return {"dados": {"id": nova, "siglaOrgao": "PLEN", "data": "2025-11-24",
+                              "dataHoraRegistro": "2025-11-24T18:30:00", "aprovacao": 1, "descricao": "Aprovado.",
+                              "proposicoesAfetadas": [{"id": 2777001, "siglaTipo": "PL", "numero": 10, "ano": 2025}],
+                              "objetosPossiveis": [], "ultimaAberturaVotacao": {}, "ultimaApresentacaoProposicao": {}}}
+        if caminho == f"/votacoes/{simb}":
+            return {"dados": {"id": simb, "siglaOrgao": "PLEN", "data": "2025-11-24", "aprovacao": 1,
+                              "descricao": "Aprovada a redação final.",
+                              "proposicoesAfetadas": [{"id": 2777002, "siglaTipo": "PL", "numero": 11, "ano": 2025}]}}
+        if caminho == f"/votacoes/{nova}/orientacoes":
+            return {"dados": [{"siglaPartidoBloco": "Governo", "orientacaoVoto": "Não", "codTipoLideranca": "G"},
+                              {"siglaPartidoBloco": "Oposição", "orientacaoVoto": "Sim", "codTipoLideranca": "O"}]}
+        return None
+
+    antes = {r[0] for r in _q("SELECT id FROM votacoes")}
+    antes_simb = {r[0] for r in _q("SELECT id FROM votacoes_simbolicas")}
+    collector.paginado, collector.get_json = fake_pag, fake_get
+    try:
+        n = collector.atualizar_votacoes_periodo(_date(2025, 11, 24), _date(2025, 11, 24), hoje=_date(2025, 11, 24))
+        assert n == 1
+        depois = {r[0] for r in _q("SELECT id FROM votacoes")}
+        assert depois == antes | {nova}                     # nada do resto do ano foi apagado
+        assert {r[0] for r in _q("SELECT id FROM votacoes_simbolicas")} == antes_simb | {simb}
+        assert len(_q(f"SELECT * FROM votos WHERE votacao_id='{nova}'")) == 2
+        # segunda busca: a votação já completa não é relida (só a lista do dia e a simbólica)
+        pedidos.clear()
+        collector.atualizar_votacoes_periodo(_date(2025, 11, 24), _date(2025, 11, 24), hoje=_date(2025, 11, 24))
+        assert f"/votacoes/{nova}/votos" not in pedidos and f"/votacoes/{simb}/votos" in pedidos
+        assert {r[0] for r in _q("SELECT id FROM votacoes")} == depois
+    finally:
+        collector.paginado, collector.get_json = orig_pag, orig_get
+        with engine.begin() as c:
+            c.execute(text(f"DELETE FROM votos WHERE votacao_id='{nova}'"))
+            c.execute(text(f"DELETE FROM orientacoes WHERE votacao_id='{nova}'"))
+            c.execute(text(f"DELETE FROM orientacoes_partido WHERE votacao_id='{nova}'"))
+            c.execute(text(f"DELETE FROM votacoes WHERE id='{nova}'"))
+            c.execute(text(f"DELETE FROM votacoes_simbolicas WHERE id='{simb}'"))
+
+
+def test_janela_ao_vivo_so_periodos_recentes():
+    from datetime import date as _date
+    import app as appmod
+    hoje = _date(2026, 11, 24)
+    F = metrics.Filtros
+    assert appmod._janela_ao_vivo(F(), hoje) == (_date(2026, 11, 23), hoje)
+    assert appmod._janela_ao_vivo(F(inicio=hoje, fim=hoje), hoje) == (hoje, hoje)
+    assert appmod._janela_ao_vivo(F(inicio=_date(2026, 1, 1), fim=_date(2026, 12, 31)), hoje) == (_date(2026, 11, 17), hoje)
+    assert appmod._janela_ao_vivo(F(inicio=_date(2026, 3, 1), fim=_date(2026, 3, 31)), hoje) is None
+
+
+def test_tela_votacoes_dispara_ao_vivo_e_informa(monkeypatch):
+    import threading as _th
+    import app as appmod
+    import collector as col
+    liberar, chamadas = _th.Event(), []
+
+    def fake(ini, fim, hoje=None):
+        chamadas.append((ini, fim))
+        liberar.wait(5)
+        return 2
+
+    monkeypatch.setattr(appmod, "VOTACOES_AO_VIVO", True)
+    monkeypatch.setattr(col, "atualizar_votacoes_periodo", fake)
+    appmod._ao_vivo.clear()
+    cli = _cliente()
+    html = cli.get("/votacoes").get_data(as_text=True)
+    assert 'id="aoVivo"' in html and "Conferindo na Câmara" in html and len(chamadas) == 1
+    ini, fim = chamadas[0]
+    cli.get("/votacoes")                                   # em andamento: não dispara de novo
+    assert len(chamadas) == 1
+    assert cli.get(f"/api/votacoes/ao-vivo?inicio={ini}&fim={fim}").get_json()["status"] == "rodando"
+    liberar.set()
+    for _ in range(50):
+        d = cli.get(f"/api/votacoes/ao-vivo?inicio={ini}&fim={fim}").get_json()
+        if d["status"] != "rodando":
+            break
+        import time as _t; _t.sleep(0.05)
+    assert d == {"status": "pronto", "novas": 2}
+    assert not appmod._coleta_lock.locked()
+    html = cli.get("/votacoes?inicio=2025-01-01&fim=2025-03-31").get_data(as_text=True)   # período antigo
+    assert 'id="aoVivo"' not in html and len(chamadas) == 1
+    appmod._ao_vivo.clear()
