@@ -1270,3 +1270,8 @@ details.relpdf summary::-webkit-details-marker{display:none}
 details.relpdf .relpdf-op{position:absolute;z-index:20;left:0;top:100%;margin-top:4px;background:#fff;border:1px solid #d5e0d9;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);display:flex;flex-direction:column;min-width:130px;overflow:hidden}
 details.relpdf .relpdf-op a{padding:8px 12px;font-size:13px;font-weight:600;white-space:nowrap;text-decoration:none}
 details.relpdf .relpdf-op a:hover{background:#f4f8f5}
+details.relpdf .relpdf-op button{padding:8px 12px;font-size:13px;font-weight:600;white-space:nowrap;text-align:left;background:none;border:0;color:var(--pri);cursor:pointer;font-family:inherit}
+details.relpdf .relpdf-op button:hover{background:#f4f8f5}
+details.relpdf-lote{align-self:flex-end}
+details.relpdf-lote summary.btn{font-size:inherit;display:inline-flex;align-items:center}
+details.relpdf-lote .relpdf-op{left:auto;right:0}

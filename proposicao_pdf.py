@@ -33,13 +33,53 @@ def _br(v, hora=False):
     return d.strftime("%d/%m/%Y %H:%M" if hora and (d.hour or d.minute) else "%d/%m/%Y")
 
 
-def dados(pid=None, vid=None):
+def _no_periodo(data, inicio, fim):
+    d = _quando(data)
+    if d is None:
+        return not (inicio or fim)
+    return (not inicio or d.date() >= inicio) and (not fim or d.date() <= fim)
+
+
+def _quando(v):
+    if not v:
+        return None
+    try:
+        return v if isinstance(v, datetime) else datetime.fromisoformat(str(v)[:19])
+    except ValueError:
+        return None
+
+
+def _simbolicas(c, pid, v0):
+    """Votações simbólicas da matéria, no mesmo formato de metrics.detalhe_votacao."""
+    if pid:
+        rs = c.execute(text("SELECT * FROM votacoes_simbolicas WHERE proposicao_id = :p"), {"p": pid})
+    elif v0 and v0.get("sigla_materia") and v0.get("numero_materia"):
+        rs = c.execute(text("SELECT * FROM votacoes_simbolicas WHERE proposicao_id IS NULL AND sigla_materia = :s "
+                            "AND numero_materia = :n"), {"s": v0["sigla_materia"], "n": v0["numero_materia"]})
+    else:
+        return []
+    saida = []
+    for r in rs.mappings():
+        v = dict(r)
+        v.update(secreta=False, simbolica=True, qtd_sim=None, qtd_nao=None, presidente=None)
+        v["tipo_etapa"] = metrics.tipo_etapa(v)
+        saida.append({"votacao": v, "simbolica": True, "orientacoes": [], "placar": [], "traidores": [],
+                      "gov": None, "opo": None,
+                      "contagem": {"SIM": None, "NÃO": None, "ABSTENÇÃO": None, "OBSTRUÇÃO": 0, "OUTROS": 0}})
+    return saida
+
+
+def dados(pid=None, vid=None, inicio=None, fim=None, buscar=True):
     """Tudo o que o PDF precisa. pid: id da proposição; vid: uma votação dela (quando a votação não
-    traz o id da proposição, a matéria é achada por sigla/número/ano). None se não houver nada."""
-    v0 = None
+    traz o id da proposição, a matéria é achada por sigla/número/ano). None se não houver nada.
+    Entram também as votações simbólicas. inicio/fim (date): só as votações desse período."""
+    v0, v0_simb = None, False
     with engine.connect() as c:
         if vid:
             v0 = c.execute(text("SELECT * FROM votacoes WHERE id = :id"), {"id": vid}).mappings().first()
+            v0_simb = not v0
+            if not v0:
+                v0 = c.execute(text("SELECT * FROM votacoes_simbolicas WHERE id = :id"), {"id": vid}).mappings().first()
             v0 = dict(v0) if v0 else None
             if v0 and not pid:
                 pid = v0.get("proposicao_id")
@@ -66,7 +106,8 @@ def dados(pid=None, vid=None):
                 "AND numero_materia = :n ORDER BY data"),
                 {"s": v0["sigla_materia"], "n": v0["numero_materia"]})]
         else:
-            ids = [vid] if v0 else []
+            ids = [vid] if v0 and not v0_simb else []
+        simb = _simbolicas(c, pid, v0)
         historico = []
         if pid:
             vistos = set()
@@ -78,20 +119,26 @@ def dados(pid=None, vid=None):
                 if k not in vistos:      # a mesma mudança é notificada a cada autor
                     vistos.add(k)
                     historico.append(dict(r))
-    if not proc and not ids:
+    if not proc and not ids and not simb:
         return None
     vots = [d for d in (metrics.detalhe_votacao(i) for i in ids) if d]
+    ids_nom = {x["votacao"]["id"] for x in vots}
+    vots += [x for x in simb if x["votacao"]["id"] not in ids_nom]
+    if inicio or fim:
+        vots = [x for x in vots if _no_periodo(x["votacao"].get("data"), inicio, fim)]
+    vots.sort(key=lambda x: (_quando(x["votacao"].get("data")) is None, _quando(x["votacao"].get("data")) or datetime.min))
     if proc:
         ident, ementa = proc.get("identificacao"), proc.get("ementa")
         import resumos
         proc["resumo"] = resumos.resumos_de([proc]).get(proc["id"])
     else:
         v = vots[0]["votacao"] if vots else v0
+        v = v or {}
         ident = f"{v['sigla_materia']} {v['numero_materia']}/{v['ano_materia']}" if v.get("sigla_materia") \
             else "Votação no Plenário"
         ementa = v.get("descricao_materia")
     import objeto_votacao      # nº e autoria dos destaques, qual requerimento foi votado
-    objeto_votacao.completar(ident, vots)
+    objeto_votacao.completar(ident, vots, buscar=buscar)
     return {"pid": pid, "proc": proc, "ident": ident or "Proposição", "ementa": ementa,
             "autores": autores, "votacoes": vots, "historico": historico}
 
@@ -217,7 +264,9 @@ def _numeros(d, st, larg, cor_cl):
     rej = sum(1 for v in vs if _aprov(v) is False)
     com_ori = [x for x in d["votacoes"] if x["opo"] in ("SIM", "NÃO") and _aprov(x["votacao"]) is not None]
     with_opo = sum(1 for x in com_ori if (x["opo"] == "SIM") == _aprov(x["votacao"]))
-    cels = [(len(vs), "votações nominais"), (aprov, "aprovadas"), (rej, "rejeitadas")]
+    n_simb = sum(1 for x in d["votacoes"] if x.get("simbolica"))
+    cels = [(len(vs) - n_simb, "votações nominais")] + ([(n_simb, "simbólicas")] if n_simb else []) + \
+        [(aprov, "aprovadas"), (rej, "rejeitadas")]
     if com_ori:
         cels.append((f"{with_opo}/{len(com_ori)}", "resultado como a Oposição orientou"))
     t = Table([[[Paragraph(str(n), st["num"]), Paragraph(r, st["numrot"])] for n, r in cels]],
@@ -262,21 +311,39 @@ def _etapa_cel(v):
 def _quadro_votacoes(d, st, larg, cab_fundo):
     cab = [Paragraph(f"<b>{x}</b>", st["cel"]) for x in
            ("Data", "Etapa", "Resultado", "Sim", "Não", "Abst.", "Governo", "Oposição")]
-    linhas = [cab]
+    linhas, spans = [cab], []
     for x in d["votacoes"]:
         v, c = x["votacao"], x["contagem"]
+        if x.get("simbolica"):
+            spans.append(len(linhas))
+            linhas.append([Paragraph(_br(v["data"], hora=True), st["cel"]), Paragraph(_etapa_cel(v), st["cel"]),
+                           Paragraph(_resultado(v), st["cel"]), Paragraph("<i>votação simbólica</i>", st["cel"]),
+                           "", "", "", ""])
+            continue
         linhas.append([Paragraph(_br(v["data"], hora=True), st["cel"]), Paragraph(_etapa_cel(v), st["cel"]),
                        Paragraph(_resultado(v), st["cel"]), Paragraph(str(c["SIM"]), st["cel"]),
                        Paragraph(str(c["NÃO"]), st["cel"]), Paragraph(str(c["ABSTENÇÃO"]), st["cel"]),
                        Paragraph(_voto_txt(x["gov"]), st["cel"]), Paragraph(_voto_txt(x["opo"]), st["cel"])])
     w = [27 * mm, 0, 22 * mm, 12 * mm, 12 * mm, 12 * mm, 20 * mm, 20 * mm]
     w[1] = larg - sum(w)
-    return _tabela(linhas, w, cab_fundo)
+    t = _tabela(linhas, w, cab_fundo)
+    if spans:
+        t.setStyle(TableStyle([("SPAN", (3, i), (7, i)) for i in spans]))
+    return t
 
 
 def _bloco_votacao(n, x, st, larg, cab_fundo, cor_cl):
     v, c = x["votacao"], x["contagem"]
     out = [Paragraph(f"{n}. {_p(_rotulo(v))} · {_br(v['data'], hora=True)}", st["vt"])]
+    if x.get("simbolica"):
+        if v.get("complemento"):
+            out.append(Paragraph(f"<b>Em votação:</b> {_p(v['complemento'])}", st["corpo"]))
+        elif v.get("etapa"):
+            out.append(Paragraph(f"<b>Em votação:</b> {_p(v['etapa'])}", st["corpo"]))
+        if v.get("descricao_votacao"):
+            out.append(Paragraph(f"<b>Resultado:</b> {_p(v['descricao_votacao'])}", st["corpo"]))
+        out.append(Paragraph("Votação simbólica — sem placar nem votos individuais.", st["meta"]))
+        return out
     if v.get("dtq_numero") or v.get("dtq_autoria"):
         out.append(Paragraph(f"<b>Destaque:</b> nº {_p(v.get('dtq_numero') or '—')} · "
                              f"<b>Autoria:</b> {_p(v.get('dtq_autoria') or 'não informada')}", st["corpo"]))
@@ -346,8 +413,11 @@ def gerar(d, agora=None):
     sit = pr.get("situacao") or ""
     sit = sit if len(sit) <= 48 else sit[:46].rstrip() + "…"
     sub = " · ".join(x for x in (sit, pr.get("orgao")) if x) or CASA["nome"]
-    n = len(d["votacoes"])
-    rotulo = f"{n} votação(ões) nominal(is) no Plenário" if n else "Sem votação nominal no Plenário"
+    n_simb = sum(1 for x in d["votacoes"] if x.get("simbolica"))
+    n = len(d["votacoes"]) - n_simb
+    rotulo = (f"{n} votação(ões) nominal(is)" if n else "") + \
+        (f"{' e ' if n else ''}{n_simb} simbólica(s)" if n_simb else "")
+    rotulo = f"{rotulo} no Plenário" if rotulo else "Sem votação no Plenário"
     sigla = (pr.get("sigla") or (d["ident"].split() or [""])[0]) if d["ident"] else ""
     cabecalho = fazer_cabecalho(d["ident"], sub, _selo(sigla), rotulo, agora,
                                 kicker="R E L A T Ó R I O   D A   P R O P O S I Ç Ã O", rodape="Proposição")
@@ -378,7 +448,7 @@ def gerar(d, agora=None):
             hist += [CondPageBreak(50 * mm), KeepTogether(bloco[:4]), *bloco[4:], Spacer(1, 5 * mm)]
     else:
         hist += [Paragraph("Votações no Plenário", st["sec"]),
-                 Paragraph("O painel não tem votação nominal desta proposição no Plenário.", st["meta"]),
+                 Paragraph("O painel não tem votação desta proposição no Plenário (no período).", st["meta"]),
                  Spacer(1, 4 * mm)]
     if d["historico"]:
         linhas = [[Paragraph(f"<b>{h}</b>", st["cel"]) for h in ("Data", "Situação anterior", "Nova situação")]]

@@ -35,7 +35,7 @@ from sqlalchemy import delete, insert, select, update
 
 from db import (INSTITUCIONAIS, autorias, deputados, despesas, engine, init_db, meta, norm_lideranca,
                 norm_nome, norm_partido, norm_voto, notificacoes, orientacoes, orientacoes_partido, perfis,
-                processos, sem_acento, votacoes, votos)
+                processos, sem_acento, votacoes, votacoes_simbolicas, votos)
 
 API = os.environ.get("CAMARA_API", "https://dadosabertos.camara.leg.br/api/v2")
 ARQUIVOS = os.environ.get("CAMARA_ARQUIVOS", "https://dadosabertos.camara.leg.br/arquivos")
@@ -415,9 +415,9 @@ def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_or
             partidos[vid].add(partido)
         if voto == "ART. 17":
             presidentes[vid] = (r.get("deputado_nome") or "").strip()
-    # só interessam votações nominais (as simbólicas não têm voto individual)
+    # as nominais vão para `votacoes`; as simbólicas (sem voto individual) só para `votacoes_simbolicas`,
+    # usadas nos relatórios — separadas no fim, depois de achar a matéria e o objeto de cada uma
     ids_com_voto = {x["votacao_id"] for x in lista_votos}
-    vts = {k: v for k, v in vts.items() if k in ids_com_voto}
     # um deputado só pode ter um voto por votação (o arquivo às vezes repete a linha)
     unicos = {(x["votacao_id"], x["codigo_deputado"]): x for x in lista_votos if x["votacao_id"] in vts}
     lista_votos = list(unicos.values())
@@ -479,6 +479,10 @@ def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_or
         if v["etapa"]:
             v["etapa"] = v["etapa"][:600]
 
+    simb = {k: v for k, v in vts.items() if k not in ids_com_voto}
+    vts = {k: v for k, v in vts.items() if k in ids_com_voto}
+    oris = {k: d for k, d in oris.items() if k in vts}
+    _gravar_simbolicas(conn, ano, simb)
     linhas_ori = [{"votacao_id": vid, "lideranca": rot, "voto": voto}
                   for vid, d in oris.items() for rot, voto in d.items()]
     linhas_op = orientacoes_por_partido(oris, partidos)
@@ -501,6 +505,23 @@ def gravar_votacoes_ano(conn, ano: int, linhas_votacoes, linhas_votos, linhas_or
     _lote(conn, orientacoes_partido, linhas_op)
     log.info("votações %s: %d nominais, %d votos, %d orientações", ano, len(vts), len(lista_votos), len(linhas_ori))
     return len(vts)
+
+
+_COLS_SIMB = ("id", "ano", "data", "sigla_materia", "numero_materia", "ano_materia", "proposicao_id",
+              "descricao_materia", "descricao_votacao", "aprovacao", "etapa")
+
+
+def _gravar_simbolicas(conn, ano, simb):
+    """Substitui as votações simbólicas do Plenário do ano (só as ligadas a uma matéria)."""
+    linhas = [{k: v.get(k) for k in _COLS_SIMB} for v in simb.values()
+              if v.get("proposicao_id") or v.get("sigla_materia")]
+    ids = [x["id"] for x in linhas]
+    conn.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.ano == ano))
+    for i in range(0, len(ids), 900):
+        conn.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.id.in_(ids[i:i + 900])))
+    _lote(conn, votacoes_simbolicas, linhas)
+    if linhas:
+        log.info("votações %s: %d simbólicas", ano, len(linhas))
 
 
 def _anos_pendentes(chave):
@@ -576,8 +597,6 @@ def votacoes_pela_api(ano, desde, ja=(), hoje=None):
             continue
         vistos.add(vid)
         votos_ = paginado(f"/votacoes/{vid}/votos")
-        if not votos_:
-            continue   # simbólica (sem voto individual)
         det = (get_json(f"/votacoes/{vid}") or {}).get("dados") or {}
         cont = Counter()
         for x in votos_:
@@ -1075,9 +1094,13 @@ def executar(desde: date | None = None, so_deputados=False):
 
 
 def _marcar_recarga_etapas(anos):
-    """Uma vez só: a coluna 'etapa' das votações surgiu depois — os anos antigos (que a rotina não relê)
-    entram como pendentes para serem recarregados com ela."""
-    chave = "votacoes_etapa_v1"
+    """Uma vez só (por versão): a coluna 'etapa' e depois as votações simbólicas surgiram depois — os anos
+    antigos (que a rotina não relê) entram como pendentes para serem recarregados com elas."""
+    for chave in ("votacoes_etapa_v1", "votacoes_simbolicas_v1"):
+        _marcar_recarga(chave, anos)
+
+
+def _marcar_recarga(chave, anos):
     with engine.begin() as c:
         if c.execute(select(meta.c.valor).where(meta.c.chave == chave)).first() is not None:
             return

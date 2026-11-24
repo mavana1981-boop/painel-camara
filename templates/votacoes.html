@@ -23,6 +23,10 @@
     {% for s in op.siglas %}<option {{ 'selected' if f.sigla == s }}>{{ s }}</option>{% endfor %}</select></label>
   <button class="btn">Buscar</button>
   <a class="btn sec" href="{{ request.path }}">Limpar</a>
+  <details class="relpdf relpdf-lote"><summary class="btn sec" title="PDF de todas as matérias da lista, com as votações do período (nominais e simbólicas)">🖨 Imprimir PDF</summary><span class="relpdf-op">
+    <button type="submit" formaction="{{ url_for('votacoes_relatorio_pdf') }}" formtarget="_blank" name="modo" value="completo">Completo</button>
+    <button type="submit" formaction="{{ url_for('votacoes_relatorio_pdf') }}" formtarget="_blank" name="modo" value="sintetico">Sintético</button>
+  </span></details>
 </form>
 
 <div class="vot-layout">

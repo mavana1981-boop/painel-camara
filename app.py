@@ -351,6 +351,25 @@ def proposicao_relatorio_pdf():
                     headers={"Content-Disposition": f'inline; filename="relatorio-{nome}.pdf"'})
 
 
+@app.route("/votacoes/relatorio.pdf")
+def votacoes_relatorio_pdf():
+    """Relatório (completo ou sintético) de todas as matérias da lista filtrada da aba Votações,
+    com as votações do período (nominais e simbólicas)."""
+    import lote_pdf
+    from flask import Response
+    f, _ = _contexto_filtros()
+    busca = (request.args.get("busca") or "").strip()
+    modo = "sintetico" if request.args.get("modo") == "sintetico" else "completo"
+    pdf, total, n = lote_pdf.gerar(f, busca, modo)
+    if not pdf:
+        return Response("Nenhuma matéria com votação no Plenário para os filtros escolhidos.", status=404,
+                        mimetype="text/plain")
+    periodo = "-".join(x.isoformat() for x in (f.inicio, f.fim) if x)
+    nome = f"votacoes-{'resumo' if modo == 'sintetico' else 'relatorio'}" + (f"-{periodo}" if periodo else "")
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{nome}.pdf"'})
+
+
 @app.route("/cota")
 def cota():
     cod, lista = _deputado_da_requisicao()

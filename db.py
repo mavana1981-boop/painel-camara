@@ -528,6 +528,21 @@ contatos_assessoria = Table(  # contatos dos gabinetes (valem para todos os term
     Column("atualizado_em", DateTime),
 )
 
+votacoes_simbolicas = Table(  # votações do Plenário sem voto individual (só aparecem nos relatórios)
+    "votacoes_simbolicas", metadata,
+    Column("id", String(30), primary_key=True),
+    Column("ano", Integer, index=True),
+    Column("data", DateTime, index=True),
+    Column("sigla_materia", String(20)),
+    Column("numero_materia", Integer),
+    Column("ano_materia", Integer),
+    Column("proposicao_id", BigInteger, index=True),
+    Column("descricao_materia", Text),
+    Column("descricao_votacao", Text),
+    Column("aprovacao", Boolean),
+    Column("etapa", Text),
+)
+
 votacoes_objeto = Table(  # o que foi votado (ObjVotacao do serviço da Câmara): nº/autoria do DTQ, tipo de requerimento
     "votacoes_objeto", metadata,
     Column("votacao_id", String(30), primary_key=True),

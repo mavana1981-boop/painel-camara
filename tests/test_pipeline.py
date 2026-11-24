@@ -236,8 +236,8 @@ def test_relatorio_pdf_da_proposicao():
     import proposicao_pdf
     d = proposicao_pdf.dados(vid=V2)                     # pela votação: acha a proposição
     assert d["ident"] == "PL 1087/2025" and d["pid"] == 2480001
-    assert {x["votacao"]["id"] for x in d["votacoes"]} == {V1, V2}
-    assert [x["votacao"]["id"] for x in d["votacoes"]] == [V2, V1]      # ordem cronológica
+    assert {x["votacao"]["id"] for x in d["votacoes"]} == {V1, V2, V_SIMB}       # + a simbólica
+    assert [x["votacao"]["id"] for x in d["votacoes"]] == [V2, V1, V_SIMB]      # ordem cronológica
     pdf = proposicao_pdf.gerar(d)
     assert pdf[:4] == b"%PDF" and len(pdf) > 3000
     cli = _cliente()
@@ -298,6 +298,36 @@ def test_relatorio_sintetico():
     assert r.status_code == 200 and r.data[:4] == b"%PDF" and "resumo-pl-1087-2025.pdf" in r.headers["Content-Disposition"]
     html = cli.get(f"/votacoes?id={V1}").get_data(as_text=True)
     assert "modo=sintetico" in html and "Completo" in html
+
+def test_simbolicas_e_pdf_em_lote():
+    import lote_pdf
+    import metrics
+    import proposicao_pdf
+    assert {r[0] for r in _q("SELECT id FROM votacoes_simbolicas")} == {V_SIMB}
+    assert V_SIMB not in {r[0] for r in _q("SELECT id FROM votacoes")}
+    d = proposicao_pdf.dados(pid=2480001, buscar=False)
+    vs = [x["votacao"]["id"] for x in d["votacoes"]]
+    assert V_SIMB in vs and vs[-1] == V_SIMB                       # em ordem cronológica, junto das nominais
+    simb = next(x for x in d["votacoes"] if x["votacao"]["id"] == V_SIMB)
+    assert simb["simbolica"] and simb["votacao"]["tipo_etapa"] == "Urgência"
+    assert proposicao_pdf.gerar(d)[:4] == b"%PDF"
+    import sintese_pdf
+    assert sintese_pdf.titulo_quadro(d["votacoes"]) == "2 votações nominais e 1 simbólica"
+    assert sintese_pdf.gerar(d)[:4] == b"%PDF"
+    from datetime import date
+    d = proposicao_pdf.dados(pid=2480001, inicio=date(2025, 5, 1), fim=date(2025, 5, 31), buscar=False)
+    assert [x["votacao"]["id"] for x in d["votacoes"]] == [V_SIMB]   # só as do período
+    f = metrics.Filtros(opostas=False)
+    mats = lote_pdf.materias(f, "1087")
+    assert len(mats) == 1 and mats[0][0] == 2480001
+    cli = _cliente()
+    for modo in ("completo", "sintetico"):
+        r = cli.get(f"/votacoes/relatorio.pdf?busca=&inicio=&fim=&sigla=&modo={modo}")
+        assert r.status_code == 200 and r.data[:4] == b"%PDF"
+    r = cli.get("/votacoes/relatorio.pdf?inicio=2025-05-01&fim=2025-05-31&modo=sintetico")
+    assert r.status_code == 200 and "2025-05-01-2025-05-31" in r.headers["Content-Disposition"]
+    assert cli.get("/votacoes/relatorio.pdf?busca=inexistentexyz").status_code == 404
+    assert "votacoes/relatorio.pdf" in cli.get("/votacoes").get_data(as_text=True)
 
 def test_complemento_sem_o_servico():
     import objeto_votacao as ov

@@ -128,7 +128,7 @@ def _materia(ident):
     return (m.group(1).upper(), int(m.group(2)), int(m.group(3))) if m else None
 
 
-def completar(ident, lista):
+def completar(ident, lista, buscar=True):
     """Põe em cada votação de `lista` (itens de metrics.detalhe_votacao) a chave 'objeto' (ObjVotacao),
     buscando no serviço da Câmara as que ainda não temos. Nunca levanta erro."""
     vs = [x["votacao"] for x in lista]
@@ -139,9 +139,9 @@ def completar(ident, lista):
         with engine.connect() as c:
             guardados = dict(c.execute(select(votacoes_objeto.c.votacao_id, votacoes_objeto.c.objeto)
                                        .where(votacoes_objeto.c.votacao_id.in_(ids))).all())
-        faltam = [v for v in vs if v["id"] not in guardados]
+        faltam = [v for v in vs if v["id"] not in guardados and not v.get("simbolica")]   # o serviço só tem nominais
         mat = _materia(ident)
-        if faltam and mat:
+        if faltam and mat and buscar:
             chave = f"objvot:{mat[0]} {mat[1]}/{mat[2]}"[:60]
             with engine.connect() as c:
                 ult = c.execute(select(meta.c.valor).where(meta.c.chave == chave)).scalar()

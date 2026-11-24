@@ -157,7 +157,7 @@ def resultado_curto(v):
 
 def _voto(t):
     t = (t or "").upper()
-    return {"SIM": "Sim", "NÃO": "Não", "NAO": "Não", "OBSTRUÇÃO": "obstrução", "LIBERADO": "liberou",
+    return {"SIM": "Sim", "NÃO": "Não", "NAO": "Não", "OBSTRUÇÃO": "obstrução", "LIBERADO": "liberou", "LIVRE": "liberou",
             "ABSTENÇÃO": "abstenção"}.get(t, t.capitalize())
 
 
@@ -176,7 +176,12 @@ def frase_resultado(x):
     v, c = x["votacao"], x["contagem"]
     aprov = v.get("aprovacao")
     verbo = "aprovou" if aprov else "rejeitou" if aprov is not None and not aprov else "votou"
-    txt = f"A Câmara {verbo} o texto-base por <b>{c['SIM']} votos a {c['NÃO']}</b>"
+    if x.get("simbolica"):
+        txt = f"A Câmara {verbo} o texto-base em <b>votação simbólica</b>"
+        if "ressalvad" in _plano(v.get("descricao_votacao")):
+            txt += ", ressalvados os destaques"
+        return txt + "."
+    txt = f"A Câmara {verbo} o texto-base por <b>{c['SIM']} voto{'s' if c['SIM'] != 1 else ''} a {c['NÃO']}</b>"
     ab = c.get("ABSTENÇÃO") or 0
     txt += f", com {ab} abstenç{'ão' if ab == 1 else 'ões'}" if ab else ""
     if "ressalvad" in _plano(v.get("descricao_votacao")):
@@ -232,6 +237,8 @@ def frase_destaques(vots):
     dts = [x["votacao"] for x in vots if eh_destaque(x["votacao"])]
     if not dts:
         return ""
+    nominais = not any(x.get("simbolica") for x in vots if eh_destaque(x["votacao"]))
+    modo, modo1 = (" votados nominalmente", " votado nominalmente") if nominais else ("", "")
     por = {}
     for v in dts:
         por.setdefault(resultado_curto(v), []).append(v)
@@ -259,16 +266,28 @@ def frase_destaques(vots):
     if mant:
         n = len(mant)
         if usados:
-            frases.append("No outro destaque votado nominalmente, o texto foi mantido." if n == 1 else
-                          f"Nos outros {EXTENSO_M.get(n, n)} destaques votados nominalmente, o texto foi mantido.")
+            frases.append(f"No outro destaque{modo1}, o texto foi mantido." if n == 1 else
+                          f"Nos outros {EXTENSO_M.get(n, n)} destaques{modo}, o texto foi mantido.")
         else:
-            frases.append("No destaque votado nominalmente, o texto foi mantido." if n == 1 else
-                          f"Nos {EXTENSO_M.get(n, n)} destaques votados nominalmente, o texto foi mantido.")
+            frases.append(f"No destaque{modo1}, o texto foi mantido." if n == 1 else
+                          f"Nos {EXTENSO_M.get(n, n)} destaques{modo}, o texto foi mantido.")
     resto = sum(len(x) for x in por.values())
     if resto:
         frases.append(f"Outro{'s' if resto > 1 else ''} {resto} destaque{'s' if resto > 1 else ''} "
                       f"teve{'ram' if resto > 1 else ''} outro desfecho (ver relatório completo).")
     return " ".join(frases)
+
+
+def titulo_quadro(vots):
+    s = sum(1 for x in vots if x.get("simbolica"))
+    n = len(vots) - s
+    partes = []
+    if n:
+        partes.append(f"{n} votaç{'ão nominal' if n == 1 else 'ões nominais'}")
+    if s:
+        partes.append(f"{s} {'simbólica' if s == 1 else 'simbólicas'}" if n else
+                      f"{s} votaç{'ão simbólica' if s == 1 else 'ões simbólicas'}")
+    return " e ".join(partes)
 
 
 def _autoria(d):
@@ -279,7 +298,7 @@ def _autoria(d):
         suf = "-".join(x for x in (partido(a.get("partido")), a.get("uf")) if x)
         txt = f"Dep. {a['nome']}" + (f" ({suf})" if suf else "")
         outros = len(d.get("autores") or []) - 1
-        return txt + (f" e outros {outros}" if outros > 0 else "")
+        return txt + (f" e mais {outros}" if outros > 0 else "")
     aut = (pr.get("autoria") or "").strip()
     m = re.match(r"(Senado Federal|Poder Executivo|Comissão.+?|Mesa.+?)\s+-\s+(.+)$", aut)
     return f"{m.group(1)} ({m.group(2)})" if m else aut
@@ -341,17 +360,19 @@ def gerar(d, agora=None):
         el += [Paragraph(f"<b>Resultado.</b> {frase_resultado(tb)}", st["corpo"]), Spacer(1, 5 * mm)]
 
     if vots:
-        n = len(vots)
-        el.append(Paragraph(f"{n} votaç{'ão nominal' if n == 1 else 'ões nominais'}", st["sec"]))
+        el.append(Paragraph(titulo_quadro(vots), st["sec"]))
         linhas = [[Paragraph("Votação", st["cab"]), Paragraph("Resultado", st["cab"]),
                    Paragraph("Sim", st["cabn"]), Paragraph("Não", st["cabn"]), Paragraph("Abst.", st["cabn"])]]
-        negrito = []
+        spans = []
         for i, x in enumerate(vots, 1):
             v, c = x["votacao"], x["contagem"]
             b = x is tb
-            if b:
-                negrito.append(i)
             s, sn = (st["celb"], st["numb"]) if b else (st["cel"], st["num"])
+            if x.get("simbolica"):
+                spans.append(i)
+                linhas.append([Paragraph(_p(rotulo_curto(v)), s), Paragraph(_p(resultado_curto(v)), s),
+                               Paragraph("<i>simbólica</i>", sn), "", ""])
+                continue
             linhas.append([Paragraph(_p(rotulo_curto(v)), s), Paragraph(_p(resultado_curto(v)), s),
                            Paragraph(str(c["SIM"]), sn), Paragraph(str(c["NÃO"]), sn),
                            Paragraph(str(c.get("ABSTENÇÃO") or 0), sn)])
@@ -362,12 +383,13 @@ def gerar(d, agora=None):
                   ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
                   ("LEFTPADDING", (0, 0), (-1, -1), 6), ("LINEBELOW", (0, -1), (-1, -1), 0.6, AZUL)]
         estilo += [("BACKGROUND", (0, i), (-1, i), ZEBRA) for i in range(1, len(linhas)) if i % 2 == 0]
+        estilo += [("SPAN", (2, i), (4, i)) for i in spans]
         t.setStyle(TableStyle(estilo))
         el += [t, Spacer(1, 5 * mm)]
     else:
-        el.append(Paragraph("O painel não tem votação nominal desta proposição no Plenário.", st["corpo"]))
+        el.append(Paragraph("O painel não tem votação desta proposição no Plenário (no período).", st["corpo"]))
 
-    if tb and frase_bancadas(tb):
+    if tb and not tb.get("simbolica") and frase_bancadas(tb):
         el += [Paragraph(f"<b>Bancadas no texto-base.</b> {frase_bancadas(tb)}", st["corpo"]), Spacer(1, 3 * mm)]
     saldo = frase_destaques(vots)
     if saldo:
