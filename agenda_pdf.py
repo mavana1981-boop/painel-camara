@@ -172,7 +172,7 @@ class _Numerado(rl_canvas.Canvas):
 
 
 # Logos da Liderança da Oposição e da Liderança da Minoria (copiados do Minha Pauta): vão em todos os
-# PDFs do painel — cartão branco no canto direito da faixa da 1ª página e pequenos no rodapé das demais.
+# PDFs do painel — dois quadrinhos brancos separados no alto da faixa da 1ª página e pequenos no rodapé das demais.
 LOGOS = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logos", f"{n}.png")
          for n in ("oposicao", "minoria")]
 
@@ -193,18 +193,19 @@ def desenhar_logos(c, pagina, imgs):
     larg, alt = A4
     c.saveState()
     if pagina == 1:
-        w_card, h_card = 42 * mm, 40 * mm
-        x0, y0 = larg - 12 * mm - w_card, alt - 46 * mm
+        # dois quadrinhos brancos separados, pequenos, no alto à direita da faixa (acima do nome)
+        h_card, pad, gap = 11 * mm, 1.4 * mm, 2.5 * mm
+        topo, x = alt - 6 * mm, larg - 10 * mm
         c.setFillColor(colors.white)
-        c.roundRect(x0, y0, w_card, h_card, 3 * mm, stroke=0, fill=1)
-        y = y0 + h_card - 3 * mm
-        for img, h in zip(imgs, (17 * mm, 11 * mm)):
+        for img in reversed(imgs):
             iw, ih = img.getSize()
-            w = min(w_card - 6 * mm, h * iw / ih)
-            h = w * ih / iw
-            y -= h
-            c.drawImage(img, x0 + (w_card - w) / 2, y, w, h, mask="auto")
-            y -= 3 * mm
+            h = h_card - 2 * pad
+            w = h * iw / ih
+            w_card = w + 2 * pad
+            x -= w_card
+            c.roundRect(x, topo - h_card, w_card, h_card, 1.5 * mm, stroke=0, fill=1)
+            c.drawImage(img, x + pad, topo - h_card + pad, w, h, mask="auto")
+            x -= gap
     else:
         h, x = 6 * mm, larg - 16 * mm - 30 * mm
         for img in reversed(imgs):
@@ -262,7 +263,7 @@ def fazer_cabecalho(nome, sub, foto, rotulo, agora, kicker="A G E N D A   P A R 
             c.drawString(x, alt - 15 * mm, kicker)
             c.setFillColor(colors.white)
             tam = 24 if len(nome) <= 26 else 19
-            livre = larg - 12 * mm - 42 * mm - 4 * mm - x if logos else larg - 16 * mm - x   # não invade os logos
+            livre = larg - 12 * mm - x                  # os logos ficam acima da linha do nome
             while tam > 12 and c.stringWidth(nome, "Helvetica-Bold", tam) > livre:
                 tam -= 1
             c.setFont("Helvetica-Bold", tam)
