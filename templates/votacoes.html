@@ -85,7 +85,7 @@
         <div>{{ v.descricao_materia or '' }}</div>
         {% if v.descricao_votacao %}<div style="color:var(--suave);margin-top:6px;font-size:13px"><b>Resultado:</b> {{ v.descricao_votacao }}</div>{% endif %}
         {% if v.dispositivo and v.dispositivo not in (v.etapa or '') %}<div style="color:var(--suave);margin-top:4px;font-size:12px">Também afeta: {{ v.dispositivo }}</div>{% endif %}
-        {% if v.proposicao_id %}<div style="margin-top:4px;font-size:12px"><a href="https://www.camara.leg.br/propostas-legislativas/{{ v.proposicao_id }}" target="_blank" rel="noopener">ficha da proposição ↗</a></div>{% endif %}
+        <div style="margin-top:4px;font-size:12px">{% if v.proposicao_id %}<a href="https://www.camara.leg.br/propostas-legislativas/{{ v.proposicao_id }}" target="_blank" rel="noopener">ficha da proposição ↗</a> · {% endif %}<a href="{{ url_for('proposicao_relatorio_pdf', vid=v.id) }}" target="_blank" rel="noopener" title="Ficha, todas as votações no Plenário, orientações e votos por partido">📄 Relatório da proposição (PDF)</a></div>
         {% set tot = c['SIM'] + c['NÃO'] %}
         <div class="placar">
           <div class="placar-n sim"><b>{{ c['SIM'] }}</b><span>Sim</span></div>

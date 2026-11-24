@@ -232,6 +232,24 @@ def test_aba_votacoes():
     assert cli.get("/votacoes?id=999-1").status_code == 200
 
 
+def test_relatorio_pdf_da_proposicao():
+    import proposicao_pdf
+    d = proposicao_pdf.dados(vid=V2)                     # pela votação: acha a proposição
+    assert d["ident"] == "PL 1087/2025" and d["pid"] == 2480001
+    assert {x["votacao"]["id"] for x in d["votacoes"]} == {V1, V2}
+    assert [x["votacao"]["id"] for x in d["votacoes"]] == [V2, V1]      # ordem cronológica
+    pdf = proposicao_pdf.gerar(d)
+    assert pdf[:4] == b"%PDF" and len(pdf) > 3000
+    cli = _cliente()
+    r = cli.get("/proposicao/relatorio.pdf?id=2480001")
+    assert r.status_code == 200 and r.mimetype == "application/pdf" and r.data[:4] == b"%PDF"
+    assert "relatorio-pl-1087-2025.pdf" in r.headers["Content-Disposition"]
+    assert cli.get(f"/proposicao/relatorio.pdf?vid={V1}").status_code == 200
+    assert cli.get("/proposicao/relatorio.pdf?id=1").status_code == 404
+    assert cli.get("/proposicao/relatorio.pdf").status_code == 404
+    assert "/proposicao/relatorio.pdf?vid=" in cli.get(f"/votacoes?id={V1}").get_data(as_text=True)
+
+
 # ---------------- cota ----------------
 
 def test_tetos_ceap():

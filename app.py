@@ -2,6 +2,7 @@
 import hashlib
 import logging
 import os
+import re
 import threading
 from datetime import date
 
@@ -328,6 +329,22 @@ def proposicoes_exportar():
     from flask import Response
     return Response(corpo, mimetype=mime,
                     headers={"Content-Disposition": f'attachment; filename="{nome}.{ext}"'})
+
+
+@app.route("/proposicao/relatorio.pdf")
+def proposicao_relatorio_pdf():
+    """Relatório de uma proposição: ficha, votações do Plenário (orientações e votos por partido) e
+    mudanças de situação. ?id=<proposição> ou ?vid=<votação> (abas Proposições e Votações)."""
+    import proposicao_pdf
+    from flask import Response
+    pid = request.args.get("id", type=int)
+    vid = (request.args.get("vid") or "").strip() or None
+    d = proposicao_pdf.dados(pid, vid) if (pid or vid) else None
+    if not d:
+        abort(404)
+    nome = re.sub(r"[^A-Za-z0-9]+", "-", d["ident"]).strip("-").lower() or "proposicao"
+    return Response(proposicao_pdf.gerar(d), mimetype="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="relatorio-{nome}.pdf"'})
 
 
 @app.route("/cota")
