@@ -4237,26 +4237,30 @@ def test_simbolicas_provisorias_pela_tramitacao():
         2777010: [{"dataHora": "2025-11-25T19:40", "siglaOrgao": "PLEN",
                    "despacho": "Aprovado o Projeto. A matéria vai ao Senado Federal."},
                   {"dataHora": "2025-11-25T10:00", "siglaOrgao": "CCJC", "despacho": "Aprovado o Parecer."}],
-        # votação nominal: o despacho traz o placar (já sai em /votacoes) — não vira provisória
+        # votação nominal: o despacho traz o placar — vira nominal provisória até sair em /votacoes
         2777011: [{"dataHora": "2025-11-25T18:00", "siglaOrgao": "PLEN",
                    "despacho": "Rejeitada a Emenda de Plenário nº 23. Sim: 146; Não: 315; Abstenção: 1; Total: 462."}],
     }
     ler = lambda pid, ini, fim: trams.get(pid, [])  # noqa: E731
     try:
-        assert sp.atualizar(dia, dia, ler=ler) == 1
+        assert sp.atualizar(dia, dia, ler=ler) == 2
+        nom = _q("SELECT id, aprovacao, descricao_votacao FROM votacoes_simbolicas WHERE id LIKE 'TRAM-N%'")
+        assert len(nom) == 1 and nom[0][1] in (0, False) and nom[0][2] == "Rejeitada a Emenda de Plenário nº 23"
         prov = _q("SELECT id, sigla_materia, numero_materia, ano_materia, aprovacao, descricao_votacao "
-                  "FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%'")
+                  "FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%' AND id NOT LIKE 'TRAM-N%'")
         assert len(prov) == 1 and tuple(prov[0][1:4]) == ("PL", 20, 2025) and prov[0][4] in (1, True)
         assert prov[0][5] == "Aprovado o Projeto"
         assert sp.atualizar(dia, dia, ler=ler) == 0                 # nada mudou
         lista = metrics.lista_votacoes(metrics.Filtros(dia, dia, opostas=False), simbolicas=True)
         assert any(v.get("provisoria") for v in lista)
+        n = next(v for v in lista if v.get("nominal_provisoria"))
+        assert (n["qtd_sim"], n["qtd_nao"]) == (146, 315)
         with engine.begin() as c:   # a Câmara publicou a simbólica oficial: a provisória sai
             c.execute(votacoes_simbolicas.insert().values(id="2777010-40", ano=2025, data=_dt(2025, 11, 25, 19, 35),
                                                           proposicao_id=2777010, sigla_materia="PL",
                                                           descricao_votacao="Aprovado o Projeto. A matéria vai ao Senado."))
         assert sp.atualizar(dia, dia, ler=ler) == 1
-        assert not _q("SELECT id FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%'")
+        assert [r[0][:6] for r in _q("SELECT id FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%'")] == ["TRAM-N"]
     finally:
         with engine.begin() as c:
             c.execute(text("DELETE FROM plenario_pautas WHERE evento_id = 999001"))

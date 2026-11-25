@@ -5,6 +5,8 @@ registra o resultado ("Aprovado o Projeto...", "Rejeitada a Emenda...") na trami
 Na atualização ao vivo de Votações, o painel lê a tramitação (órgão PLEN) das matérias das pautas do período
 vindas do Minha Pauta e grava cada decisão como uma votação simbólica provisória (id "TRAM-...").
 
+- Votação nominal (despacho com placar "Sim: X; Não: Y") também entra, como nominal provisória (id "TRAM-N..."),
+  com o placar da tramitação: a API /votacoes às vezes leva horas para publicar a nominal com os votos.
 - Uma decisão que já tem votação oficial da mesma matéria com resultado parecido não vira provisória.
 - As provisórias do período são refeitas a cada atualização: quando a votação oficial sai, a provisória some.
 - A coleta diária substitui todas as simbólicas do ano e também as apaga.
@@ -25,14 +27,18 @@ log = logging.getLogger("simbolicas_provisorias")
 ATIVO = os.environ.get("SIMBOLICAS_TRAMITACAO", "1") != "0"
 PREFIXO = "TRAM-"
 ETAPA = "Registro provisório, pela tramitação — aguardando a Câmara publicar a votação nos Dados Abertos"
+PREFIXO_NOMINAL = PREFIXO + "N"
+ETAPA_NOMINAL = ("Votação nominal — placar pela tramitação: Sim {sim} × Não {nao}. Registro provisório: votos por "
+                 "deputado e orientações saem quando a Câmara publicar a votação nos Dados Abertos")
+_ETAPA_PLACAR = re.compile(r"Sim (\d+) × Não (\d+)")
 MAX_ITENS = int(os.environ.get("SIMBOLICAS_TRAMITACAO_MAX", "80"))
 
 _OBJETO = (r"(?:(?:o|a|os|as)\s+)?(?:projeto|proposta|parecer|substitutivo|redacao final|emendas?|pec|mensagem|"
            r"medida provisoria|texto|materia|subemendas?|em (?:primeiro|segundo|turno)|projeto de decreto)")
 _APROV = re.compile(r"^\s*aprovad[oa]s?\s+" + _OBJETO)
 _REJEIT = re.compile(r"^\s*rejeitad[oa]s?\s+" + _OBJETO)
-# despacho de votação nominal traz o placar ("Sim: 353; Não: 128; Total: 486") — essas já saem em /votacoes
-_PLACAR = re.compile(r"\bsim:?\s*\d+.{0,40}\bnao:?\s*\d+|\btotal:?\s*\d+")
+# despacho de votação nominal traz o placar ("Sim: 353; Não: 128; Total: 486")
+_PLACAR = re.compile(r"\bsim:?\s*(\d+)\W{0,6}\s*nao:?\s*(\d+)")
 _PROJ = re.compile(r"^\s*([A-Z]{2,6})\s+(\d+)\s*/\s*(\d{4})")
 
 
@@ -57,12 +63,18 @@ def decisoes_na_tramitacao(trams, inicio: date, fim: date):
         if not inicio <= dh.date() <= fim:
             continue
         desp = re.sub(r"\s+", " ", t.get("despacho") or "")
-        if _PLACAR.search(_plano(desp)):
-            continue
-        for f in _frases(desp):
-            p = _plano(f)
-            if _APROV.match(p) or _REJEIT.match(p):
-                out.append({"data": dh, "texto": f.rstrip(".;")[:600], "aprovacao": bool(_APROV.match(p))})
+        frases = _frases(desp)
+        idx = [i for i, f in enumerate(frases) if _APROV.match(_plano(f)) or _REJEIT.match(_plano(f))]
+        for k, i in enumerate(idx):
+            p = _plano(frases[i])
+            # placar da decisão: na própria frase ou nas seguintes, até a próxima decisão
+            resto = " ".join(_plano(f) for f in frases[i:idx[k + 1] if k + 1 < len(idx) else len(frases)])
+            m = _PLACAR.search(resto)
+            texto = frases[i]
+            if m:   # tira o placar do texto da decisão, se vier na mesma frase
+                texto = re.split(r"\s*\bSim\s*:", texto)[0]
+            out.append({"data": dh, "texto": texto.strip().rstrip(".;,")[:600], "aprovacao": bool(_APROV.match(p)),
+                        "placar": (int(m.group(1)), int(m.group(2))) if m else None})
     return out
 
 
@@ -122,13 +134,15 @@ def atualizar(inicio: date, fim: date, ler=None) -> int:
         for n, d in enumerate(decisoes_na_tramitacao(trams, inicio, fim)):
             if _ja_oficial(d, oficiais.get(pid, ())):
                 continue
-            vid = f"{PREFIXO}{pid}-{d['data']:%y%m%d%H%M}{n}"[:30]
+            pre = PREFIXO_NOMINAL if d["placar"] else PREFIXO
+            vid = f"{pre}{pid}-{d['data']:%y%m%d%H%M}{n}"[:30]
+            etapa = ETAPA_NOMINAL.format(sim=d["placar"][0], nao=d["placar"][1]) if d["placar"] else ETAPA
             novas[vid] = {"id": vid, "ano": d["data"].year, "data": d["data"], "proposicao_id": pid,
                           "sigla_materia": m.group(1) if m else None,
                           "numero_materia": int(m.group(2)) if m else None,
                           "ano_materia": int(m.group(3)) if m else None,
                           "descricao_materia": ementa or None, "descricao_votacao": d["texto"],
-                          "aprovacao": d["aprovacao"], "etapa": ETAPA}
+                          "aprovacao": d["aprovacao"], "etapa": etapa}
     a = datetime.combine(inicio, datetime.min.time())
     b = datetime.combine(fim + timedelta(days=1), datetime.min.time())
     with engine.begin() as c:
@@ -147,3 +161,9 @@ def atualizar(inicio: date, fim: date, ler=None) -> int:
     if novas or antes:
         log.info("simbólicas provisórias %s a %s: %d (de %d matérias da pauta)", inicio, fim, len(novas), len(itens))
     return mudou
+
+
+def placar_da_etapa(etapa):
+    """(sim, não) gravados na etapa de uma nominal provisória, ou None."""
+    m = _ETAPA_PLACAR.search(etapa or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None

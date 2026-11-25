@@ -308,8 +308,14 @@ def lista_votacoes(f: Filtros, busca: str = "", limite: int = 300, simbolicas: b
 
 
 def _como_simbolica(v):
+    vid = str(v.get("id") or "")
     v.update(simbolica=True, secreta=False, qtd_sim=None, qtd_nao=None, dispositivo=v.get("dispositivo"),
-             provisoria=str(v.get("id") or "").startswith("TRAM-"))
+             provisoria=vid.startswith("TRAM-"), nominal_provisoria=vid.startswith("TRAM-N"))
+    if v["nominal_provisoria"]:   # nominal achada na tramitação antes de sair em /votacoes: placar sem votos
+        from simbolicas_provisorias import placar_da_etapa
+        pl = placar_da_etapa(v.get("etapa"))
+        if pl:
+            v.update(qtd_sim=pl[0], qtd_nao=pl[1])
     return v
 
 

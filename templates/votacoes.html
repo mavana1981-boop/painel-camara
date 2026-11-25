@@ -53,13 +53,13 @@
           <span class="vot-desc">{{ tipos|join(' · ') }}</span>
         {% endif %}
         {% if v.secreta and n == 1 %}<span class="tag">secreta</span>{% endif %}
-        {% if v.simbolica and n == 1 %}<span class="tag">simbólica{% if v.provisoria %} · provisória{% endif %}</span>{% endif %}
+        {% if v.simbolica and n == 1 %}<span class="tag">{{ 'nominal' if v.nominal_provisoria else 'simbólica' }}{% if v.provisoria %} · provisória{% endif %}</span>{% endif %}
       </a>
       {% if aberto and n > 1 %}
       <div class="vot-sub">
         {% for x in g.votacoes %}
         <a class="vot-subitem {{ 'sel' if x.id == vid }}" href="{{ link_vot(x.id) }}">
-          <span class="vot-data">{{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %}{% if placar_curto(x) %} · {{ placar_curto(x) }}{% endif %}{% if x.secreta %} · secreta{% endif %}{% if x.simbolica %} · simbólica{% if x.provisoria %} <span class="tag" title="Achada na tramitação; a Câmara ainda não publicou a votação nos Dados Abertos">provisória</span>{% endif %}{% endif %}</span>
+          <span class="vot-data">{{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %}{% if placar_curto(x) %} · {{ placar_curto(x) }}{% endif %}{% if x.secreta %} · secreta{% endif %}{% if x.simbolica %} · {{ 'nominal' if x.nominal_provisoria else 'simbólica' }}{% if x.provisoria %} <span class="tag" title="Achada na tramitação; a Câmara ainda não publicou a votação nos Dados Abertos">provisória</span>{% endif %}{% endif %}</span>
           <span class="vot-desc"><span class="etapa-tag">{{ x.tipo_etapa }}</span> {{ (x.descricao_votacao or '')[:90] }}</span>
         </a>
         {% endfor %}
@@ -83,7 +83,7 @@
         {% if pos.i > 0 %}<a class="btn sec" href="{{ link_vot(etapas[pos.i - 1].id) }}" title="Votação anterior">‹</a>{% else %}<span class="btn sec off">‹</span>{% endif %}
         <select aria-label="Escolher a votação" onchange="location.href=this.value">
           {% for x in etapas %}
-          <option value="{{ link_vot(x.id) }}" {{ 'selected' if x.id == v.id }}>{{ loop.index }}. {{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %} · {{ x.tipo_etapa }} · {{ (x.descricao_votacao or '')[:70] }}{% if placar_curto(x) %} ({{ placar_curto(x) }}){% endif %}{% if x.simbolica %} (simbólica){% endif %}</option>
+          <option value="{{ link_vot(x.id) }}" {{ 'selected' if x.id == v.id }}>{{ loop.index }}. {{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %} · {{ x.tipo_etapa }} · {{ (x.descricao_votacao or '')[:70] }}{% if placar_curto(x) %} ({{ placar_curto(x) }}){% endif %}{% if x.simbolica %} ({{ 'nominal provisória' if x.nominal_provisoria else 'simbólica' }}){% endif %}</option>
           {% endfor %}
         </select>
         {% if pos.i < etapas|length - 1 %}<a class="btn sec" href="{{ link_vot(etapas[pos.i + 1].id) }}" title="Próxima votação">›</a>{% else %}<span class="btn sec off">›</span>{% endif %}
@@ -100,7 +100,11 @@
         {% if v.dispositivo and v.dispositivo not in (v.etapa or '') %}<div style="color:var(--suave);margin-top:4px;font-size:12px">Também afeta: {{ v.dispositivo }}</div>{% endif %}
         <div style="margin-top:4px;font-size:12px">{% if v.proposicao_id %}<a href="https://www.camara.leg.br/propostas-legislativas/{{ v.proposicao_id }}" target="_blank" rel="noopener">ficha da proposição ↗</a> · {% endif %}<details class="relpdf"><summary>📄 Relatório da proposição (PDF)</summary><span class="relpdf-op"><a href="{{ url_for('proposicao_relatorio_pdf', vid=v.id) }}" target="_blank" rel="noopener" title="Ficha, todas as votações no Plenário, orientações e votos por partido">Completo</a><a href="{{ url_for('proposicao_relatorio_pdf', vid=v.id, modo='sintetico') }}" target="_blank" rel="noopener" title="Uma página: resultado, quadro das votações, bancadas e saldo dos destaques">Sintético</a></span></details></div>
         {% if det.simbolica %}
+        {% if v.nominal_provisoria %}
+        <div class="etapa-box" style="margin-top:10px"><span><b>Votação nominal{% if v.qtd_sim is not none %} — Sim {{ v.qtd_sim }} × Não {{ v.qtd_nao }}{% endif %}</b> · registro provisório, pela tramitação. A Câmara ainda não publicou a votação nos Dados Abertos; os votos por deputado e as orientações entram sozinhos assim que ela sair (é só buscar a data de novo).</span></div>
+        {% else %}
         <div class="etapa-box" style="margin-top:10px"><span><b>Votação simbólica</b> — o Plenário decidiu sem registro nominal: não há placar, votos individuais nem orientações publicadas.</span></div>
+        {% endif %}
         {% if v.provisoria %}<div class="aviso info" style="margin-top:8px">Registro <b>provisório</b>, lido da tramitação da proposição: a Câmara ainda não publicou esta votação nos Dados Abertos. Ele é substituído pela votação oficial quando ela sair.</div>{% endif %}
       </div>
     </div>
