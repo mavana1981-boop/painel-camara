@@ -7,6 +7,10 @@ vindas do Minha Pauta e grava cada decisão como uma votação simbólica provis
 
 - Votação nominal (despacho com placar "Sim: X; Não: Y") também entra, como nominal provisória (id "TRAM-N..."),
   com o placar da tramitação: a API /votacoes às vezes leva horas para publicar a nominal com os votos.
+- Nominal provisória com voto a voto: o serviço antigo da Câmara (SitCamaraWS, ObterVotacaoProposicao) publica
+  votos e orientações logo depois da votação. Achando lá a mesma votação (dia + placar), ela é gravada como
+  nominal completa em `votacoes` (id "WS-..."), igual às da API; sem ela, fica a "TRAM-N..." só com o placar.
+  As "WS-" do período também são refeitas a cada atualização e somem quando a votação oficial sai.
 - Uma decisão que já tem votação oficial da mesma matéria com resultado parecido não vira provisória.
 - As provisórias do período são refeitas a cada atualização: quando a votação oficial sai, a provisória some.
 - A coleta diária substitui todas as simbólicas do ano e também as apaga.
@@ -20,7 +24,10 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, select
 
-from db import engine, plenario_pautas, sem_acento, votacoes, votacoes_simbolicas
+import xml.etree.ElementTree as ET
+
+from db import (engine, orientacoes, orientacoes_partido, plenario_pautas, sem_acento, votacoes,
+                votacoes_simbolicas, votos)
 
 log = logging.getLogger("simbolicas_provisorias")
 
@@ -28,6 +35,8 @@ ATIVO = os.environ.get("SIMBOLICAS_TRAMITACAO", "1") != "0"
 PREFIXO = "TRAM-"
 ETAPA = "Registro provisório, pela tramitação — aguardando a Câmara publicar a votação nos Dados Abertos"
 PREFIXO_NOMINAL = PREFIXO + "N"
+PREFIXO_WS = "WS-"   # nominal provisória com voto a voto (serviço antigo), gravada em `votacoes`
+WS_ATIVO = os.environ.get("VOTOS_SITCAMARAWS", "1") != "0"
 ETAPA_NOMINAL = ("Votação nominal — placar pela tramitação: Sim {sim} × Não {nao}. Registro provisório: votos por "
                  "deputado e orientações saem quando a Câmara publicar a votação nos Dados Abertos")
 _ETAPA_PLACAR = re.compile(r"Sim (\d+) × Não (\d+)")
@@ -100,8 +109,7 @@ def _oficiais(conn, inicio, fim):
     for t in (votacoes, votacoes_simbolicas):
         q = select(t.c.proposicao_id, t.c.descricao_votacao, t.c.data).where(t.c.data >= a, t.c.data < b,
                                                                      t.c.proposicao_id.is_not(None))
-        if t is votacoes_simbolicas:
-            q = q.where(~t.c.id.startswith(PREFIXO))
+        q = q.where(~t.c.id.startswith(PREFIXO if t is votacoes_simbolicas else PREFIXO_WS))
         for pid, desc, dt in conn.execute(q):
             out.setdefault(pid, []).append((_plano(desc), dt))
     return out
@@ -114,12 +122,93 @@ def _ja_oficial(d, oficiais):
     return any(o and (o.startswith(p) or p.startswith(o[:25])) for o, _ in oficiais)
 
 
-def atualizar(inicio: date, fim: date, ler=None) -> int:
+def _attrs(el):
+    return {k.strip().lower(): (v or "").strip() for k, v in el.attrib.items()}
+
+
+def _tag(el):
+    return el.tag.rsplit("}", 1)[-1].lower()
+
+
+def votacao_no_ws(conteudo, dia: date, placar):
+    """Do XML do ObterVotacaoProposicao, a votação do dia com o placar (sim, não) do Resumo:
+    {hora, resumo, objeto, votos: [{id, nome, partido, uf, voto}], orientacoes: [(bancada, voto)]} ou None."""
+    try:
+        raiz = ET.fromstring(conteudo)
+    except ET.ParseError:
+        return None
+    for el in raiz.iter():
+        if _tag(el) != "votacao":
+            continue
+        a = _attrs(el)
+        try:
+            if datetime.strptime(a.get("data", ""), "%d/%m/%Y").date() != dia:
+                continue
+        except ValueError:
+            continue
+        m = _PLACAR.search(_plano(a.get("resumo")))
+        if not m or (int(m.group(1)), int(m.group(2))) != tuple(placar):
+            continue
+        vs, oris = [], []
+        for x in el.iter():
+            t, b = _tag(x), _attrs(x)
+            if t == "deputado" and b.get("idecadastro", "").isdigit():
+                voto = b.get("voto", "")
+                if voto and voto != "-":
+                    vs.append({"id": b["idecadastro"], "nome": b.get("nome", ""), "partido": b.get("partido", ""),
+                               "uf": b.get("uf", ""), "voto": voto})
+            elif "sigla" in b and "orientacao" in b and b["orientacao"]:
+                oris.append((b["sigla"], b["orientacao"]))
+        if vs:
+            return {"hora": a.get("hora", ""), "resumo": a.get("resumo", ""), "objeto": a.get("objvotacao", ""),
+                    "votos": vs, "orientacoes": oris}
+    return None
+
+
+def _baixar_ws(sigla, numero, ano):
+    import objeto_votacao
+    return objeto_votacao._baixar(sigla, numero, ano)
+
+
+def _linhas_ws(vid, pid, projeto, ementa, d, w):
+    """Votação do serviço antigo → linhas no formato dos arquivos (para collector.gravar_votacoes_ano)."""
+    hm = re.match(r"(\d{1,2}):(\d{2})", w["hora"] or "")
+    dt = d["data"].replace(hour=int(hm.group(1)), minute=int(hm.group(2))) if hm else d["data"]
+    sim = sum(1 for x in w["votos"] if _plano(x["voto"]) == "sim")
+    nao = sum(1 for x in w["votos"] if _plano(x["voto"]) == "nao")
+    vot = {"id": vid, "siglaOrgao": "PLEN", "dataHoraRegistro": dt.isoformat(), "data": dt.date().isoformat(),
+           "aprovacao": "1" if d["aprovacao"] else "0", "votosSim": str(sim), "votosNao": str(nao),
+           "votosOutros": str(len(w["votos"]) - sim - nao), "descricao": w["resumo"] or d["texto"],
+           "ultimaAberturaVotacao_descricao": w["objeto"], "ultimaApresentacaoProposicao_descricao": "",
+           "ultimaApresentacaoProposicao_idProposicao": str(pid)}
+    linhas_votos = [{"idVotacao": vid, "voto": x["voto"], "deputado_id": x["id"], "deputado_nome": x["nome"],
+                     "deputado_siglaPartido": x["partido"], "deputado_siglaUf": x["uf"]} for x in w["votos"]]
+    linhas_ori = [{"idVotacao": vid, "siglaBancada": b, "orientacao": o} for b, o in w["orientacoes"]]
+    props = [{"idVotacao": vid, "proposicao_id": str(pid), "proposicao_titulo": projeto,
+              "proposicao_ementa": ementa}]
+    return [vot], linhas_votos, linhas_ori, props
+
+
+def _apagar_ws(conn, a, b):
+    ids = select(votacoes.c.id).where(votacoes.c.id.startswith(PREFIXO_WS), votacoes.c.data >= a,
+                                      votacoes.c.data < b)
+    antes = {r[0] for r in conn.execute(ids)}
+    if antes:
+        for t in (votos, orientacoes, orientacoes_partido):
+            conn.execute(delete(t).where(t.c.votacao_id.in_(list(antes))))
+        conn.execute(delete(votacoes).where(votacoes.c.id.in_(list(antes))))
+    return antes
+
+
+def atualizar(inicio: date, fim: date, ler=None, baixar_ws=None) -> int:
     """Refaz as simbólicas provisórias do período. Devolve quantas entraram, saíram ou mudaram."""
     if not ATIVO:
         return 0
     if ler is None:
         from clipping_auto import _ler_tramitacoes as ler
+    if baixar_ws is None and WS_ATIVO:
+        baixar_ws = _baixar_ws
+    nominais_ws = {}   # vid -> linhas para gravar_votacoes_ano
     with engine.connect() as c:
         itens = _itens_pauta(c, inicio, fim)
         oficiais = _oficiais(c, inicio, fim)
@@ -134,6 +223,17 @@ def atualizar(inicio: date, fim: date, ler=None) -> int:
         for n, d in enumerate(decisoes_na_tramitacao(trams, inicio, fim)):
             if _ja_oficial(d, oficiais.get(pid, ())):
                 continue
+            if d["placar"] and m and baixar_ws:   # voto a voto no serviço antigo da Câmara
+                try:
+                    w = votacao_no_ws(baixar_ws(m.group(1), int(m.group(2)), int(m.group(3))),
+                                      d["data"].date(), d["placar"])
+                except Exception as e:
+                    log.warning("SitCamaraWS %s: %s", projeto, e)
+                    w = None
+                if w:
+                    vid = f"{PREFIXO_WS}{pid}-{d['data']:%y%m%d%H%M}{n}"[:30]
+                    nominais_ws[vid] = _linhas_ws(vid, pid, projeto, ementa, d, w)
+                    continue
             pre = PREFIXO_NOMINAL if d["placar"] else PREFIXO
             vid = f"{pre}{pid}-{d['data']:%y%m%d%H%M}{n}"[:30]
             etapa = ETAPA_NOMINAL.format(sim=d["placar"][0], nao=d["placar"][1]) if d["placar"] else ETAPA
@@ -156,10 +256,16 @@ def atualizar(inicio: date, fim: date, ler=None) -> int:
             ids = list(novas)   # uma provisória fora da janela com o mesmo id (não deveria acontecer)
             c.execute(delete(votacoes_simbolicas).where(votacoes_simbolicas.c.id.in_(ids)))
             c.execute(votacoes_simbolicas.insert(), list(novas.values()))
+        ws_antes = _apagar_ws(c, a, b)
+        if nominais_ws:
+            import collector
+            for vid, (lv, lvo, lor, lpr) in nominais_ws.items():
+                collector.gravar_votacoes_ano(c, int(lv[0]["data"][:4]), lv, lvo, lor, lpr, parcial=True)
     depois = {k: (v["descricao_votacao"], v["aprovacao"]) for k, v in novas.items()}
-    mudou = len(set(antes) ^ set(depois)) + sum(1 for k in set(antes) & set(depois) if antes[k] != depois[k])
-    if novas or antes:
-        log.info("simbólicas provisórias %s a %s: %d (de %d matérias da pauta)", inicio, fim, len(novas), len(itens))
+    mudou = len(set(antes) ^ set(depois)) + len(ws_antes ^ set(nominais_ws)) + sum(1 for k in set(antes) & set(depois) if antes[k] != depois[k])
+    if novas or antes or nominais_ws or ws_antes:
+        log.info("provisórias %s a %s: %d pela tramitação, %d nominais com voto a voto (de %d matérias da pauta)",
+                 inicio, fim, len(novas), len(nominais_ws), len(itens))
     return mudou
 
 

@@ -304,6 +304,8 @@ def lista_votacoes(f: Filtros, busca: str = "", limite: int = 300, simbolicas: b
         lista = lista[:limite]
     for v in lista:
         v["tipo_etapa"] = tipo_etapa(v)
+        if str(v.get("id") or "").startswith("WS-"):   # nominal com voto a voto do serviço antigo, antes da API
+            v["provisoria"] = True
     return lista
 
 
@@ -451,6 +453,7 @@ def detalhe_votacao(vid: str):
         if not v:
             return None
         v = dict(v)
+        v["provisoria"] = str(vid).startswith("WS-")
         oris = [dict(r) for r in c.execute(text(
             "SELECT lideranca, voto FROM orientacoes WHERE votacao_id = :id"), {"id": vid}).mappings()]
         ori_por_partido = dict(c.execute(text(

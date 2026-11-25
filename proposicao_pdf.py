@@ -17,6 +17,7 @@ from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame,
 from sqlalchemy import text
 
 import metrics
+from simbolicas_provisorias import placar_da_etapa
 from agenda_pdf import CASA, LINHA, META, TEXTO, _Numerado, _p, fazer_cabecalho
 from db import INSTITUCIONAIS, engine
 
@@ -63,6 +64,13 @@ def _simbolicas(c, pid, v0):
         v = dict(r)
         v.update(secreta=False, simbolica=True, qtd_sim=None, qtd_nao=None, presidente=None)
         v["tipo_etapa"] = metrics.tipo_etapa(v)
+        pl = placar_da_etapa(v.get("etapa")) if str(v.get("id") or "").startswith("TRAM-N") else None
+        if pl:   # nominal achada na tramitação, ainda sem voto a voto: entra como nominal, com o placar
+            v.update(simbolica=False, qtd_sim=pl[0], qtd_nao=pl[1], nominal_provisoria=True)
+            saida.append({"votacao": v, "simbolica": False, "nominal_provisoria": True, "orientacoes": [],
+                          "placar": [], "traidores": [], "gov": None, "opo": None, "votos": [],
+                          "contagem": {"SIM": pl[0], "NÃO": pl[1], "ABSTENÇÃO": 0, "OBSTRUÇÃO": 0, "OUTROS": 0}})
+            continue
         saida.append({"votacao": v, "simbolica": True, "orientacoes": [], "placar": [], "traidores": [],
                       "gov": None, "opo": None,
                       "contagem": {"SIM": None, "NÃO": None, "ABSTENÇÃO": None, "OBSTRUÇÃO": 0, "OUTROS": 0}})

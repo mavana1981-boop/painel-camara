@@ -59,7 +59,7 @@
       <div class="vot-sub">
         {% for x in g.votacoes %}
         <a class="vot-subitem {{ 'sel' if x.id == vid }}" href="{{ link_vot(x.id) }}">
-          <span class="vot-data">{{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %}{% if placar_curto(x) %} · {{ placar_curto(x) }}{% endif %}{% if x.secreta %} · secreta{% endif %}{% if x.simbolica %} · {{ 'nominal' if x.nominal_provisoria else 'simbólica' }}{% if x.provisoria %} <span class="tag" title="Achada na tramitação; a Câmara ainda não publicou a votação nos Dados Abertos">provisória</span>{% endif %}{% endif %}</span>
+          <span class="vot-data">{{ x.data|data }}{% if x.data|hora %} {{ x.data|hora }}{% endif %}{% if placar_curto(x) %} · {{ placar_curto(x) }}{% endif %}{% if x.secreta %} · secreta{% endif %}{% if x.provisoria and not x.simbolica %} · nominal <span class="tag" title="Voto a voto do serviço antigo da Câmara; a votação ainda não saiu na API de Dados Abertos">provisória</span>{% endif %}{% if x.simbolica %} · {{ 'nominal' if x.nominal_provisoria else 'simbólica' }}{% if x.provisoria %} <span class="tag" title="Achada na tramitação; a Câmara ainda não publicou a votação nos Dados Abertos">provisória</span>{% endif %}{% endif %}</span>
           <span class="vot-desc"><span class="etapa-tag">{{ x.tipo_etapa }}</span> {{ (x.descricao_votacao or '')[:90] }}</span>
         </a>
         {% endfor %}
@@ -99,6 +99,9 @@
         {% if v.descricao_votacao %}<div style="color:var(--suave);margin-top:6px;font-size:13px"><b>Resultado:</b> {{ v.descricao_votacao }}</div>{% endif %}
         {% if v.dispositivo and v.dispositivo not in (v.etapa or '') %}<div style="color:var(--suave);margin-top:4px;font-size:12px">Também afeta: {{ v.dispositivo }}</div>{% endif %}
         <div style="margin-top:4px;font-size:12px">{% if v.proposicao_id %}<a href="https://www.camara.leg.br/propostas-legislativas/{{ v.proposicao_id }}" target="_blank" rel="noopener">ficha da proposição ↗</a> · {% endif %}<details class="relpdf"><summary>📄 Relatório da proposição (PDF)</summary><span class="relpdf-op"><a href="{{ url_for('proposicao_relatorio_pdf', vid=v.id) }}" target="_blank" rel="noopener" title="Ficha, todas as votações no Plenário, orientações e votos por partido">Completo</a><a href="{{ url_for('proposicao_relatorio_pdf', vid=v.id, modo='sintetico') }}" target="_blank" rel="noopener" title="Uma página: resultado, quadro das votações, bancadas e saldo dos destaques">Sintético</a></span></details></div>
+        {% if v.provisoria and not det.simbolica %}
+        <div class="etapa-box" style="margin-top:10px"><span><b>Registro provisório</b> — votos e orientações lidos do serviço antigo da Câmara (SitCamaraWS), publicados logo após a votação. A versão da API de Dados Abertos substitui esta automaticamente quando sair.</span></div>
+        {% endif %}
         {% if det.simbolica %}
         {% if v.nominal_provisoria %}
         <div class="etapa-box" style="margin-top:10px"><span><b>Votação nominal{% if v.qtd_sim is not none %} — Sim {{ v.qtd_sim }} × Não {{ v.qtd_nao }}{% endif %}</b> · registro provisório, pela tramitação. A Câmara ainda não publicou a votação nos Dados Abertos; os votos por deputado e as orientações entram sozinhos assim que ela sair (é só buscar a data de novo).</span></div>

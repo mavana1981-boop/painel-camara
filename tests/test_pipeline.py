@@ -4243,25 +4243,87 @@ def test_simbolicas_provisorias_pela_tramitacao():
     }
     ler = lambda pid, ini, fim: trams.get(pid, [])  # noqa: E731
     try:
-        assert sp.atualizar(dia, dia, ler=ler) == 2
+        assert sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: b"<x/>") == 2
         nom = _q("SELECT id, aprovacao, descricao_votacao FROM votacoes_simbolicas WHERE id LIKE 'TRAM-N%'")
         assert len(nom) == 1 and nom[0][1] in (0, False) and nom[0][2] == "Rejeitada a Emenda de Plenário nº 23"
         prov = _q("SELECT id, sigla_materia, numero_materia, ano_materia, aprovacao, descricao_votacao "
                   "FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%' AND id NOT LIKE 'TRAM-N%'")
         assert len(prov) == 1 and tuple(prov[0][1:4]) == ("PL", 20, 2025) and prov[0][4] in (1, True)
         assert prov[0][5] == "Aprovado o Projeto"
-        assert sp.atualizar(dia, dia, ler=ler) == 0                 # nada mudou
+        assert sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: b"<x/>") == 0                 # nada mudou
         lista = metrics.lista_votacoes(metrics.Filtros(dia, dia, opostas=False), simbolicas=True)
         assert any(v.get("provisoria") for v in lista)
         n = next(v for v in lista if v.get("nominal_provisoria"))
         assert (n["qtd_sim"], n["qtd_nao"]) == (146, 315)
+        import proposicao_pdf, sintese_pdf   # nos relatórios conta como nominal, com o placar  # noqa: E401
+        d = proposicao_pdf.dados(pid=2777011, buscar=False)
+        x = next(x for x in d["votacoes"] if x.get("nominal_provisoria"))
+        assert not x["simbolica"] and x["contagem"]["SIM"] == 146
+        assert sintese_pdf.balanco([d])["vot_nominais"] >= 1
+        assert sintese_pdf.gerar(d)[:4] == b"%PDF"
         with engine.begin() as c:   # a Câmara publicou a simbólica oficial: a provisória sai
             c.execute(votacoes_simbolicas.insert().values(id="2777010-40", ano=2025, data=_dt(2025, 11, 25, 19, 35),
                                                           proposicao_id=2777010, sigla_materia="PL",
                                                           descricao_votacao="Aprovado o Projeto. A matéria vai ao Senado."))
-        assert sp.atualizar(dia, dia, ler=ler) == 1
+        assert sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: b"<x/>") == 1
         assert [r[0][:6] for r in _q("SELECT id FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%'")] == ["TRAM-N"]
     finally:
         with engine.begin() as c:
             c.execute(text("DELETE FROM plenario_pautas WHERE evento_id = 999001"))
             c.execute(text("DELETE FROM votacoes_simbolicas WHERE id = '2777010-40' OR id LIKE 'TRAM-%'"))
+
+
+def test_nominal_provisoria_com_voto_a_voto_do_sitcamaraws():
+    """Nominal na tramitação + mesma votação (dia e placar) no serviço antigo: entra em `votacoes` como "WS-..."
+    com votos e orientações; sai quando a votação oficial da API aparece."""
+    import json as _json
+    from datetime import date as _date, datetime as _dt
+    import simbolicas_provisorias as sp
+    from db import plenario_pautas, votacoes
+    dia = _date(2025, 11, 26)
+    itens = [{"id_principal": "2777020", "projeto": "PL 4887/2023", "ementa": "Dispõe sobre X."}]
+    with engine.begin() as c:
+        c.execute(plenario_pautas.insert().values(evento_id=999002, data="2025-11-26", titulo="Sessão",
+                                                  itens=_json.dumps(itens)))
+    trams = {2777020: [{"dataHora": "2025-11-26T13:55", "siglaOrgao": "PLEN",
+                        "despacho": "Aprovado o Substitutivo ao Projeto de Lei nº 4.887, de 2023. Sim: 2; Não: 1; "
+                                    "Total: 3. Aprovada a Redação Final."}]}
+    xml = """<proposicao><Votacoes>
+      <Votacao Resumo="Aprovado o Substitutivo ao Projeto de Lei nº 4.887, de 2023. Sim: 2; Não: 1; Total: 3."
+               Data="26/11/2025" Hora="17:26" ObjVotacao="SUBSTITUTIVO OFERECIDO PELA RELATORA" codSessao="1">
+        <orientacaoBancada><bancada Sigla="PL" orientacao="Não"/><bancada Sigla="Governo" orientacao="Sim"/>
+          <bancada Sigla="PSB" orientacao=""/></orientacaoBancada>
+        <votos><Deputado Nome="A" ideCadastro="1" Partido="Republican" UF="RR" Voto="Sim       "/>
+          <Deputado Nome="B" ideCadastro="2" Partido="PT        " UF="SP" Voto="Sim"/>
+          <Deputado Nome="C" ideCadastro="3" Partido="PL        " UF="RJ" Voto="Não"/>
+          <Deputado Nome="D" ideCadastro="4" Partido="PL        " UF="RJ" Voto="-"/></votos>
+      </Votacao></Votacoes></proposicao>""".encode()
+    ler = lambda pid, ini, fim: trams.get(pid, [])  # noqa: E731
+    try:
+        assert sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: xml) == 2   # WS + simbólica da redação
+        ws = _q("SELECT id, qtd_sim, qtd_nao, aprovacao, sigla_materia, data FROM votacoes WHERE id LIKE 'WS-%'")
+        assert len(ws) == 1 and tuple(ws[0][1:3]) == (2, 1) and ws[0][3] in (1, True) and ws[0][4] == "PL"
+        assert "17:26" in str(ws[0][5])
+        assert len(_q(f"SELECT * FROM votos WHERE votacao_id = '{ws[0][0]}'")) == 3
+        assert len(_q(f"SELECT * FROM orientacoes WHERE votacao_id = '{ws[0][0]}'")) == 2
+        assert not _q("SELECT id FROM votacoes_simbolicas WHERE id LIKE 'TRAM-N%'")
+        assert sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: xml) == 0     # nada mudou
+        lista = metrics.lista_votacoes(metrics.Filtros(dia, dia, opostas=False), simbolicas=True)
+        assert any(v["id"].startswith("WS-") and v.get("provisoria") for v in lista)
+        # sem o serviço antigo: fica só a nominal pela tramitação, com o placar
+        assert sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: b"<x/>") == 2
+        assert not _q("SELECT id FROM votacoes WHERE id LIKE 'WS-%'")
+        assert sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: xml) == 2
+        with engine.begin() as c:   # a API publicou a oficial: a WS sai
+            c.execute(votacoes.insert().values(id="2777020-99", ano=2025, data=_dt(2025, 11, 26, 17, 26),
+                                               proposicao_id=2777020, sigla_materia="PL", qtd_sim=2, qtd_nao=1,
+                                               descricao_votacao="Aprovado o Substitutivo ao Projeto de Lei nº 4.887"))
+        sp.atualizar(dia, dia, ler=ler, baixar_ws=lambda s, n, a: xml)
+        assert not _q("SELECT id FROM votacoes WHERE id LIKE 'WS-%'")
+    finally:
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM plenario_pautas WHERE evento_id = 999002"))
+            c.execute(text("DELETE FROM votacoes WHERE id = '2777020-99' OR id LIKE 'WS-%'"))
+            c.execute(text("DELETE FROM votacoes_simbolicas WHERE id LIKE 'TRAM-%'"))
+            c.execute(text("DELETE FROM votos WHERE votacao_id LIKE 'WS-%'"))
+            c.execute(text("DELETE FROM orientacoes WHERE votacao_id LIKE 'WS-%'"))
